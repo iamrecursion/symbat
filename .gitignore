@@ -1,0 +1,33 @@
+# Build output. `main.js` is the esbuild bundle and `src/wasm/pkg` the
+# wasm-bindgen output; both are produced by `make build`, and the release
+# workflow attaches `main.js` to the GitHub release. The leading slashes anchor
+# these to the repository root so they cannot match anything inside the vendored
+# numbat checkout.
+/main.js
+/main.js.map
+/src/wasm/pkg/
+
+# The pinned sharkdp/numbat checkout and its cargo target directory.
+/.build/
+
+# npm
+/node_modules/
+npm-debug.log*
+
+# Nix build results
+/result
+/result-*
+
+# Obsidian plugin data, present when the repository is symlinked into a vault
+# for testing.
+/data.json
+
+# The local development runbook: session state and working notes, not user
+# documentation.
+/PLAN.md
+
+# Editors and operating systems
+.DS_Store
+*.swp
+/.idea/
+/.vscode/

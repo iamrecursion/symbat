@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to a branch makes the run in flight redundant. Cancel it, except on
+# main, where the run for each commit is the record that that commit was green.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Formatting is checked on its own, without Nix and without a toolchain, so a
+  # 101-character Markdown line costs fifteen seconds rather than a full build.
+  # Everything else runs inside the flake devshell.
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned to the version the devshell provides, so `make format` locally
+      # produces exactly what this job accepts. nix.yml asserts the two agree;
+      # when nixpkgs moves dprint, that check is what tells you to bump this.
+      - uses: dprint/check@v2.3
+        with:
+          dprint-version: "0.55.2"
+
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The devshell is this project's only description of its toolchain, and
+      # every step below runs inside it via the same `make` targets a
+      # contributor uses. A devshell that builds locally cannot silently fail
+      # here, because there is no second toolchain to drift from it.
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 2G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      # Everything below keys off the pinned Numbat tag, so read it from the one
+      # place it is written rather than repeating it here.
+      - name: Read the pinned Numbat tag
+        id: numbat
+        run: |
+          tag=$(sed -n 's/^NUMBAT_TAG = "\(.*\)"$/\1/p' scripts/build-wasm.xsh)
+          if [ -z "$tag" ]; then
+            echo "::error file=scripts/build-wasm.xsh::could not read NUMBAT_TAG"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Numbat $tag"
+
+      - name: Cache the npm download cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: make deps
+
+      # The bindings are a pure function of the pinned tag and the script that
+      # builds them, so cache them under exactly those two things. On a hit —
+      # the common case — build-wasm.xsh sees its own stamp file inside the
+      # restored directory and skips the entire Rust pipeline.
+      - name: Restore the built wasm bindings
+        id: bindings
+        uses: actions/cache@v6
+        with:
+          path: src/wasm/pkg
+          key: wasm-${{ runner.os }}-${{ steps.numbat.outputs.tag }}-${{ hashFiles('scripts/build-wasm.xsh') }}
+
+      # Only reached when the bindings cache misses. `restore-keys` means even a
+      # tag bump starts from the previous run's registry and target directory,
+      # so it costs minutes rather than a cold build of the dependency graph.
+      - name: Cache the Rust build
+        if: steps.bindings.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .build/numbat/numbat-wasm/target
+          key: cargo-${{ runner.os }}-${{ steps.numbat.outputs.tag }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build the wasm bindings
+        run: make wasm
+
+      # A restored-but-incomplete directory would otherwise surface as a
+      # confusing type error several minutes later. The integration suite makes
+      # the same assertion at module load whenever CI is set, so a green run
+      # cannot mean "63 tests were skipped".
+      - name: Assert the bindings are present
+        run: |
+          for file in numbat_wasm.js numbat_wasm.d.ts numbat_wasm_bg.wasm; do
+            if [ ! -s "src/wasm/pkg/$file" ]; then
+              echo "::error::src/wasm/pkg/$file is missing or empty"
+              exit 1
+            fi
+          done
+
+      - name: Type-check
+        run: make typecheck
+
+      - name: Lint
+        run: make lint
+
+      - name: Unit tests
+        run: make test-unit
+
+      - name: Integration tests
+        run: make test-integration
+
+      - name: Bundle
+        run: make build
+
+      - name: Report the bundle size
+        run: |
+          bundle=$(stat -c%s main.js)
+          wasm=$(stat -c%s src/wasm/pkg/numbat_wasm_bg.wasm)
+          {
+            echo "### Build"
+            echo
+            echo "| Artifact | Size |"
+            echo "| --- | ---: |"
+            echo "| \`main.js\` | $((bundle / 1024)) KiB |"
+            echo "| \`numbat_wasm_bg.wasm\` (inlined above) | $((wasm / 1024)) KiB |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The three files Obsidian installs, so a reviewer can drop this build
+      # straight into a vault without building it themselves.
+      - name: Upload the plugin
+        uses: actions/upload-artifact@v7
+        with:
+          name: symbat-${{ github.sha }}
+          path: |
+            main.js
+            manifest.json
+            styles.css
+          if-no-files-found: error

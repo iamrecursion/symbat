@@ -1,0 +1,16 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or Idea
+    url: https://github.com/iamrecursion/symbat/discussions
+    about: >
+      How do I do X, is this supposed to work like this, or a half-formed idea — Discussions is the
+      right place, and answers there end up helping the next person.
+  - name: Numbat the Language
+    url: https://github.com/sharkdp/numbat/issues
+    about: >
+      A missing unit or function, a wrong result, or a question about Numbat syntax belongs
+      upstream. Symbat embeds a pinned Numbat release and does not change what it computes.
+  - name: Documentation
+    url: https://github.com/iamrecursion/symbat/tree/main/docs
+    about: >
+      The feature reference, the architecture notes, the roadmap, and the contributing guide.

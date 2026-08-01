@@ -1,0 +1,9 @@
+{
+  "id": "symbat",
+  "name": "Symbat",
+  "version": "1.0.0",
+  "minAppVersion": "1.13.0",
+  "description": "Integrates the Numbat scientific calculator into your notes, with comprehensive tooling.",
+  "author": "Ara Adkins",
+  "isDesktopOnly": false
+}

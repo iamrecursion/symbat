@@ -1,0 +1,54 @@
+name: Feature request
+description: Suggest something Symbat should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Worth a look first: the [roadmap](https://github.com/iamrecursion/symbat/blob/main/docs/roadmap.md)
+        lists what is planned, what is deliberately *not* planned, and the known limitations along
+        with their causes. If your idea is on it, adding to that issue is more useful than a new one.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >
+        The situation, rather than the solution. What does your note look like, and what is awkward
+        about it today? A concrete example is worth more than a general description.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+      description: >
+        If you have a shape in mind — a new fence, a setting, a command, a hover behavior — say so.
+        If not, that is fine; the problem is the important half.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried?
+      description: >
+        Other plugins, a workaround with the features that exist, or a reason none of them fits.
+        This often shows where the real gap is.
+
+  - type: dropdown
+    id: numbat-side
+    attributes:
+      label: Is this really about Numbat rather than Symbat?
+      description: >
+        Symbat embeds the [Numbat](https://numbat.dev) language as WebAssembly; it does not change
+        what the language can compute. A missing unit, a missing function, or an evaluation result
+        you disagree with belongs upstream at [sharkdp/numbat](https://github.com/sharkdp/numbat) — 
+        and lands here on the next version bump.
+      options:
+        - "No — it is about how Obsidian presents Numbat"
+        - "Maybe — I am not sure which side it falls on"
+        - "Yes, but I think Symbat should work around it"
+    validations:
+      required: true

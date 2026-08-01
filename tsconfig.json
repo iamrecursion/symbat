@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "module": "ESNext",
+    "target": "ES2021",
+    "allowJs": true,
+    "noImplicitAny": true,
+    "moduleResolution": "node",
+    "importHelpers": true,
+    "isolatedModules": true,
+    "strict": true,
+    "strictNullChecks": true,
+    // Not implied by `strict`, and the gap was real: a write-only private field
+    // sat in the REPL view since before 1.0, invisible to `make check`. tsc is
+    // the only checker that sees it — ESLint's no-unused-vars does not inspect
+    // class properties, and the editor reports it only as a suggestion.
+    "noUnusedLocals": true,
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    // esbuild produces the bundle and node:test runs the sources through tsx, so
+    // tsc is only ever a checker here.
+    "noEmit": true,
+    // The test suite imports with explicit `.ts` extensions, which is what lets
+    // node run it under tsx without a build step. src/ uses extensionless
+    // specifiers, since esbuild resolves those.
+    "allowImportingTsExtensions": true,
+    // `import assert from "node:assert/strict"` is how node documents it, and
+    // both node and esbuild resolve it. This tells the checker so, without
+    // `esModuleInterop`'s effect on how imports are emitted.
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

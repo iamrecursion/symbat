@@ -1,0 +1,49 @@
+name: Update flake.lock
+
+# Dependabot cannot see flake.lock, so nothing else would ever move the pinned
+# nixpkgs — and the devshell is where every version in this project comes from.
+# Monthly rather than weekly: the devshell holds a compiler and a wasm toolchain,
+# and each bump costs a cold Nix store cache on the next CI run.
+on:
+  schedule:
+    - cron: "0 4 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Open a lockfile bump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # The pull request is authored by GITHUB_TOKEN, and GitHub deliberately
+      # does not run workflows on such pull requests — so CI and nix.yml will
+      # show as not-run. Give the action a personal access token via `token:` if
+      # you would rather these bumps were checked before you look at them; until
+      # then, expect to trigger the checks by hand.
+      - name: Update flake.lock
+        uses: DeterminateSystems/update-flake-lock@v28
+        with:
+          commit-msg: "chore: update flake.lock"
+          pr-title: "chore: update flake.lock"
+          pr-labels: dependencies
+          pr-body: |
+            Automated `nix flake update`.
+
+            {{ env.GIT_COMMIT_MESSAGE }}
+
+            Worth checking before merging: `nix.yml` asserts that the flake's
+            `wasm-bindgen-cli` pin still matches the pinned Numbat release, and
+            that the dprint the devshell provides still matches the version
+            `ci.yml`'s format job installs. A nixpkgs bump is exactly what moves
+            either of those.

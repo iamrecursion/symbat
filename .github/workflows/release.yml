@@ -1,0 +1,140 @@
+name: Release
+
+# Obsidian finds a plugin release by looking for a git tag identical to
+# manifest.json's `version` — `1.0.0`, never `v1.0.0`. This filter therefore
+# matches bare semver only; `.npmrc` sets `tag-version-prefix=` so that `npm
+# version` produces such a tag, and the first job step re-checks it anyway.
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write # create the release and upload its assets
+  id-token: write # \_ build provenance attestation for main.js
+  attestations: write # /
+
+jobs:
+  release:
+    name: Build and draft the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Everything a mistagged release breaks is invisible until a user reports
+      # that the plugin will not install, so check every part of the contract
+      # before spending ten minutes on a build.
+      - name: Validate the tag against the manifest
+        run: |
+          tag="$GITHUB_REF_NAME"
+          fail=0
+          note() {
+            echo "::error::$1"
+            fail=1
+          }
+
+          case "$tag" in
+            v*) note "the tag is '$tag'; Obsidian requires a bare version with no 'v' prefix" ;;
+          esac
+
+          # node, rather than jq: it is the runtime the rest of this build uses,
+          # and `--eval` is CommonJS regardless of package.json's "type".
+          manifest_version=$(node -p "require('./manifest.json').version")
+          min_app_version=$(node -p "require('./manifest.json').minAppVersion")
+          package_version=$(node -p "require('./package.json').version")
+          versions_entry=$(node -p "require('./versions.json')[process.argv[1]] ?? ''" "$tag")
+
+          [ "$manifest_version" = "$tag" ] \
+            || note "manifest.json says version $manifest_version, but the tag is $tag"
+          [ "$package_version" = "$tag" ] \
+            || note "package.json says version $package_version, but the tag is $tag"
+
+          if [ -z "$versions_entry" ]; then
+            note "versions.json has no entry for $tag; Obsidian uses it to decide which release an older app should download"
+          elif [ "$versions_entry" != "$min_app_version" ]; then
+            note "versions.json maps $tag to $versions_entry, but manifest.json's minAppVersion is $min_app_version"
+          fi
+
+          [ "$fail" -eq 0 ] || exit 1
+          echo "$tag — minAppVersion $min_app_version"
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Restore only. A tag push can read caches from the default branch, so CI
+      # has already warmed these; a release should not evict anything.
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action/restore@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Read the pinned Numbat tag
+        id: numbat
+        run: |
+          tag=$(sed -n 's/^NUMBAT_TAG = "\(.*\)"$/\1/p' scripts/build-wasm.xsh)
+          if [ -z "$tag" ]; then
+            echo "::error file=scripts/build-wasm.xsh::could not read NUMBAT_TAG"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Rust build cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .build/numbat/numbat-wasm/target
+          key: cargo-${{ runner.os }}-${{ steps.numbat.outputs.tag }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: make deps
+
+      # Deliberately not restoring src/wasm/pkg the way ci.yml does: what ships
+      # is compiled from the pinned source during this run, not lifted out of a
+      # cache. REQUIRE_WASM_OPT makes a missing binaryen an error rather than a
+      # silent 3x size regression in the released bundle.
+      - name: Build the wasm bindings
+        run: make wasm
+        env:
+          REQUIRE_WASM_OPT: "1"
+
+      - name: Check
+        run: make check
+
+      - name: Bundle
+        run: make build
+
+      - name: Attest the build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: main.js
+
+      # Obsidian downloads main.js, manifest.json and styles.css as individual
+      # release assets; it does not look inside the source archive GitHub
+      # attaches automatically. Draft, so the release is reviewed before it
+      # exists as far as Obsidian is concerned — only published releases are
+      # visible to it.
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            main.js manifest.json styles.css
+
+      - name: Summarize
+        run: |
+          {
+            echo "### $GITHUB_REF_NAME drafted"
+            echo
+            echo "\`main.js\` is $(( $(stat -c%s main.js) / 1024 )) KiB."
+            echo
+            echo "Review the draft and publish it — Obsidian only sees published releases."
+          } >> "$GITHUB_STEP_SUMMARY"

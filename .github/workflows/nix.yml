@@ -1,0 +1,115 @@
+name: Nix
+
+# The devshell is the toolchain, so it gets its own checks: that the flake still
+# evaluates, that it is formatted, and — the part that matters most — that the
+# versions pinned inside it still agree with what the rest of the repository
+# expects. That drift is invisible until it costs a four-minute `cargo install`
+# on every build, or until CI and a contributor format the same file differently.
+on:
+  push:
+    branches: [main]
+    # Repeated verbatim below: GitHub's workflow parser does not support YAML
+    # anchors, so the two lists have to be kept in step by hand.
+    paths:
+      - flake.nix
+      - flake.lock
+      - scripts/build-wasm.xsh
+      - .github/workflows/ci.yml
+      - .github/workflows/nix.yml
+  pull_request:
+    paths:
+      - flake.nix
+      - flake.lock
+      - scripts/build-wasm.xsh
+      - .github/workflows/ci.yml
+      - .github/workflows/nix.yml
+  schedule:
+    # Mondays, 05:00 UTC: nixpkgs moves under a flake that has not changed.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flake:
+    name: Flake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 2G
+
+      - name: Check the flake
+        run: nix flake check
+
+      # `nix fmt` runs the flake's own `formatter`, so this checks the file
+      # against the same nixfmt a contributor gets from `nix fmt flake.nix`.
+      - name: Check the formatting
+        run: nix fmt -- --check flake.nix
+
+      # wasm-bindgen's generated glue is version-locked to the CLI that emitted
+      # it. The flake pins that CLI by exact attribute; the pinned Numbat tag
+      # pins it again in its lockfile. If the two ever disagree the build still
+      # works — build-wasm.xsh falls back to `cargo install` — but it does so by
+      # compiling the CLI from source on every single run, which is exactly the
+      # kind of slow, silent regression nothing else would report.
+      - name: Check the wasm-bindgen pin against the pinned Numbat lockfile
+        run: |
+          tag=$(sed -n 's/^NUMBAT_TAG = "\(.*\)"$/\1/p' scripts/build-wasm.xsh)
+          if [ -z "$tag" ]; then
+            echo "::error file=scripts/build-wasm.xsh::could not read NUMBAT_TAG"
+            exit 1
+          fi
+
+          attr=$(grep -o 'wasm-bindgen-cli_[0-9_]*' flake.nix | head -1)
+          if [ -z "$attr" ]; then
+            echo "::error file=flake.nix::no pinned wasm-bindgen-cli attribute found"
+            exit 1
+          fi
+          pinned=${attr#wasm-bindgen-cli_}
+          pinned=${pinned//_/.}
+
+          lock=$(curl -fsSL "https://raw.githubusercontent.com/sharkdp/numbat/$tag/numbat-wasm/Cargo.lock")
+          needed=$(printf '%s\n' "$lock" \
+            | awk '/^name = "wasm-bindgen"$/ { getline; print; exit }' \
+            | sed 's/.*"\(.*\)".*/\1/')
+          if [ -z "$needed" ]; then
+            echo "::error::could not read the wasm-bindgen version from numbat $tag's lockfile"
+            exit 1
+          fi
+
+          if [ "$pinned" != "$needed" ]; then
+            echo "::error file=flake.nix::numbat $tag needs wasm-bindgen $needed, but the flake pins $pinned — update the attribute to wasm-bindgen-cli_${needed//./_}"
+            exit 1
+          fi
+          echo "numbat $tag and the flake agree on wasm-bindgen $needed"
+
+      # ci.yml's format job installs its own dprint rather than paying for Nix.
+      # That is only honest while the version it installs is the one the
+      # devshell provides — otherwise `make format` and CI disagree about the
+      # same file, which is a maddening thing to debug from a red check.
+      - name: Check the dprint pin against the devshell
+        run: |
+          shell_version=$(nix develop --command dprint --version | awk '{ print $2 }')
+          ci_version=$(sed -n 's/^ *dprint-version: "\([0-9.]*\)".*/\1/p' .github/workflows/ci.yml)
+          if [ -z "$ci_version" ]; then
+            echo "::error file=.github/workflows/ci.yml::no pinned dprint-version found"
+            exit 1
+          fi
+          if [ "$shell_version" != "$ci_version" ]; then
+            echo "::error file=.github/workflows/ci.yml::the devshell provides dprint $shell_version but the format job pins $ci_version — update the pin and reformat if it changes anything"
+            exit 1
+          fi
+          echo "the devshell and the format job agree on dprint $shell_version"

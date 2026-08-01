@@ -1,0 +1,56 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    # Grouped so a week's updates are one review rather than nine. The groups
+    # are the three things that actually move together: the editor packages the
+    # plugin compiles against, the lint stack, and the build toolchain.
+    groups:
+      codemirror:
+        patterns:
+          - "@codemirror/*"
+          - "@lezer/*"
+          - "@replit/codemirror-vim"
+      lint:
+        patterns:
+          - "eslint"
+          - "eslint-*"
+          - "@eslint/*"
+          - "typescript-eslint"
+          - "globals"
+      toolchain:
+        patterns:
+          - typescript
+          - tsx
+          - esbuild
+          - "@types/*"
+    ignore:
+      # A major Obsidian bump raises the API surface the plugin can compile
+      # against, which is a decision to make alongside manifest.json's
+      # minAppVersion — not something to merge because a bot opened it.
+      - dependency-name: obsidian
+        update-types: ["version-update:semver-major"]
+      # Pinned exactly, and forced tree-wide by package.json's `overrides`, to
+      # the versions Obsidian declares as peer dependencies: these are esbuild
+      # externals supplied by the app at runtime, so the installed copies exist
+      # only to type-check against what actually ships. They move when
+      # Obsidian's peers move, and at no other time.
+      - dependency-name: "@codemirror/state"
+      - dependency-name: "@codemirror/view"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore
+    groups:
+      actions:
+        patterns:
+          - "*"

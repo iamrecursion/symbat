@@ -1,0 +1,1299 @@
+/* Symbat plugin styles.
+ *
+ * Numbat's HTML formatter emits `<span class="numbat-…">` tokens; the classes below theme them
+ * using Obsidian's CSS variables so they adapt to light and dark themes. The `numbat-*` classes are
+ * shared by rendered code blocks and the REPL (jQuery-terminal command output is remapped onto
+ * them).
+ *
+ * The `numbat-` prefix is deliberate and stays despite the plugin being named Symbat: the token
+ * classes are derived from what the Numbat wasm emits (see interpreter/markup.ts, which
+ * rewrites its `hl-*` classes wholesale), so they are not ours to rename. Renaming only the rest
+ * would leave most rules mixing two prefixes for no gain.
+ */
+
+/* --- Syntax tokens ------------------------------------------------------- */
+
+.numbat-keyword {
+  color: var(--code-keyword, var(--color-pink));
+  font-weight: 600;
+}
+
+.numbat-value {
+  color: var(--code-value, var(--color-orange));
+}
+
+/* Units (meter, second, …). Uses `--code-function` so units stay distinct from types
+ * (`--code-property`), with which they otherwise clash in some themes. Override with
+ * `--numbat-unit`. */
+.numbat-unit {
+  color: var(--numbat-unit, var(--code-function, var(--color-purple)));
+}
+
+.numbat-identifier {
+  color: var(--text-normal);
+}
+
+.numbat-type-identifier {
+  color: var(--code-property, var(--color-blue));
+  font-style: italic;
+}
+
+/* Physical dimensions (Length, Time, …). Numbat renders these like types, but the plugin colors
+ * them distinctly (semantic highlighting) — a type-like italic in a separate hue. Uses
+ * `--code-important` so dimensions stay clear of both units (`--code-function`) and ordinary
+ * expressions. Override with `--numbat-dimension`. */
+.numbat-dimension {
+  color: var(--numbat-dimension, var(--code-important, var(--color-red)));
+  font-style: italic;
+}
+
+.numbat-string {
+  color: var(--code-string, var(--color-green));
+}
+
+.numbat-operator {
+  color: var(--code-operator, var(--text-normal));
+  font-weight: 600;
+}
+
+.numbat-decorator {
+  color: var(--code-function, var(--color-purple));
+}
+
+.numbat-comment {
+  color: var(--code-comment, var(--text-faint));
+  font-style: italic;
+}
+
+.numbat-dimmed {
+  color: var(--text-faint);
+}
+
+.numbat-emphasized {
+  font-weight: 600;
+}
+
+.numbat-diagnostic-red {
+  color: var(--color-red);
+}
+
+.numbat-diagnostic-blue {
+  color: var(--color-blue);
+}
+
+.numbat-diagnostic-bold {
+  font-weight: 700;
+}
+
+/* --- Inlay hints (editor) ----------------------------------------------- */
+
+/* Inline results and type hints painted into numbat code blocks in Source mode / Live Preview
+ * (see evaluation/inlay.ts). The container dims its contents — so the reused `numbat-*` token
+ * spans inside keep their hue but read as muted annotations, never as editable code — and is
+ * non-selectable so it stays out of copies and the cursor. */
+.numbat-inlay {
+  opacity: 0.6;
+  font-style: italic;
+  user-select: none;
+  pointer-events: none;
+  /* `pre-wrap`, not `pre`: it still preserves the virtual leading space(s) baked into the widget,
+   * but lets a long hint soft-wrap with the line instead of overflowing the code block's width.
+   * With no width constraint (horizontal-scroll editors) there is nothing to wrap against, so it
+   * reads like `pre` there. */
+  white-space: pre-wrap;
+}
+
+/* A binding's inferred type, sitting just after the name (`let x‹: Length›`). */
+.numbat-inlay-type {
+  margin-left: 0.15em;
+}
+
+/* An expression's result (`= 7 m [Length]`) and an incomplete expression's placeholder type sit at
+ * the end of the line. Their separation from the code is a single virtual space baked into the
+ * widget (see endPadding in evaluation/inlay-parse.ts), so no left margin is added here — that
+ * keeps the gap tight and on the monospace grid. */
+.numbat-inlay-hole {
+  color: var(--numbat-dimension, var(--code-important, var(--color-red)));
+}
+
+/* A failed statement's diagnostic summary, at the end of its last line — the theme's error color,
+ * dimmed like every inlay by the container. */
+.numbat-inlay-error {
+  color: var(--text-error);
+}
+
+/* --- Inline expression evaluation --------------------------------------- */
+
+/* The `n` / `nc` trigger prefix, a span's `{…}` config, and the `⇒` separator of a concrete span
+ * are dimmed so the eye reads the expression (and its value), not the markers. */
+.numbat-inline-prefix,
+.numbat-inline-config,
+.numbat-inline-sep {
+  opacity: 0.5;
+}
+
+/* The live `= value` widget after a span (see evaluation/inline.ts). Unlike the inlay hints it is NOT
+ * dimmed — it is a real, actionable result — and it is clickable to commit, so it keeps pointer
+ * events (which `.numbat-inlay` drops) and shows a pointer cursor. The reused `numbat-*` token
+ * spans inside carry the color. */
+.numbat-inline-result {
+  cursor: pointer;
+  user-select: none;
+  white-space: pre-wrap;
+}
+
+.numbat-inline-result:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+/* Non-interactive hints after a span (see InlineHintWidget): a `let` binding's value, an error's
+ * summary line, or an incomplete expression's ⟨Type⟩ placeholder. Styled like the code-block inlay
+ * hints — dimmed, italic, non-selectable — so they read as annotations, in contrast to the bright,
+ * clickable result widget above. */
+.numbat-inline-hint {
+  opacity: 0.6;
+  font-style: italic;
+  user-select: none;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
+/* The error summary reads in the theme's error color. */
+.numbat-inline-error {
+  color: var(--text-error);
+}
+
+/* The typed-hole placeholder colors like the code-block one (.numbat-inlay-hole). */
+.numbat-inline-hole {
+  color: var(--numbat-dimension, var(--code-important, var(--color-red)));
+}
+
+/* A rendered inline value in reading view (see evaluation/inline-reading.ts): inline flow with no code
+ * background, so the value sits in the prose; the inner `numbat-*` token spans color it. */
+.numbat-inline-value {
+  font-family: inherit;
+}
+
+/* The echoed expression, when reading view shows `expression = value`. */
+.numbat-inline-expr {
+  opacity: 0.7;
+}
+
+/* --- Rendered code blocks ----------------------------------------------- */
+
+.numbat-block {
+  margin: 0.4em 0;
+}
+
+.numbat-output {
+  margin: 0;
+  padding: 0.75em 1em;
+  border-radius: var(--radius-s);
+  background-color: var(--code-background, var(--background-secondary));
+  font-family: var(--font-monospace);
+  font-size: var(--code-size, 0.9em);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  tab-size: 4;
+}
+
+.numbat-output.numbat-error {
+  border-left: 3px solid var(--color-red);
+}
+
+/* --- Numbat file editor (.nbt) ------------------------------------------- */
+
+/* The editor manages its own scrolling and fills the leaf, so drop the view's default content 
+ * padding — otherwise the document scrolls inside a box that is itself inset, and the last line
+ * hides under the bottom edge. */
+.workspace-leaf-content[data-type="numbat-file"] .view-content {
+  padding: 0;
+}
+
+.numbat-file-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Shown only for a file that is part of the user prelude, when that prelude — or this file's place
+ * in it — fails to load. Otherwise the failure is invisible: the prelude simply stops applying, 
+ * everywhere in the vault at once. */
+.numbat-file-banner {
+  flex: 0 0 auto;
+  padding: 0.6em 0.9em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.numbat-file-banner-label {
+  margin-bottom: 0.3em;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+}
+
+.numbat-file-banner .numbat-output {
+  margin: 0;
+  background: none;
+}
+
+.numbat-file-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Fill the pane and scroll within it. The chrome Obsidian gives `.cm-editor` in a document is
+ * stripped, as in the REPL input, so the file reads as plain source. */
+.numbat-file-editor .cm-editor {
+  height: 100%;
+  background: transparent;
+}
+
+.numbat-file-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.numbat-file-editor .cm-scroller {
+  font-family: var(--font-monospace, monospace);
+  font-size: var(--code-size, 0.9em);
+  line-height: 1.5;
+}
+
+.numbat-file-editor .cm-content {
+  padding: 0.75em 0;
+}
+
+.numbat-file-editor .cm-line {
+  padding: 0 0.9em;
+}
+
+/* The line-number gutter, shown when Obsidian's own "Show line number" setting is on. Given the
+ * app's muted color and the editor's own metrics, rather than CodeMirror's defaults, so it reads
+ * like the gutter in a note. */
+.numbat-file-editor .cm-gutters {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+}
+
+.numbat-file-editor .cm-lineNumbers .cm-gutterElement {
+  padding: 0 0.6em 0 0.9em;
+  min-width: 2ch;
+}
+
+/* CodeMirror's own find panel — Obsidian's Ctrl+F is bound to the Markdown editor and never reaches
+ * this view, so this is the search bar here. Given the app's input styling rather than the
+ * library's defaults. */
+.numbat-file-editor .cm-panels {
+  border-color: var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.numbat-file-editor .cm-panel.cm-search input,
+.numbat-file-editor .cm-panel.cm-search button {
+  font-family: inherit;
+  font-size: var(--font-ui-small);
+}
+
+/* --- Caret and selection (CodeMirror-drawn) ------------------------------ */
+
+/* Every Numbat editor installs `drawSelection()`, so the caret and the selection are CodeMirror's
+ * elements rather than the browser's. Themed here, once, for all three surfaces — the `.nbt` file,
+ * the REPL input, and the property field — because CodeMirror's own defaults are a fixed gray that
+ * belongs to no theme. */
+.numbat-file-editor .cm-cursor,
+.numbat-repl-input-row .cm-cursor,
+.numbat-property .numbat-property-input .cm-cursor {
+  border-left-color: var(--text-normal);
+}
+
+.numbat-file-editor .cm-selectionBackground,
+.numbat-repl-input-row .cm-selectionBackground,
+.numbat-property .numbat-property-input .cm-selectionBackground,
+.numbat-file-editor .cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
+.numbat-repl-input-row .cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
+.numbat-property .numbat-property-input .cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+  background: var(--text-selection);
+}
+
+/* --- Vim block cursor ---------------------------------------------------- */
+
+/* `@replit/codemirror-vim` draws normal-mode's block cursor itself, as an absolutely positioned
+ * piece over the character, and its own theme paints that piece a hardcoded `#ff9696` with the
+ * glyph redrawn on top. That belongs to no Obsidian theme, and against some it is invisible
+ * outright — so both editors that host the package (the `.nbt` file and the REPL input) restyle it
+ * here.
+ *
+ * The piece is made translucent and its own glyph transparent, so what shows is the *real*
+ * character under a tinted block: legible in any theme, and never a second copy of the text drawn
+ * slightly off. `color` needs `!important` because the piece carries an inline color (which is
+ * also how the library hides it when unfocused).
+ *
+ * `--text-selection` is the fallback for a renderer without `color-mix`; the invalid-declaration
+ * rule drops the second line there and keeps the first. */
+.numbat-file-editor .cm-editor .cm-fat-cursor,
+.numbat-repl-input-row .cm-editor .cm-fat-cursor {
+  background: var(--text-selection);
+  background: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: transparent !important;
+  border-radius: 1px;
+}
+
+/* Unfocused, the library already blanks the glyph; an outline is enough to say where the caret will
+ * be when the editor is given focus back. */
+.numbat-file-editor .cm-editor:not(.cm-focused) .cm-fat-cursor,
+.numbat-repl-input-row .cm-editor:not(.cm-focused) .cm-fat-cursor {
+  background: none;
+  outline: 1px solid var(--text-faint);
+}
+
+/* --- Sidebar REPL -------------------------------------------------------- */
+
+/* The REPL manages its own padding, so drop the view's default content padding (otherwise it leaves
+ * an empty strip below the input row). The bottom inset is kept, though: it holds the input row 
+ * clear of the device's home indicator via the safe-area inset, and rises to clear whatever 
+ * overlaps the view's bottom edge — the on-screen keyboard on mobile, or the status bar in the 
+ * sidebar's bottom split on desktop — from the JS-set `--numbat-repl-bottom-inset` (see
+ * views/repl.ts), so the input row is never left stranded behind it. `border-box` keeps the inset
+ * inside the full-height view rather than overflowing it. */
+.workspace-leaf-content[data-type="numbat-repl"] .view-content {
+  box-sizing: border-box;
+  padding: 0;
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), var(--numbat-repl-bottom-inset, 0px));
+}
+
+.numbat-repl {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+}
+
+.numbat-repl-log {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.75em;
+  font-family: var(--font-monospace);
+  /* `--numbat-repl-view-font-size` is set from the plugin's "REPL view font size" setting; it falls
+   * back to the theme's code size when unset. */
+  font-size: var(--numbat-repl-view-font-size, var(--code-size, 0.9em));
+  line-height: 1.5;
+  /* The REPL is a custom ItemView; Obsidian's chrome makes non-content surfaces unselectable, so
+   * re-enable selection here to make the scrollback copyable. (The `>>>` prompt keeps its own
+   * `user-select: none`, so it stays out of copies.) */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Blank spacer appended by Ctrl+L to push the existing log up off-screen; its height (the visible
+ * log height) is set inline. Non-interactive. */
+.numbat-repl-clear-spacer {
+  pointer-events: none;
+}
+
+.numbat-repl-entry {
+  margin: 0 0 0.5em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.numbat-repl-entry.numbat-output {
+  padding: 0.25em 0;
+  background: none;
+  border-radius: 0;
+  /* Inherit the log's `--numbat-repl-view-font-size`; without this the shared `.numbat-output` rule
+   * pins result rows to the theme's `--code-size`, so they ignore the "REPL view font size"
+   * setting. */
+  font-size: inherit;
+}
+
+.numbat-repl-entry.numbat-output.numbat-error {
+  padding-left: 0.5em;
+}
+
+.numbat-repl-command {
+  color: var(--text-muted);
+}
+
+.numbat-repl-echo {
+  color: var(--text-normal);
+}
+
+.numbat-repl-info,
+.numbat-repl-loading {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.numbat-repl-input-row {
+  display: flex;
+  /* Align to the first line: everything sits level when the input is a single line, and the
+   * prompt/buttons stay with the first line when it grows. */
+  align-items: flex-start;
+  gap: 0.4em;
+  padding: 0.5em 0.75em;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Shared line metrics so the prompt, the input's first line, and the buttons all sit on one
+ * baseline. */
+.numbat-repl-prompt,
+.numbat-repl-input-row .cm-content,
+.numbat-repl-esc-button,
+.numbat-repl-submit-button {
+  font-size: var(--numbat-repl-input-font-size, var(--code-size, 0.9em));
+  line-height: 1.5;
+}
+
+.numbat-repl-prompt {
+  color: var(--text-accent);
+  font-weight: 700;
+  font-family: var(--font-monospace);
+  user-select: none;
+}
+
+/* The CodeMirror 6 input editor fills the row between the prompt and (on mobile) the submit button.
+ * Strip the chrome Obsidian gives `.cm-editor` in a document so it reads as a bare line like the 
+ * rest of the bar. Token color comes from the same decoration highlighter the code blocks
+ * use (`numbatReplHighlight` in syntax/highlight.ts), not from the language mode in
+ * syntax/language.ts, which supplies token semantics only; views/input.ts hosts both. */
+.numbat-repl-input-row .cm-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+}
+
+.numbat-repl-input-row .cm-editor.cm-focused {
+  outline: none;
+}
+
+/* Cap the height and scroll past it (matching the old textarea's max-height), and use the monospace
+ * code font rather than the document text font. */
+.numbat-repl-input-row .cm-scroller {
+  max-height: 40vh;
+  font-family: var(--font-monospace, monospace);
+  line-height: 1.5;
+}
+
+/* Zero the document padding CodeMirror/Obsidian add so the first glyph aligns with the prompt. (The
+ * caret is drawn by CodeMirror, not the browser — see the shared caret/selection rules below — so
+ * it is colored there, not here.) */
+.numbat-repl-input-row .cm-content {
+  padding: 0;
+}
+
+.numbat-repl-input-row .cm-line {
+  padding: 0;
+}
+
+.numbat-repl-input-row .cm-placeholder {
+  color: var(--text-faint);
+}
+
+/* The Vim command/search line (`:`, `/`) that codemirror-vim shows as a panel at the bottom of the 
+ * editor. Left to itself it renders as CodeMirror's default (light) panel with an Obsidian-chromed
+ * input; normalize it to the bare, monospace, theme-colored line the rest of the input uses. */
+.numbat-repl-input-row .cm-panels {
+  background: transparent;
+  border: none;
+  color: var(--text-normal);
+}
+
+.numbat-repl-input-row .cm-vim-panel {
+  padding: 0;
+  background: transparent;
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--numbat-repl-input-font-size, var(--code-size, 0.9em));
+}
+
+.numbat-repl-input-row .cm-vim-panel input {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: inherit;
+}
+
+/* Make the command line replace the input line rather than stack beneath it: while the panel is
+ * open, hide the input content so the panel (rendered at the bottom of the editor) sits on the
+ * input's row, next to the prompt. */
+.numbat-repl-input-row .cm-editor:has(.cm-vim-panel) .cm-scroller {
+  display: none;
+}
+
+/* …and the prompt reads "e >" (Vim ex mode; three chars wide to line up with ">>>") instead of
+ * ">>>". The `>>>` text is collapsed and the replacement drawn as a pseudo-element (inheriting the
+ * prompt's accent/weight/font), its size restored from the zeroed parent. */
+.numbat-repl-input-row:has(.cm-vim-panel) .numbat-repl-prompt {
+  font-size: 0;
+}
+
+.numbat-repl-input-row:has(.cm-vim-panel) .numbat-repl-prompt::before {
+  content: "e >";
+  font-size: var(--numbat-repl-input-font-size, var(--code-size, 0.9em));
+}
+
+/* The mobile input buttons — the Vim Esc (⎋), at the left before the prompt, and the "evaluate"
+ * button at the right — share one style: a rounded accent-colored pill, one line tall (the button
+ * shares the input's font-size, so 1.5em here equals one input line box) so its centered symbol/icon
+ * sits on the input's first-line centerline with the prompt. */
+.numbat-repl-esc-button,
+.numbat-repl-submit-button {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5em;
+  min-width: 1.6em;
+  padding: 0 0.4em;
+  background: var(--background-modifier-hover);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  box-shadow: none;
+  cursor: pointer;
+  color: var(--text-accent);
+}
+
+/* Size the icon to the surrounding text so it reads as part of the line. */
+.numbat-repl-submit-button svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.numbat-repl-esc-button:hover,
+.numbat-repl-submit-button:hover {
+  color: var(--text-normal);
+}
+
+/* Rows in the `\code` completion popover (native EditorSuggest): the glyph in a fixed-width gutter, 
+ * then its `\code`. Deliberately NOT flex: a block-level flex row does not report its content width 
+ * to the shrink-to-fit popover (cramping the codes), and `inline-flex` makes the rows flow several 
+ * to a line. Plain inline content — an inline-block glyph gutter plus the code — sizes the row 
+ * correctly and keeps one suggestion per line. */
+.numbat-unicode-suggestion {
+  white-space: nowrap;
+}
+
+.numbat-unicode-suggestion-glyph {
+  display: inline-block;
+  width: 1.5em;
+  margin-inline-end: 0.6em;
+  text-align: center;
+  font-size: 1.1em;
+}
+
+.numbat-unicode-suggestion-code {
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+}
+
+/* The REPL's CodeMirror autocomplete popup. Both `\code` and history rows show their label in the 
+ * monospace code font, like the input; `\code` rows also carry a leading glyph gutter (reusing 
+ * .numbat-unicode-suggestion-glyph above) and muted code text, matching the editor's `\code` 
+ * completer. */
+.numbat-repl-code-completion .cm-completionLabel,
+.numbat-repl-history-completion .cm-completionLabel {
+  font-family: var(--font-monospace);
+}
+
+.numbat-repl-code-completion .cm-completionLabel {
+  color: var(--text-muted);
+}
+
+/* --- Expression completion (identifiers / keywords / types) -------------- */
+
+/* Rows in the editor's expression-completion popover (native EditorSuggest) and the REPL's 
+ * CodeMirror popup, laid out the same: the name, its `: type` signature hugging it (packed left 
+ * with `flex-start`), then the category tag pushed to the right edge. `justify-content` is explicit 
+ * so no inherited `space-between` can spread the name and signature into separate columns; the REPL 
+ * rule is scoped under the popup class to win the cascade. */
+.numbat-expr-suggestion,
+.numbat-repl-completions .numbat-repl-expr-completion {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+}
+
+.numbat-expr-suggestion-name,
+.numbat-repl-expr-completion .cm-completionLabel {
+  flex: none;
+  font-family: var(--font-monospace);
+}
+
+/* The inline `type()` signature: sits directly after the name, one space from it (a fixed margin, 
+ * since the `: ` separator is a pseudo-element kept out of the semantic HTML), natural width so it 
+ * stays attached — not a stretched middle column. It shows in full when it fits, and ellipsizes 
+ * only when the whole row runs out of width (bounded by the popover, not a fixed per-signature cap, 
+ * so a short name leaves its long signature room). Muted so it does not overpower the name. Shared 
+ * by the editor popover and the REPL popup. */
+.numbat-signature {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 0.6ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  opacity: 0.55;
+}
+
+.numbat-signature::before {
+  content: ": ";
+}
+
+/* The trailing category tag, shared by the editor popover and the REPL popup: pushed to the right 
+ * edge (with a gap from the signature) via the auto margin, so it reaches the edge with or without 
+ * a signature present. It carries a `numbat-*` syntax class for its color (so it reads like 
+ * highlighted code); those classes are declared earlier, so no `color` is set here. */
+.numbat-expr-suggestion-kind {
+  flex: none;
+  margin-left: auto;
+  padding-left: 1.5em;
+  font-size: 0.75em;
+  font-style: normal;
+  font-weight: normal;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+
+/* The REPL completion popup itself (rendered on document.body — see views/input.ts): lift it above 
+ * the workspace so it is never painted under the main editor when it overflows the sidebar, and 
+ * bound its width so long signatures ellipsize rather than stretching it across the screen. */
+.numbat-repl-completions {
+  /* Just below the dwell documentation popup (9999) so that stays on top. The width is 
+   * intentionally left to CodeMirror's own responsive default on the list 
+   * (`max-width: min(700px, 95vw)`), which already keeps the popup inside the viewport on a 
+   * width-constrained device — overriding it is what cut signatures short before. */
+  z-index: 9998;
+}
+
+/* Force the REPL rows' layout past Obsidian's own styling of the CodeMirror completion tooltip, 
+ * which otherwise spreads the name and signature into columns. (The editor popover is Obsidian's 
+ * native suggester — a different DOM — so it needs none of this.) `!important` is deliberate: it 
+ * overrides app-level rules whose specificity we cannot otherwise predict. */
+.numbat-repl-completions .numbat-repl-expr-completion {
+  justify-content: flex-start !important;
+}
+
+.numbat-repl-completions .numbat-repl-expr-completion .cm-completionLabel {
+  flex: none !important;
+}
+
+.numbat-repl-completions .numbat-repl-expr-completion .numbat-signature {
+  flex: 0 1 auto !important;
+}
+
+.numbat-repl-completions .numbat-repl-expr-completion .numbat-expr-suggestion-kind {
+  margin-left: auto !important;
+}
+
+/* The placeholder row shown while the wasm is still loading (editor popover). */
+.numbat-expr-loading {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* The floating documentation popup shown after a completion has been selected for a moment (the 
+ * `print_info` docs). Fixed-position, above the completer, clamped to the viewport by JS (see 
+ * completion/render.ts's DocPopup); may be wider than the completer. z-index is above the 
+ * completers (which sit on Obsidian's menu layer). */
+.numbat-doc-popup {
+  position: fixed;
+  z-index: 9999;
+  display: none;
+  max-width: min(52ch, 90vw);
+  max-height: 45vh;
+  overflow: auto;
+  padding: 0.6em 0.8em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller, 0.85em);
+  line-height: 1.5;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.numbat-doc-popup.is-visible {
+  display: block;
+}
+
+/* Preserve the line structure of the `print_info` body (Function/Signature/…). */
+.numbat-doc-body {
+  white-space: pre-wrap;
+}
+
+/* The field labels (`Function:`, `Type:`, `A unit of:`, …) read as headers. */
+.numbat-doc-label {
+  font-weight: 600;
+}
+
+/* --- Hover (see hover/hover.ts) ------------------------------------------ */
+
+/* The hover card is the completer's documentation popup, opened by pointing at a symbol instead of 
+ * by completing one — so it takes the same box, with CodeMirror owning the placement (the 
+ * completer's popup positions itself; this one is anchored to the token by a CM6 tooltip). 
+ *
+ * The two trigger paths wrap the card differently — a caret-dwell tooltip *is* the `.cm-tooltip` 
+ * element, while a mouse tooltip is hosted inside one as a `.cm-tooltip-section` — so both shapes 
+ * are selected here. Both selectors are deliberately two classes deep: CodeMirror's base theme 
+ * styles `.cm-tooltip` at that specificity (including a light background it applies whatever the 
+ * Obsidian theme), and a single-class rule loses to it. The wrapper's own frame is dropped below so 
+ * neither path draws two. */
+.cm-tooltip.numbat-hover-tooltip,
+.cm-tooltip .numbat-hover-tooltip {
+  max-width: min(52ch, 90vw);
+  max-height: 45vh;
+  overflow: auto;
+  padding: 0.6em 0.8em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller, 0.85em);
+  line-height: 1.5;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* A card hosted inside CodeMirror's tooltip wrapper (the mouse path) must not be framed twice: the 
+ * card draws the border, background and padding, so the wrapper draws none — including the divider 
+ * the base theme puts between sections. */
+.cm-tooltip.cm-tooltip-hover:has(.numbat-hover-tooltip) {
+  border: none;
+  background: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.cm-tooltip .numbat-hover-tooltip.cm-tooltip-section {
+  border-top: none;
+}
+
+/* The card's text is the note's text color, not whatever CodeMirror's base theme decides for a 
+ * tooltip (it sets white on dark). */
+.cm-tooltip.numbat-hover-tooltip,
+.cm-tooltip .numbat-hover-tooltip {
+  color: var(--text-normal);
+}
+
+/* The go-to-definition row at the foot of a hover card: a full-width button that reads as a link, 
+ * with the location muted after it. Only a symbol the note's own scope defines has one. */
+.numbat-hover-definition {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  width: 100%;
+  margin-top: 0.5em;
+  padding: 0.25em 0;
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.numbat-hover-definition:hover,
+.numbat-hover-definition:focus-visible {
+  background: none;
+  box-shadow: none;
+}
+
+.numbat-hover-definition-label {
+  color: var(--text-accent);
+}
+
+.numbat-hover-definition:hover .numbat-hover-definition-label {
+  text-decoration: underline;
+}
+
+.numbat-hover-definition-where {
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+/* --- Settings: version / debug-info card -------------------------------- */
+
+/* The version card sits at the bottom of the settings tab as a boxed row. */
+.numbat-version-card {
+  margin-top: 1.5em;
+  padding-inline: 0.75em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+/* --- The Numbat property type (see properties/type.ts) ------------------ */
+
+/* The widget row inside the property's value cell: the expression input and its result annotation
+ * share the line and wrap together when narrow. A leading inset keeps the expression off the very 
+ * edge — Obsidian's own property inputs are inset the same way, and a bare cell (e.g. a Base's 
+ * table cell, which gives the widget no padding of its own) otherwise reads as cramped. */
+.numbat-property {
+  display: flex;
+  /* The expression and its `= value` share a baseline… */
+  align-items: baseline;
+  /* …and the line they form is centered in the cell. `align-items` only places the items within 
+   * their line; the line itself is placed by `align-content`, which wrapping makes apply — and its 
+   * default stretches the line to the cell's full height, seating both at the top of a row taller
+   * than they are. */
+  align-content: center;
+  gap: 0.5em;
+  flex-wrap: wrap;
+  width: 100%;
+  padding-inline-start: var(--size-4-2);
+}
+
+/* The expression field is a CodeMirror editor (it was a plain `<input>` until the completer moved 
+ * into it), so what follows strips the chrome CodeMirror and Obsidian give an editor inside a 
+ * document and gives it the row's own text metrics. It hugs its content, so the `= value` sits 
+ * right after the expression rather than across the cell. */
+.numbat-property .numbat-property-input {
+  flex: 0 1 auto;
+  min-width: 4em;
+  max-width: 100%;
+}
+
+.numbat-property .numbat-property-input .cm-editor {
+  background: transparent;
+}
+
+.numbat-property .numbat-property-input .cm-editor.cm-focused {
+  outline: none;
+}
+
+/* `overflow: visible` is load-bearing, not tidying: a scroll container exports no baseline, so the 
+ * row's flex `align-items: baseline` would fall back to the field's bottom edge and the expression 
+ * would sit off the property name's baseline. The editor wraps rather than scrolls (it is one line 
+ * of YAML), so nothing is lost. */
+.numbat-property .numbat-property-input .cm-scroller {
+  overflow: visible;
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+  line-height: inherit;
+}
+
+.numbat-property .numbat-property-input .cm-content {
+  width: max-content;
+  max-width: 100%;
+  min-height: 0;
+  padding: 0;
+  color: var(--text-normal);
+}
+
+.numbat-property .numbat-property-input .cm-line {
+  padding: 0;
+}
+
+.numbat-property .numbat-property-input .cm-placeholder {
+  color: var(--text-faint);
+}
+
+/* The evaluated `= value` (or error / ⟨Type⟩ placeholder) after the input — muted and 
+ * non-interactive, like the editor's inlay hints; the inner `numbat-*` token spans carry the 
+ * value's colors. */
+.numbat-property .numbat-property-result {
+  opacity: 0.75;
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+  font-style: italic;
+  user-select: none;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
+.numbat-property .numbat-property-error {
+  color: var(--text-error);
+}
+
+/* --- Note scope inspector ------------------------------------------------- */
+
+/* A collapsible tree of the active note's Numbat bindings. Everything is collapsed by default 
+ * except the node the caret is in (`.is-expanded`, set from views/scope.ts), which is highlighted 
+ * `.numbat-scope-current`. A column: the control bar pinned at the top (and, later, a search bar 
+ * pinned at the bottom), with only the tree between them scrolling. The panel's padding goes 
+ * through the leaf selector rather than the class below, even though both land on the same element: 
+ * Obsidian's own `.view-content` rules outrank a bare class on mobile, so a plain 
+ * `.numbat-scope-inspector { padding }` silently does nothing there.
+ *
+ * Longhands, deliberately — NOT the `padding` shorthand, which would reset the bottom to zero. On 
+ * mobile Obsidian's bottom padding is load-bearing: it reserves the floating view-selector pill and 
+ * grows with the on-screen keyboard, which is why the search bar needs no measuring of its own. 
+ * Zeroing it drops the bar behind the pill. */
+.workspace-leaf-content[data-type="numbat-scope"] .view-content {
+  /* `border-box` keeps the padding inside the full-height view rather than overflowing it. */
+  box-sizing: border-box;
+  padding-top: 0.5em;
+  padding-right: 0.25em;
+  padding-left: 0.25em;
+}
+
+/* Desktop has no floating view selector and nothing to reserve, so the search bar owns the bottom 
+ * edge there and keeps only its own resting gap. */
+body:not(.is-mobile) .workspace-leaf-content[data-type="numbat-scope"] .view-content {
+  padding-bottom: 0;
+}
+
+.numbat-scope-inspector {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  /* The class sits on the view's own content element, which Obsidian scrolls by default — hand that
+   * job to the tree below so the bars can stay put. */
+  overflow: hidden;
+  font-size: var(--font-ui-small);
+}
+
+/* The expand-all / collapse-all / reveal-active-line controls above the tree. */
+.numbat-scope-controls {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.15em;
+  padding: 0 0.25em 0.35em;
+  margin-bottom: 0.35em;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* The scrolling region between the pinned bars. `min-height: 0` is load-bearing: without it a flex 
+ * child refuses to shrink below its content, so the whole panel scrolls (taking the control bar
+ * with it) instead of just this region. */
+.numbat-scope-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* The reveal-active-line toggle when engaged. */
+.numbat-scope-controls .clickable-icon.is-active {
+  color: var(--text-on-accent);
+  background-color: var(--interactive-accent);
+}
+
+.numbat-scope-empty,
+.numbat-scope-banner {
+  padding: 0.75em;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.numbat-scope-node {
+  margin: 0;
+}
+
+.numbat-scope-header {
+  display: flex;
+  align-items: center;
+  gap: 0.25em;
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  user-select: none;
+}
+
+.numbat-scope-header:hover {
+  background: var(--background-modifier-hover);
+}
+
+.numbat-scope-current > .numbat-scope-header {
+  background: var(--background-modifier-active-hover);
+}
+
+/* The chevron rotates down when its node is expanded. */
+.numbat-scope-twisty {
+  display: inline-flex;
+  color: var(--text-muted);
+  transition: transform 0.1s ease;
+}
+
+.numbat-scope-twisty .svg-icon {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.numbat-scope-node.is-expanded > .numbat-scope-header .numbat-scope-twisty {
+  transform: rotate(90deg);
+}
+
+.numbat-scope-label {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.numbat-scope-badge {
+  padding: 0 0.4em;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+}
+
+/* Children are hidden until their node is expanded; indented under the header. */
+.numbat-scope-children {
+  display: none;
+  padding-left: 1em;
+  border-left: 1px solid var(--background-modifier-border);
+  margin-left: 0.6em;
+}
+
+.numbat-scope-node.is-expanded > .numbat-scope-children {
+  display: block;
+}
+
+/* The leading inset leaves room for the active-line bar (below) to sit clear of the name, and is on
+ * every row so the text never shifts when the bar appears. */
+.numbat-scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1em 0.4em;
+  padding: 0.1em 0.35em 0.1em 0.7em;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.numbat-scope-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* The declaration the caret is on. Marked with an accent bar rather than a fill, so it reads as 
+ * "you are here" against the current node's own highlight — and it is painted whether or not 
+ * revealing is engaged. */
+.numbat-scope-row.numbat-scope-current-row {
+  background: var(--background-modifier-active-hover);
+  box-shadow: inset 2px 0 0 var(--interactive-accent);
+}
+
+/* A binding a later same-name binding supersedes. */
+.numbat-scope-row.numbat-scope-shadowed {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.numbat-scope-name {
+  font-family: var(--font-monospace);
+  color: var(--text-normal);
+}
+
+.numbat-scope-type {
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+  opacity: 0.85;
+}
+
+/* A kind chip on a non-`let` declaration (unit / fn / dimension). */
+.numbat-scope-kind {
+  padding: 0 0.3em;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+}
+
+.numbat-scope-value {
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+}
+
+.numbat-scope-eq {
+  color: var(--text-faint);
+}
+
+.numbat-scope-value.numbat-scope-hole {
+  color: var(--text-accent);
+  font-style: italic;
+}
+
+.numbat-scope-value.numbat-scope-error {
+  color: var(--text-error);
+}
+
+/* A skipped frontmatter property: its key, why it was skipped, and the message. */
+.numbat-scope-skip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1em 0.4em;
+  padding: 0.1em 0.35em;
+  color: var(--text-muted);
+}
+
+.numbat-scope-skip .numbat-scope-name {
+  color: var(--text-muted);
+}
+
+.numbat-scope-skip-reason {
+  padding: 0 0.35em;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+  font-size: var(--font-smaller);
+}
+
+.numbat-scope-skip-message {
+  color: var(--text-faint);
+  font-size: var(--font-smaller);
+}
+
+/* --- Note scope inspector: search ----------------------------------------- */
+
+/* The results list and the query box below the tree. Results grow upward from the input, 
+ * compressing the tree rather than covering it, so the row a result selects can be watched 
+ * revealing itself above. */
+.numbat-scope-results {
+  /* `min-height: 0` for the same reason as the tree: a flex child otherwise refuses to shrink below 
+   * its content, and the list would push the input off-panel. */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 40%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Idle (no query): contribute no height at all, so the tree keeps the whole panel. */
+.numbat-scope-results:empty {
+  display: none;
+  border-top: none;
+}
+
+/* The bottom row. It adds no bottom padding of its own: on mobile that would sit on top of the 
+ * reservation Obsidian already makes above (the view-selector pill), and on desktop the view's own 
+ * bottom padding is zeroed for exactly this row.
+ *
+ * Deliberately no measured inset either, unlike the REPL (which zeroes its whole `.view-content` 
+ * padding and so must measure its own bottom edge — see `--numbat-repl-bottom-inset` above). 
+ * Obsidian lays this panel out clear of the status bar and the keyboard by itself; measuring here 
+ * only double-counted, leaving a gap that grew with the keyboard. */
+.numbat-scope-searchbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.35em 0.25em 0;
+  margin-top: 0.35em;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Desktop: a resting gap below the bar, matching the panel's top padding. On mobile Obsidian's own 
+ * bottom padding provides it. */
+body:not(.is-mobile) .numbat-scope-searchbar {
+  padding-bottom: 0.5em;
+}
+
+.numbat-scope-search-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.numbat-scope-search-icon .svg-icon {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+/* Obsidian's own search field — it brings the clear button, themed with every other search box in 
+ * the app. Let it take the rest of the row. */
+.numbat-scope-searchbar .search-input-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+/* Obsidian's search field draws its own magnifier inside the box; drop it, since the bar already 
+ * has one beside the field. The right padding still leaves room for the clear button. */
+.numbat-scope-searchbar .search-input-container::before {
+  display: none;
+}
+
+.numbat-scope-searchbar .search-input-container > input {
+  width: 100%;
+  height: auto;
+  padding: 0.35em 1.8em 0.35em 0.6em;
+  background-image: none;
+  font-size: var(--font-ui-small);
+}
+
+/* A result row reuses the completer's row layout (`.numbat-expr-suggestion`), so the three surfaces
+ * look identical; only the selection and provenance are added here. */
+.numbat-scope-result {
+  cursor: pointer;
+  border-radius: var(--radius-s);
+}
+
+.numbat-scope-result:hover {
+  background: var(--background-modifier-hover);
+}
+
+.numbat-scope-result.is-selected {
+  background: var(--background-modifier-active-hover);
+}
+
+/* A bundled-prelude item the note also binds: still listed (the note's binding may shadow it — or, 
+ * for a prelude alias, may never have defined at all), but muted. */
+.numbat-scope-result.is-shadowed .numbat-expr-suggestion-name {
+  opacity: 0.55;
+}
+
+/* Where a result came from — a node label, or `prelude` for a bundled item. Sits after the category
+ * tag, which the shared styling pushes to the right. */
+.numbat-scope-result-source {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 0.5em;
+  color: var(--text-faint);
+  font-size: var(--font-smaller);
+}
+
+/* "No matches." / "Loading…" / the truncation count. */
+.numbat-scope-results-note {
+  padding: 0.35em 0.5em;
+  color: var(--text-faint);
+  font-size: var(--font-smaller);
+  font-style: italic;
+}
+
+/* The tree row the selected result points at. A fill rather than a bar, so it reads distinctly from
+ * — and composes with — the caret's active-line accent. */
+.numbat-scope-row.numbat-scope-search-row,
+.numbat-scope-skip.numbat-scope-search-row {
+  background: var(--text-selection);
+  border-radius: var(--radius-s);
+}
+
+/* One labeled line of the popup card describing a binding from the note. */
+.numbat-scope-card-field {
+  white-space: pre-wrap;
+}
+
+/* Numbat's own reference link, below the documentation body. */
+.numbat-doc-reference {
+  display: block;
+  margin-top: 0.5em;
+  overflow-wrap: anywhere;
+  font-size: var(--font-smaller);
+}

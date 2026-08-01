@@ -1,0 +1,52 @@
+{
+  "name": "obsidian-symbat",
+  "version": "1.0.0",
+  "description": "Integrates the Numbat scientific calculator into your notes, with comprehensive tooling.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Ara Adkins",
+  "scripts": {
+    "build:wasm": "xonsh scripts/build-wasm.xsh",
+    "typecheck": "tsc",
+    "lint": "eslint . --max-warnings 0",
+    "bundle": "node esbuild.config.mjs production",
+    "bundle:watch": "node esbuild.config.mjs",
+    "dev": "npm run build:wasm && npm run bundle:watch",
+    "build": "npm run build:wasm && npm run typecheck && npm run bundle",
+    "test:unit": "node --import tsx --test \"test/unit/**/*.test.ts\"",
+    "test:integration": "node --import tsx --test \"test/integration/**/*.test.ts\"",
+    "test": "npm run test:unit && npm run test:integration",
+    "version": "node version-bump.mjs && git add manifest.json versions.json"
+  },
+  "//overrides": [
+    "Every @codemirror/* package is an esbuild `external`: Obsidian supplies one",
+    "copy of each at runtime, at the versions it pins as peer dependencies. Some",
+    "transitive dependents ask for newer, and npm would satisfy that by nesting a",
+    "second copy — which type-checks the plugin against APIs that will not be",
+    "there. Forcing the tree flat keeps the types honest about what ships."
+  ],
+  "overrides": {
+    "@codemirror/state": "6.5.0",
+    "@codemirror/view": "6.38.6"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/commands": "^6.7.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/search": "^6.7.1",
+    "@codemirror/state": "6.5.0",
+    "@codemirror/view": "6.38.6",
+    "@eslint/js": "^9.18.0",
+    "@lezer/highlight": "^1.2.0",
+    "@replit/codemirror-vim": "^6.3.0",
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.18.0",
+    "eslint-plugin-obsidianmd": "^0.4.1",
+    "globals": "^16.0.0",
+    "obsidian": "^1.13.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.20.0"
+  }
+}

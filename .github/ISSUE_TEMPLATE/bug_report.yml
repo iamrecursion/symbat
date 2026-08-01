@@ -1,0 +1,93 @@
+name: Bug report
+description: Something in Symbat behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Settings → Symbat → Copy debug info** (the card at the bottom of
+        the tab) collects the versions, your platform, and your plugin list in one click — pasting
+        it below saves a round trip.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        In a `numbat-shared` block I wrote …, and expected …, but the inline result showed …
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: >
+        Numbered steps, starting from a fresh note where possible. If Numbat source is involved,
+        paste the exact text — whitespace and unit spelling both matter. Include the frontmatter
+        if the note has any.
+      placeholder: |
+        1. Create a new note.
+        2. Add the frontmatter property `distance: 21.1 km`, typed Numbat.
+        3. Write `` n`distance -> mi` `` in the body.
+        4. The span shows … instead of …
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug-info
+    attributes:
+      label: Debug info
+      description: >
+        From **Settings → Symbat → Copy debug info**. This carries the Symbat and Obsidian versions,
+        your platform, and which community plugins you have installed and enabled.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where does it happen?
+      options:
+        - Desktop only
+        - Mobile only
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: other-plugins
+    attributes:
+      label: Does it still happen with other plugins disabled?
+      description: >
+        Symbat reaches into a few undocumented Obsidian surfaces — the property-type registry, the
+        comment command, Vim — where other plugins can genuinely collide with it. This narrows it
+        down fast.
+      options:
+        - "Yes — reproduces with only Symbat enabled"
+        - "No — it goes away when other plugins are disabled"
+        - "Not tried"
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: >
+        Anything relevant from the developer console (Ctrl/Cmd+Shift+I). Symbat's own messages are
+        prefixed `Symbat:`; messages naming `numbat_wasm` come from the interpreter itself.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am on the latest release of Symbat.
+          required: true
+        - label: I searched the existing issues.
+          required: true

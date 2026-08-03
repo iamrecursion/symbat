@@ -161,8 +161,12 @@ the [feature reference](docs/features.md).
 
 ## Installation
 
-Symbat bundles everything you need, but is not yet in the community plugin registry. To install it
-by hand:
+Symbat is most easily installed via its [listing](https://community.obsidian.md/plugins/symbat) on
+the Community Plugins Directory.
+
+If you want to install pre-release versions, we recommend using
+[BRAT](https://community.obsidian.md/plugins/obsidian42-brat). You can also install them yourself as
+follows:
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the
    [latest release](https://github.com/iamrecursion/symbat/releases/latest).

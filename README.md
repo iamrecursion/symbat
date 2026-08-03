@@ -24,7 +24,7 @@ power * runtime -> kWh    # 3.6 kWh
 
 ## Key Features
 
-<img src="assets/numbat-demo.png" align="right">
+<img src="assets/numbat-demo.png" alt="Symbat evaluating frontmatter, a shared block, and inline expressions in a note" align="right" width="440">
 
 _Click to learn more._
 

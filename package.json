@@ -5,14 +5,20 @@
   "type": "module",
   "license": "MIT",
   "author": "Ara Adkins",
+  "//scripts": [
+    "`build` deliberately does not chain `build:wasm`. That script needs a Rust",
+    "toolchain, a version-matched wasm-bindgen and binaryen; `npm run build` has",
+    "to work with none of them, because that is what Obsidian's plugin review",
+    "runs against a clean checkout. The generated bindings are committed instead",
+    "(see .gitignore), and `make wasm` regenerates them when NUMBAT_TAG moves."
+  ],
   "scripts": {
     "build:wasm": "xonsh scripts/build-wasm.xsh",
     "typecheck": "tsc",
     "lint": "eslint . --max-warnings 0",
     "bundle": "node esbuild.config.mjs production",
     "bundle:watch": "node esbuild.config.mjs",
-    "dev": "npm run build:wasm && npm run bundle:watch",
-    "build": "npm run build:wasm && npm run typecheck && npm run bundle",
+    "build": "npm run typecheck && npm run bundle",
     "test:unit": "node --import tsx --test \"test/unit/**/*.test.ts\"",
     "test:integration": "node --import tsx --test \"test/integration/**/*.test.ts\"",
     "test": "npm run test:unit && npm run test:integration",

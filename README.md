@@ -7,7 +7,10 @@ use it in code blocks, frontmatter properties, inline expressions, and the REPL,
 with comprehensive tooling like autocomplete, scope inspectors, and hover.
 
 Everything **runs locally**, with the entire Numbat standard library compiled into the WebAssembly
-binary. No network requests are ever made unless you opt into live currency rates.
+binary. No network requests are ever made unless you opt into live currency rates. The plugin never
+reads your clipboard — the one time it touches it is the **Copy debug info** button in the settings,
+which writes out version numbers, your platform, and the list of plugins you have installed, so you
+can paste it into a bug report.
 
 ```numbat
 let power = 1.2 kW

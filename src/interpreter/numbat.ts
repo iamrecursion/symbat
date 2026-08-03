@@ -569,7 +569,7 @@ export function getUnicodeCompletion(textBeforeCursor: string, leader: string): 
   try {
     // `get_unicode_completion` returns `[replaceLength, replacement]` on a match and `[]` otherwise
     // (a `Vec<JsValue>` marshalled to a JS array).
-    const result = context.get_unicode_completion(query) as unknown[];
+    const result = context.get_unicode_completion(query);
     if (!Array.isArray(result) || result.length !== 2) {
       return null;
     }
@@ -621,9 +621,9 @@ function ensureUnicodeCodeList(): UnicodeCode[] {
   }
 
   try {
-    const names = (context.get_completions_for("") as unknown[]).map((value) => String(value));
+    const names = context.get_completions_for("").map((value) => String(value));
     unicodeCodeList = buildUnicodeCodeList(names, (code) => {
-      const result = context.get_unicode_completion(code) as unknown[];
+      const result = context.get_unicode_completion(code);
       return Array.isArray(result) && result.length === 2 ? String(result[1]) : null;
     });
     return unicodeCodeList;
@@ -752,7 +752,7 @@ export function structFields(context: Numbat, base: string): string[] {
  */
 export function completionInfo(context: Numbat, name: string): CompletionInfo | null {
   try {
-    const raw = context.print_info(name) as unknown;
+    const raw = context.print_info(name);
 
     // `print_info` bypasses `interpret`, so it needs the same rewrite: a nested property's docs
     // would otherwise show the raw generated type name.
@@ -892,7 +892,7 @@ export function expressionCompletionCandidates(context: Numbat, query: string): 
   }
 
   try {
-    return (context.get_completions_for(query) as unknown[]).map((value) => String(value));
+    return context.get_completions_for(query).map((value) => String(value));
   } catch (error) {
     console.error("Symbat: expression completion crashed", error);
     invalidateExpressionCompletion();

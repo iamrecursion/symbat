@@ -13,6 +13,7 @@
 #   REQUIRE_WASM_OPT=1  fail rather than ship an unoptimized (~3x larger) wasm.
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,8 @@ NUMBAT_REPO = "https://github.com/sharkdp/numbat.git"
 # may not add it to PATH. Append rather than prepend: prepending lets a contributor's rustup shims 
 # shadow the devshell's pinned toolchain, so the build silently stops being the one the flake
 # describes.
-cargo_bin = Path($CARGO_HOME if "CARGO_HOME" in ${...} else str(Path.home() / ".cargo")) / "bin"
+cargo_home = Path($CARGO_HOME if "CARGO_HOME" in ${...} else str(Path.home() / ".cargo"))
+cargo_bin = cargo_home / "bin"
 if str(cargo_bin) not in $PATH:
     $PATH.append(str(cargo_bin))
 
@@ -75,11 +77,29 @@ if shutil.which("rustup"):
     subprocess.run(["rustup", "target", "add", "wasm32-unknown-unknown"], check=False)
 
 # 3. Compile the crate to wasm. `--locked` holds the build to the lockfile the tag was published
-#    with, so the output depends on NUMBAT_TAG alone. RUSTFLAGS is scoped to this one command: 
-#    setting it process-wide leaks into the `cargo install` below, which builds a host binary that
-#    must not see it.
+#    with, so the output depends on NUMBAT_TAG alone. The flags are scoped to this one command:
+#    setting them process-wide leaks into the `cargo install` below, which builds a host binary that
+#    must not see them.
+#
+#    `--remap-path-prefix` rewrites the two roots whose absolute paths rustc otherwise bakes into
+#    panic messages and debug info — the numbat checkout and the registry every dependency is
+#    unpacked into. Without it the binary names every source file by its full path on the machine
+#    that built it, which matters here for two reasons: `src/wasm/pkg` is committed to a public
+#    repository, so those paths would publish the builder's home directory, and they are the largest
+#    single reason two machines do not produce the same bytes for the same tag.
+#
+#    CARGO_ENCODED_RUSTFLAGS rather than RUSTFLAGS because cargo splits the latter on whitespace,
+#    which would corrupt any of these paths containing a space. Each \x1f-separated element is one
+#    argument, so `--cfg` and its value are separate entries — exactly the split RUSTFLAGS was
+#    relying on.
+rustflags = "\x1f".join([
+    "--cfg",
+    'getrandom_backend="wasm_js"',
+    f"--remap-path-prefix={build_dir}=/numbat",
+    f"--remap-path-prefix={cargo_home}=/cargo",
+])
 print(f"Compiling numbat-wasm ({NUMBAT_TAG}) for wasm32-unknown-unknown...")
-with ${...}.swap(RUSTFLAGS='--cfg getrandom_backend="wasm_js"'):
+with ${...}.swap(CARGO_ENCODED_RUSTFLAGS=rustflags):
     cargo build --release --locked --target wasm32-unknown-unknown --manifest-path @(str(wasm_crate / "Cargo.toml"))
 
 # 4. Ensure a wasm-bindgen CLI matching the crate's wasm-bindgen version. The generated glue is 
@@ -122,8 +142,34 @@ wasm-bindgen --target web --out-dir @(str(out_dir)) --out-name numbat_wasm @(str
 # module scope) that clears it, letting the next `init()` build a fresh instance.
 glue = out_dir / "numbat_wasm.js"
 glue.write_text(glue.read_text() + "\nexport function __numbat_reset() { wasm = undefined; }\n")
+
+# The declarations need four edits, all of them about the fact that this file is committed and so
+# gets linted by tools that are not ours.
+#
+#  * wasm-bindgen opens them with blanket `/* tslint:disable */` and `/* eslint-disable */`. This
+#    repository's ESLint ignores src/wasm outright, but Obsidian's plugin review runs its own config
+#    over the committed tree, where a rule-less, undescribed, never-re-enabled disable is an error —
+#    and so is suppressing the rules it covers.
+#  * Those disables existed to hide the `any`s the generator emits for values it cannot describe.
+#    Widening them to `unknown` removes the reason for the suppression rather than the evidence of
+#    it, and costs nothing: every consumer in src/ already narrows these (`as unknown`,
+#    `as unknown[]`), `help()` is never called at all, and the low-level `InitOutput` interface the
+#    `=> any` pair lives on is not referenced anywhere outside this file.
+#  * `Numbat::new` reaches TypeScript as `static new(...): Numbat`, which `no-misused-new` rejects
+#    outright — the rule matches a class method named `new` returning its own class, with no option
+#    to permit it. Declaring the same thing as a function-valued static property is exactly as
+#    accurate (a static method *is* a property holding a function; neither overloading nor method
+#    bivariance is in play here) and leaves the runtime name alone, so `Numbat.new(...)` still
+#    matches the Rust API that every call site and Numbat's own documentation are written against.
+#    Renaming it would have meant the opposite trade: a lint-clean file that no longer describes
+#    upstream.
+#  * The reset hook declared below, matching the one appended to the glue above.
 glue_dts = out_dir / "numbat_wasm.d.ts"
-glue_dts.write_text(glue_dts.read_text() + "\nexport function __numbat_reset(): void;\n")
+dts = glue_dts.read_text()
+dts = re.sub(r"^/\* (?:tslint:disable|eslint-disable) \*/\n", "", dts, flags=re.MULTILINE)
+dts = dts.replace(": any", ": unknown").replace("=> any", "=> unknown")
+dts = re.sub(r"^(\s*)static new(\(.*\)): (\w+);$", r"\1static new: \2 => \3;", dts, flags=re.MULTILINE)
+glue_dts.write_text(dts + "\nexport function __numbat_reset(): void;\n")
 
 # 6. Shrink the binary. This is worth roughly 3x on the bundle, so a release build sets
 #    REQUIRE_WASM_OPT to make a missing binaryen an error rather than a line of output nobody reads.

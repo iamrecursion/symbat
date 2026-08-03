@@ -15,12 +15,13 @@ It is always cheaper to talk about an approach than to review one.
 
 We use a [Nix](https://lix.systems)-based development environment, so we recommend that you
 [install](https://lix.systems/install/) it before doing anything else. The plugin bundles a
-WebAssembly build of [`sharkdp/numbat`](https://github.com/sharkdp/numbat). Nothing generated or
-binary is committed to this repository.
+WebAssembly build of [`sharkdp/numbat`](https://github.com/sharkdp/numbat), and that build —
+`src/wasm/pkg` — is the one generated thing this repository commits, for the reason given under
+[Building the WASM](#building-the-wasm). The bundle itself (`main.js`) is not.
 
 ```sh
 nix develop        # Rust, Node, xonsh, wasm-bindgen, binaryen, dprint
-make build         # build the wasm, type-check, and bundle main.js
+make build         # type-check and bundle main.js (the wasm comes with the checkout)
 make check         # exactly what CI runs
 ```
 
@@ -113,19 +114,35 @@ handles the entire build process. It clones a **pinned** version of `sharkdp/num
 generated glue with a `__numbat_reset()` export, and then optimizes the result with `wasm-opt -Oz`.
 The output then lands in `src/wasm/pkg`, which is then inlined by esbuild.
 
-Nothing generated is **ever** committed.
+**The output is committed**, which is the one exception to this repository's rule about generated
+files. Obsidian's plugin review builds a clean checkout with nothing but `npm ci && npm run build`,
+and no amount of packaging makes a Rust toolchain, a version-matched `wasm-bindgen` and `binaryen`
+appear on that path — so a repository that can only produce its bundle inside the devshell cannot be
+reviewed. `npm run build` therefore type-checks and bundles, and nothing more; regenerating the
+bindings is `make wasm`, and only a `NUMBAT_TAG` bump needs it.
+
+This does not weaken what a release is: the release workflow deletes `src/wasm/pkg` before building,
+so what ships is always compiled from the pinned source during that run, never lifted out of the
+repository. CI, meanwhile, fails if the committed bindings do not carry the pinned tag.
 
 - **The pinned tag lives at the top of the script** as `NUMBAT_TAG`. Bumping it is a deliberate
-  change: it moves the entire standard library the plugin ships.
+  change: it moves the entire standard library the plugin ships — and you must commit the
+  regenerated `src/wasm/pkg` along with it, which CI checks.
 - The **two stamp files** (`.build/numbat/.numbat-tag` and `src/wasm/pkg/.numbat-tag`) record which
   tag each directory actually holds, and each is written only after its step succeeds. That is what
   makes the build skippable without making a tag bump silently rebuild old sources under a new name.
 - **`REQUIRE_WASM_OPT=1`** makes a missing `wasm-opt` a hard failure rather than a silent 3× size
   regression. The release workflow sets it.
+- **`--remap-path-prefix`** rewrites the numbat checkout and the cargo registry to `/numbat` and
+  `/cargo`. rustc otherwise names every source file by its absolute path in panic messages and debug
+  info, which — now that the bindings are committed to a public repository — would publish the home
+  directory of whoever built them. It also removes the largest single source of difference between
+  two machines building the same tag.
 - The script is written in **xonsh** for maintainability and readability. The flake provides it, so
   the devshell remains the supported way to build the plugin.
 
-To force a rebuild, delete `src/wasm/pkg/` or run `make clean`.
+To force a rebuild, delete `src/wasm/pkg/` and run `make wasm`. `make clean` deliberately leaves it
+alone, since it is tracked and removing it would leave you with a dirty tree.
 
 ### Tests
 

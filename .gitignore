@@ -1,11 +1,17 @@
-# Build output. `main.js` is the esbuild bundle and `src/wasm/pkg` the
-# wasm-bindgen output; both are produced by `make build`, and the release
-# workflow attaches `main.js` to the GitHub release. The leading slashes anchor
+# Build output. `main.js` is the esbuild bundle, produced by `make build`; the
+# release workflow attaches it to the GitHub release. The leading slashes anchor
 # these to the repository root so they cannot match anything inside the vendored
 # numbat checkout.
+#
+# `src/wasm/pkg` is deliberately NOT here, though it is generated too. Building
+# it needs a Rust toolchain, a matching wasm-bindgen and binaryen, none of which
+# a plain `npm ci && npm run build` has — and that build is what Obsidian's
+# plugin review runs. Committing the bindings is what lets a clean checkout
+# produce a bundle. `make wasm` regenerates them when NUMBAT_TAG moves; the
+# release workflow rebuilds them from pinned source regardless, so what ships is
+# never merely what was committed here.
 /main.js
 /main.js.map
-/src/wasm/pkg/
 
 # The pinned sharkdp/numbat checkout and its cargo target directory.
 /.build/

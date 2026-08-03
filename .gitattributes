@@ -1,0 +1,6 @@
+# The wasm-bindgen output is generated but committed, so that a clean checkout
+# can bundle the plugin without a Rust toolchain (see .gitignore). Marking it
+# generated keeps it out of GitHub's language statistics and collapses it in
+# diffs and pull requests, which matters because a NUMBAT_TAG bump rewrites all
+# of it at once and none of it is reviewable by hand.
+src/wasm/pkg/** linguist-generated=true

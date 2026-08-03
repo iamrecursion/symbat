@@ -17,7 +17,14 @@
     // the only checker that sees it — ESLint's no-unused-vars does not inspect
     // class properties, and the editor reports it only as a suggestion.
     "noUnusedLocals": true,
-    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    // ES2022 rather than ES2021 to match `target`, because src/ genuinely uses an ES2022 built-in:
+    // `String.prototype.at`, declared in lib.es2022.string.d.ts. Under ES2021 it type-checked here
+    // only because `@types/node` drags newer lib declarations in transitively — so the build
+    // depended on a dev dependency to describe the *runtime*, and a checker that resolved types
+    // even slightly differently saw `.at()` as an error type and every use of it as unsafe. That is
+    // exactly what Obsidian's plugin review reported. `target` stays ES2021: this widens what
+    // built-ins we may assume the runtime has, not what syntax we emit.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
     // esbuild produces the bundle and node:test runs the sources through tsx, so
     // tsc is only ever a checker here.

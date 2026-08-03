@@ -40,6 +40,10 @@ dev: wasm ## Rebuild main.js on every change, with sourcemaps (Ctrl-C to stop)
 # `typecheck` and `lint` both need src/wasm/pkg: src/interpreter/numbat.ts imports the generated
 # bindings, and the lint rules are type-aware. `test-unit` deliberately does not, which is what
 # keeps the inner development loop fast.
+#
+# The bindings are committed, so the `wasm` prerequisite is satisfied by the checkout and does
+# nothing on a normal run. It earns its place when NUMBAT_TAG has moved: the stamp no longer
+# matches, the bindings are rebuilt, and CI fails until the new ones are committed.
 
 .PHONY: typecheck
 typecheck: wasm ## Type-check src/ and test/ without emitting
@@ -184,9 +188,13 @@ unlink: ## Replace the $DEV_VAULT_PATH symlink with a copied build
 format: ## Reformat Markdown, JSON, CSS, TOML and TypeScript
 	$(RUN) dprint fmt
 
+# src/wasm/pkg is deliberately left alone: it is tracked now, so removing it here would leave a
+# dirty tree for anyone who ran `make clean` out of habit. To force the bindings to be rebuilt --
+# which is what the release workflow does, so a release cannot merely ship what was committed --
+# delete them explicitly: `rm -rf src/wasm/pkg && make wasm`.
 .PHONY: clean
 clean: ## Remove build output, keeping the numbat checkout and node_modules
-	rm -rf main.js main.js.map src/wasm/pkg
+	rm -rf main.js main.js.map
 
 .PHONY: distclean
 distclean: clean ## Also remove the numbat checkout and node_modules

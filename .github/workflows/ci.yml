@@ -32,6 +32,35 @@ jobs:
         with:
           dprint-version: "0.55.2"
 
+  # What Obsidian's plugin review actually runs: a clean checkout, plain npm,
+  # and `npm run build`. No Nix, no Rust, no Xonsh — so this fails if anything
+  # ever puts the wasm toolchain back on the path a packager has to walk. The
+  # 1.0.0 submission was flagged for exactly that, and nothing in the Nix-based
+  # job below could have caught it, because the devshell supplies every tool the
+  # reviewer lacks.
+  clean-build:
+    name: Build without the devshell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Assert a bundle was produced
+        run: |
+          if [ ! -s main.js ]; then
+            echo "::error::npm run build produced no main.js"
+            exit 1
+          fi
+          echo "main.js is $(( $(stat -c%s main.js) / 1024 )) KiB."
+
   build:
     name: Build and test
     runs-on: ubuntu-latest
@@ -82,22 +111,28 @@ jobs:
       - name: Install dependencies
         run: make deps
 
-      # The bindings are a pure function of the pinned tag and the script that
-      # builds them, so cache them under exactly those two things. On a hit —
-      # the common case — build-wasm.xsh sees its own stamp file inside the
-      # restored directory and skips the entire Rust pipeline.
-      - name: Restore the built wasm bindings
+      # build-wasm.xsh makes this same comparison and skips itself when it holds,
+      # but it does so *after* the Rust cache would have been restored — and that
+      # restore is hundreds of megabytes fetched for a step that then does
+      # nothing. Asking the stamp here, where it costs a `cat`, is what keeps the
+      # common case cheap.
+      - name: Decide whether the bindings need rebuilding
         id: bindings
-        uses: actions/cache@v6
-        with:
-          path: src/wasm/pkg
-          key: wasm-${{ runner.os }}-${{ steps.numbat.outputs.tag }}-${{ hashFiles('scripts/build-wasm.xsh') }}
+        run: |
+          stamped=$(cat src/wasm/pkg/.numbat-tag 2>/dev/null || echo none)
+          if [ "$stamped" = "${{ steps.numbat.outputs.tag }}" ]; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "Bindings are stamped $stamped; no Rust build needed."
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "Bindings are stamped $stamped but the pin is ${{ steps.numbat.outputs.tag }}."
+          fi
 
-      # Only reached when the bindings cache misses. `restore-keys` means even a
-      # tag bump starts from the previous run's registry and target directory,
-      # so it costs minutes rather than a cold build of the dependency graph.
+      # Only reached when the pin has moved. `restore-keys` means even then it
+      # starts from the previous run's registry and target directory, so it costs
+      # minutes rather than a cold build of the dependency graph.
       - name: Cache the Rust build
-        if: steps.bindings.outputs.cache-hit != 'true'
+        if: steps.bindings.outputs.stale == 'true'
         uses: actions/cache@v6
         with:
           path: |
@@ -107,13 +142,29 @@ jobs:
           key: cargo-${{ runner.os }}-${{ steps.numbat.outputs.tag }}
           restore-keys: cargo-${{ runner.os }}-
 
-      - name: Build the wasm bindings
+      # Produces the bindings the commit should have carried, so the assertion
+      # below can report exactly what is missing. Skipped entirely in the common
+      # case, which is also why bit-reproducibility never comes into it: nothing
+      # is rebuilt, so nothing is compared.
+      - name: Rebuild the wasm bindings if the pinned tag moved
+        if: steps.bindings.outputs.stale == 'true'
         run: make wasm
 
-      # A restored-but-incomplete directory would otherwise surface as a
-      # confusing type error several minutes later. The integration suite makes
-      # the same assertion at module load whenever CI is set, so a green run
-      # cannot mean "63 tests were skipped".
+      # `git status`, not `git diff`: a future wasm-bindgen emitting a file under
+      # a new name would leave it untracked, which a diff cannot see.
+      - name: Assert the committed bindings match the pinned tag
+        run: |
+          if [ -n "$(git status --porcelain -- src/wasm/pkg)" ]; then
+            echo "::error::src/wasm/pkg is stale for Numbat ${{ steps.numbat.outputs.tag }}."
+            echo "::error::Run 'make wasm' and commit the regenerated bindings."
+            git status --short -- src/wasm/pkg
+            exit 1
+          fi
+
+      # An incomplete directory would otherwise surface as a confusing type
+      # error several minutes later. The integration suite makes the same
+      # assertion at module load whenever CI is set, so a green run cannot mean
+      # "the tests were skipped".
       - name: Assert the bindings are present
         run: |
           for file in numbat_wasm.js numbat_wasm.d.ts numbat_wasm_bg.wasm; do

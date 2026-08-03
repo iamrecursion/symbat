@@ -10,7 +10,7 @@ on:
 
 permissions:
   contents: write # create the release and upload its assets
-  id-token: write # \_ build provenance attestation for main.js
+  id-token: write # \_ build provenance attestation for the release assets
   attestations: write # /
 
 jobs:
@@ -94,12 +94,15 @@ jobs:
       - name: Install dependencies
         run: make deps
 
-      # Deliberately not restoring src/wasm/pkg the way ci.yml does: what ships
-      # is compiled from the pinned source during this run, not lifted out of a
-      # cache. REQUIRE_WASM_OPT makes a missing binaryen an error rather than a
-      # silent 3x size regression in the released bundle.
-      - name: Build the wasm bindings
-        run: make wasm
+      # The bindings are committed so a clean checkout can bundle, but a release
+      # must not merely ship whatever was committed. Deleting them first defeats
+      # build-wasm.xsh's up-to-date stamp, so what goes out is compiled from the
+      # pinned source during this run. REQUIRE_WASM_OPT makes a missing binaryen
+      # an error rather than a silent 3x size regression in the released bundle.
+      - name: Rebuild the wasm bindings from source
+        run: |
+          rm -rf src/wasm/pkg
+          make wasm
         env:
           REQUIRE_WASM_OPT: "1"
 
@@ -109,10 +112,18 @@ jobs:
       - name: Bundle
         run: make build
 
+      # All three assets, not just the bundle: attestation proves an asset came
+      # from this repository's workflow, and an unattested one is exactly where a
+      # substitution would go unnoticed. styles.css is loaded into every note's
+      # DOM and manifest.json decides what Obsidian trusts the plugin to be, so
+      # neither is inert.
       - name: Attest the build provenance
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: main.js
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       # Obsidian downloads main.js, manifest.json and styles.css as individual
       # release assets; it does not look inside the source archive GitHub

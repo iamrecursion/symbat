@@ -1,6 +1,6 @@
 {
   "name": "obsidian-symbat",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Integrates the Numbat scientific calculator into your notes, with comprehensive tooling.",
   "type": "module",
   "license": "MIT",

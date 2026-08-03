@@ -34,7 +34,16 @@ import {
 import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from "@codemirror/commands";
 import { search, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState, Prec } from "@codemirror/state";
-import { drawSelection, EditorView, keymap, lineNumbers, placeholder, tooltips } from "@codemirror/view";
+import {
+  drawSelection,
+  EditorView,
+  keymap,
+  lineNumbers,
+  placeholder,
+  tooltips,
+  ViewPlugin,
+  type ViewUpdate,
+} from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
 import { type CompletionInfo } from "../completion/docs";
 import {
@@ -135,6 +144,11 @@ export interface NumbatInputHost {
    *  live session context via a typed hole — or `null` when the input is complete, empty, or its
    *  type cannot be recovered. */
   holeType(input: string): string | null;
+
+  /** Vim's ex-mode command line opened or closed. Only the REPL uses it, to put its command line on
+   *  the prompt's row instead of below it; a surface that omits it pays nothing, since the watcher
+   *  is only installed for a host that asks. */
+  vimPanelChanged?(open: boolean): void;
 }
 
 /** How one consumer wants its input to behave. */
@@ -322,6 +336,38 @@ function numbatCompletionSource(plugin: SymbatPlugin, host: NumbatInputHost): Co
   };
 }
 
+/**
+ * Report whether `@replit/codemirror-vim`'s ex-mode panel is open, so a host can restyle around it.
+ *
+ * The CSS used to ask this question itself, with `.numbat-repl-input-row:has(.cm-vim-panel)` — but
+ * `:has` invalidates broadly enough that Obsidian's plugin review flags it, and the prompt rule
+ * needs the class on the *row*, which no descendant selector can reach from the editor anyway.
+ *
+ * The DOM is read in a measure phase rather than straight out of `update`, because the panel's
+ * element is written by the vim extension's own view plugin and the order two plugins update in is
+ * not something this one should depend on. `read` runs after every plugin has had its turn.
+ */
+function vimPanelWatcher(host: NumbatInputHost): ViewPlugin<{ update(update: ViewUpdate): void; }> {
+  return ViewPlugin.define((view) => {
+    let open = false;
+
+    const check = (dom: HTMLElement): void => {
+      const nowOpen = dom.querySelector(".cm-vim-panel") !== null;
+      if (nowOpen !== open) {
+        open = nowOpen;
+        host.vimPanelChanged?.(open);
+      }
+    };
+
+    check(view.dom);
+    return {
+      update: (update: ViewUpdate) => {
+        update.view.requestMeasure({ read: (measured) => check(measured.dom) });
+      },
+    };
+  });
+}
+
 // THE INPUT EDITOR
 // ================================================================================================
 
@@ -463,6 +509,10 @@ export class NumbatInput {
         // rest through, so in insert mode Enter/arrows/Tab still reach the keymaps below.
         // Compartmentalized so it can toggle live.
         Prec.highest(this.vimCompartment.of(vimMode ? vim() : [])),
+
+        // Installed only for a host that asks, so the property field and the `.nbt` editor schedule
+        // no measurements for a panel they do not restyle.
+        ...(host.vimPanelChanged === undefined ? [] : [vimPanelWatcher(host)]),
         numbatLanguage,
         this.gutterCompartment.of(options.lineNumbers === true ? lineNumbers() : []),
         this.highlightCompartment.of(highlight ? numbatReplHighlight : []),

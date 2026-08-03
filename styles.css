@@ -143,8 +143,7 @@
 }
 
 .numbat-inline-result:hover {
-  text-decoration: underline;
-  text-decoration-style: dotted;
+  text-decoration: underline dotted;
 }
 
 /* Non-interactive hints after a span (see InlineHintWidget): a `let` binding's value, an error's
@@ -333,14 +332,22 @@
  * slightly off. `color` needs `!important` because the piece carries an inline color (which is
  * also how the library hides it when unfocused).
  *
- * `--text-selection` is the fallback for a renderer without `color-mix`; the invalid-declaration
- * rule drops the second line there and keeps the first. */
+ * `--text-selection` is the fallback for a renderer without `color-mix`; the `@supports` block
+ * below upgrades it where the function is available. (This was once two `background` lines in one
+ * rule, relying on the invalid-declaration rule to drop the second — which works, but reads as a
+ * duplicated property rather than as a fallback.) */
 .numbat-file-editor .cm-editor .cm-fat-cursor,
 .numbat-repl-input-row .cm-editor .cm-fat-cursor {
   background: var(--text-selection);
-  background: color-mix(in srgb, var(--color-accent) 45%, transparent);
   color: transparent !important;
   border-radius: 1px;
+}
+
+@supports (background: color-mix(in srgb, red 45%, transparent)) {
+  .numbat-file-editor .cm-editor .cm-fat-cursor,
+  .numbat-repl-input-row .cm-editor .cm-fat-cursor {
+    background: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  }
 }
 
 /* Unfocused, the library already blanks the glyph; an outline is enough to say where the caret will
@@ -526,19 +533,24 @@
 
 /* Make the command line replace the input line rather than stack beneath it: while the panel is
  * open, hide the input content so the panel (rendered at the bottom of the editor) sits on the
- * input's row, next to the prompt. */
-.numbat-repl-input-row .cm-editor:has(.cm-vim-panel) .cm-scroller {
+ * input's row, next to the prompt.
+ *
+ * `.numbat-repl-vim-panel` is put on the row by views/input.ts's panel watcher, reported through
+ * `NumbatInputHost.vimPanelChanged`. These three rules asked the DOM themselves with
+ * `:has(.cm-vim-panel)` until Obsidian's plugin review flagged the invalidation cost — and the
+ * prompt is the editor's *sibling*, so no descendant selector reaches it from the panel regardless. */
+.numbat-repl-input-row.numbat-repl-vim-panel .cm-editor .cm-scroller {
   display: none;
 }
 
 /* …and the prompt reads "e >" (Vim ex mode; three chars wide to line up with ">>>") instead of
  * ">>>". The `>>>` text is collapsed and the replacement drawn as a pseudo-element (inheriting the
  * prompt's accent/weight/font), its size restored from the zeroed parent. */
-.numbat-repl-input-row:has(.cm-vim-panel) .numbat-repl-prompt {
+.numbat-repl-input-row.numbat-repl-vim-panel .numbat-repl-prompt {
   font-size: 0;
 }
 
-.numbat-repl-input-row:has(.cm-vim-panel) .numbat-repl-prompt::before {
+.numbat-repl-input-row.numbat-repl-vim-panel .numbat-repl-prompt::before {
   content: "e >";
   font-size: var(--numbat-repl-input-font-size, var(--code-size, 0.9em));
 }
@@ -681,22 +693,24 @@
 
 /* Force the REPL rows' layout past Obsidian's own styling of the CodeMirror completion tooltip, 
  * which otherwise spreads the name and signature into columns. (The editor popover is Obsidian's 
- * native suggester — a different DOM — so it needs none of this.) `!important` is deliberate: it 
- * overrides app-level rules whose specificity we cannot otherwise predict. */
-.numbat-repl-completions .numbat-repl-expr-completion {
-  justify-content: flex-start !important;
+ * native suggester — a different DOM — so it needs none of this.) These once used
+ * `!important`; they instead name all three classes that land on the popup element — CodeMirror
+ * adds `cm-tooltip` and `cm-tooltip-autocomplete`, `tooltipClass` adds the third — which
+ * out-specifies anything the app applies to that tooltip without reaching for the hammer. */
+.cm-tooltip.cm-tooltip-autocomplete.numbat-repl-completions .numbat-repl-expr-completion {
+  justify-content: flex-start;
 }
 
-.numbat-repl-completions .numbat-repl-expr-completion .cm-completionLabel {
-  flex: none !important;
+.cm-tooltip.cm-tooltip-autocomplete.numbat-repl-completions .numbat-repl-expr-completion .cm-completionLabel {
+  flex: none;
 }
 
-.numbat-repl-completions .numbat-repl-expr-completion .numbat-signature {
-  flex: 0 1 auto !important;
+.cm-tooltip.cm-tooltip-autocomplete.numbat-repl-completions .numbat-repl-expr-completion .numbat-signature {
+  flex: 0 1 auto;
 }
 
-.numbat-repl-completions .numbat-repl-expr-completion .numbat-expr-suggestion-kind {
-  margin-left: auto !important;
+.cm-tooltip.cm-tooltip-autocomplete.numbat-repl-completions .numbat-repl-expr-completion .numbat-expr-suggestion-kind {
+  margin-left: auto;
 }
 
 /* The placeholder row shown while the wasm is still loading (editor popover). */
@@ -748,12 +762,16 @@
  * by completing one — so it takes the same box, with CodeMirror owning the placement (the 
  * completer's popup positions itself; this one is anchored to the token by a CM6 tooltip). 
  *
- * The two trigger paths wrap the card differently — a caret-dwell tooltip *is* the `.cm-tooltip` 
- * element, while a mouse tooltip is hosted inside one as a `.cm-tooltip-section` — so both shapes 
- * are selected here. Both selectors are deliberately two classes deep: CodeMirror's base theme 
- * styles `.cm-tooltip` at that specificity (including a light background it applies whatever the 
- * Obsidian theme), and a single-class rule loses to it. The wrapper's own frame is dropped below so 
- * neither path draws two. */
+ * Both trigger paths produce the same shape: the card *is* the `.cm-tooltip` element, because
+ * `showTooltip` adds that class to the very element `create()` returns rather than wrapping it. The
+ * selector is deliberately two classes deep — CodeMirror's base theme styles `.cm-tooltip` at that
+ * specificity (including a light background it applies whatever the Obsidian theme), and a
+ * single-class rule loses to it. The descendant form covers a card nested in some future wrapper.
+ *
+ * There were once two extra rules here undoing a wrapper's frame, keyed on `.cm-tooltip-hover` and
+ * `.cm-tooltip-section`. CodeMirror applies both of those classes from one place only — the
+ * `hoverTooltip` host, which hover/hover.ts stopped using (see its header) — so neither could
+ * match. They went with the `:has` that Obsidian's plugin review flagged. */
 .cm-tooltip.numbat-hover-tooltip,
 .cm-tooltip .numbat-hover-tooltip {
   max-width: min(52ch, 90vw);
@@ -769,20 +787,6 @@
   line-height: 1.5;
   -webkit-user-select: text;
   user-select: text;
-}
-
-/* A card hosted inside CodeMirror's tooltip wrapper (the mouse path) must not be framed twice: the 
- * card draws the border, background and padding, so the wrapper draws none — including the divider 
- * the base theme puts between sections. */
-.cm-tooltip.cm-tooltip-hover:has(.numbat-hover-tooltip) {
-  border: none;
-  background: none;
-  box-shadow: none;
-  padding: 0;
-}
-
-.cm-tooltip .numbat-hover-tooltip.cm-tooltip-section {
-  border-top: none;
 }
 
 /* The card's text is the note's text color, not whatever CodeMirror's base theme decides for a 

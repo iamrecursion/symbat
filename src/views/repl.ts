@@ -197,6 +197,12 @@ export class NumbatReplView extends ItemView {
         // same session context.
         hoverCard: (symbol) => (this.context ? symbolCard(this.context, symbol) : null),
         holeType: (input) => this.holeTypeFor(input),
+        // Vim's command line replaces the input line rather than stacking beneath it; styles.css
+        // does that from this class. It goes on the row, not the editor, because the prompt it
+        // restyles is the editor's sibling.
+        vimPanelChanged: (open) => {
+          inputRow.toggleClass("numbat-repl-vim-panel", open);
+        },
       },
       {
         highlight: this.plugin.settings.liveReplHighlight,

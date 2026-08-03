@@ -58,9 +58,9 @@ shell, so `make check` works from a bare terminal too but will be a little bit s
 
 We do not really support building without Nix (and hence recommend using WSL for development on
 Windows). If you want to try anyway, you will at a minimum need: Node.js 24, a Rust toolchain that
-can target `wasm32-unknown-unknown`, `xonsh`, `wasm-bindgen-cli` **0.2.100**, and `lld`, `binaryen`
-(for `wasm-opt`) is optional but strongly recommended, since without it the wasm ships roughly three
-times larger.
+can target `wasm32-unknown-unknown`, `xonsh`, `wasm-bindgen-cli` **0.2.100**, `lld`, and `binaryen`
+(for `wasm-opt`) — the last of which the wasm build now insists on, since without it the wasm is
+roughly three times larger and that is what would be committed.
 
 ### Testing in a Real Vault
 
@@ -121,9 +121,19 @@ appear on that path — so a repository that can only produce its bundle inside 
 reviewed. `npm run build` therefore type-checks and bundles, and nothing more; regenerating the
 bindings is `make wasm`, and only a `NUMBAT_TAG` bump needs it.
 
-This does not weaken what a release is: the release workflow deletes `src/wasm/pkg` before building,
-so what ships is always compiled from the pinned source during that run, never lifted out of the
-repository. CI, meanwhile, fails if the committed bindings do not carry the pinned tag.
+**The release ships these bytes as they are**, rather than rebuilding them, which is worth
+explaining because the opposite is the more obvious choice. Obsidian's review builds the tagged
+source and compares the result against the released `main.js`, so the two have to be the same
+bundle; since esbuild inlines the wasm, that means the release must inline the committed binary. It
+cannot also compile from source during the release run, because the Numbat wasm build is **not
+reproducible** — two builds of the same tag, on the same machine, in this same devshell, differ by a
+few hundred bytes of data-segment layout. Same strings, same behaviour, different bytes. So a
+rebuilt release could never match a clean-checkout build, and 1.0.1 was flagged for exactly that.
+
+What holds the bindings up instead: `build-wasm.xsh` is the only thing that writes them, CI fails if
+they do not carry the pinned tag or if they look unoptimized, the release workflow re-checks the
+stamp before it builds, and the release assets carry a build provenance attestation. Regenerating
+them is therefore a deliberate step before a release tag, not something a workflow does for you.
 
 - **The pinned tag lives at the top of the script** as `NUMBAT_TAG`. Bumping it is a deliberate
   change: it moves the entire standard library the plugin ships — and you must commit the
@@ -131,8 +141,9 @@ repository. CI, meanwhile, fails if the committed bindings do not carry the pinn
 - The **two stamp files** (`.build/numbat/.numbat-tag` and `src/wasm/pkg/.numbat-tag`) record which
   tag each directory actually holds, and each is written only after its step succeeds. That is what
   makes the build skippable without making a tag bump silently rebuild old sources under a new name.
-- **`REQUIRE_WASM_OPT=1`** makes a missing `wasm-opt` a hard failure rather than a silent 3× size
-  regression. The release workflow sets it.
+- **A missing `wasm-opt` is a hard failure**, since the output is committed and shipped verbatim, so
+  a silent 3× size regression would reach every vault. `REQUIRE_WASM_OPT=0` overrides that for a
+  local experiment; CI's size ceiling on `numbat_wasm_bg.wasm` is there for when it is not.
 - **`--remap-path-prefix`** rewrites the numbat checkout and the cargo registry to `/numbat` and
   `/cargo`. rustc otherwise names every source file by its absolute path in panic messages and debug
   info, which — now that the bindings are committed to a public repository — would publish the home
@@ -267,6 +278,14 @@ The release workflow validates the tag against both `manifest.json` and `package
 the `versions.json` entry, builds, and opens a **draft** release with `main.js`, `manifest.json`,
 and `styles.css` attached as individual root-level assets. Obsidian does not look inside a source
 archive. Review the draft, then publish it, as Obsidian only sees published releases.
+
+The workflow builds from the committed wasm bindings and never rebuilds them, so that the released
+`main.js` is byte-for-byte what the tagged source builds — Obsidian's review checks precisely that,
+and [the WASM section](#building-the-wasm) explains why it cannot be had any other way. Two
+consequences for a release: the bindings must already be current (the workflow refuses to build if
+their stamp does not match `NUMBAT_TAG`), and the assets must not be rebuilt or replaced by hand
+afterwards, which would both break that match and drop their attestation. If a published release
+needs different bytes, it needs a new version.
 
 **Raising `minAppVersion`** is a separate decision from bumping the version, and it changes what
 `versions.json` means: Obsidian scans that file for the highest plugin version whose `minAppVersion`

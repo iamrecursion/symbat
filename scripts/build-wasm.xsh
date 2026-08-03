@@ -10,7 +10,9 @@
 # the equivalent toolchain for rustup, and a missing `wasm-bindgen` is installed via cargo.
 #
 # Environment:
-#   REQUIRE_WASM_OPT=1  fail rather than ship an unoptimized (~3x larger) wasm.
+#   REQUIRE_WASM_OPT=0  write an unoptimized (~3x larger) wasm rather than failing when binaryen is
+#                       missing. Only useful for a local experiment; what this script writes is
+#                       committed, and a release ships those bytes as they are.
 
 import os
 import re
@@ -171,16 +173,22 @@ dts = dts.replace(": any", ": unknown").replace("=> any", "=> unknown")
 dts = re.sub(r"^(\s*)static new(\(.*\)): (\w+);$", r"\1static new: \2 => \3;", dts, flags=re.MULTILINE)
 glue_dts.write_text(dts + "\nexport function __numbat_reset(): void;\n")
 
-# 6. Shrink the binary. This is worth roughly 3x on the bundle, so a release build sets
-#    REQUIRE_WASM_OPT to make a missing binaryen an error rather than a line of output nobody reads.
+# 6. Shrink the binary. This is worth roughly 3x on the bundle, and skipping it is a failure rather
+#    than a line of output nobody reads: the output directory is committed and a release ships it
+#    verbatim, so an unoptimized build here is an unoptimized build in everybody's vault. The
+#    devshell provides binaryen, so the only way to reach the opt-out is to have gone looking for it.
 bg_wasm = out_dir / "numbat_wasm_bg.wasm"
 if shutil.which("wasm-opt"):
     print("Optimizing with wasm-opt...")
     wasm-opt -Oz -o @(str(bg_wasm)) @(str(bg_wasm))
-elif os.environ.get("REQUIRE_WASM_OPT", "") not in ("", "0"):
-    sys.exit("REQUIRE_WASM_OPT is set but wasm-opt (binaryen) is not on PATH.")
+elif os.environ.get("REQUIRE_WASM_OPT", "1") != "0":
+    sys.exit(
+        "wasm-opt (binaryen) is not on PATH, and these bindings are committed as-is.\n"
+        "Build inside the devshell (any `make` target does this), or set REQUIRE_WASM_OPT=0 to\n"
+        "accept a wasm roughly three times larger than the one that should ship."
+    )
 else:
-    print("wasm-opt (binaryen) not found; shipping unoptimized wasm.")
+    print("wasm-opt (binaryen) not found; writing an unoptimized wasm (REQUIRE_WASM_OPT=0).")
 
 # Stamp last: everything above succeeded, so the output really is this tag.
 out_tag_file.write_text(NUMBAT_TAG + "\n")

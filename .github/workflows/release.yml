@@ -71,40 +71,51 @@ jobs:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
 
-      - name: Read the pinned Numbat tag
-        id: numbat
+      # This job deliberately does NOT rebuild the wasm. Obsidian's plugin review
+      # builds the tagged source with `npm ci && npm run build` and compares the
+      # result against the released main.js, so the bundle that ships has to be
+      # the one a clean checkout produces — which means inlining the committed
+      # bindings byte for byte.
+      #
+      # Rebuilding here instead was the original design, on the grounds that a
+      # release should compile from pinned source rather than ship what somebody
+      # committed. It cannot do both: the numbat wasm build is not reproducible.
+      # Two builds of the same tag, on the same machine, in this same devshell,
+      # differ by a few hundred bytes of data-segment layout — same strings, same
+      # behaviour, different bytes. So a rebuilt release could never match a
+      # clean-checkout build, and 1.0.1 was flagged for exactly that.
+      #
+      # What is left is the better guarantee of the two, because it is the one
+      # anybody can check: the released main.js is what this repository at this
+      # tag builds. The bindings' own provenance is held up by the stamp assert
+      # below, by CI failing when they do not carry the pinned tag, and by
+      # build-wasm.xsh being the only thing that writes them.
+      - name: Assert the committed bindings carry the pinned tag
         run: |
-          tag=$(sed -n 's/^NUMBAT_TAG = "\(.*\)"$/\1/p' scripts/build-wasm.xsh)
-          if [ -z "$tag" ]; then
+          pinned=$(sed -n 's/^NUMBAT_TAG = "\(.*\)"$/\1/p' scripts/build-wasm.xsh)
+          if [ -z "$pinned" ]; then
             echo "::error file=scripts/build-wasm.xsh::could not read NUMBAT_TAG"
             exit 1
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Restore the Rust build cache
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            .build/numbat/numbat-wasm/target
-          key: cargo-${{ runner.os }}-${{ steps.numbat.outputs.tag }}
-          restore-keys: cargo-${{ runner.os }}-
+          stamped=$(cat src/wasm/pkg/.numbat-tag 2>/dev/null || echo none)
+          if [ "$stamped" != "$pinned" ]; then
+            echo "::error::src/wasm/pkg is stamped $stamped but NUMBAT_TAG is $pinned."
+            echo "::error::A release ships these bytes as-is. Run 'rm -rf src/wasm/pkg && make wasm', commit, and re-tag."
+            exit 1
+          fi
+
+          for file in numbat_wasm.js numbat_wasm.d.ts numbat_wasm_bg.wasm; do
+            if [ ! -s "src/wasm/pkg/$file" ]; then
+              echo "::error::src/wasm/pkg/$file is missing or empty"
+              exit 1
+            fi
+          done
+
+          echo "Bindings are Numbat $pinned, $(( $(stat -c%s src/wasm/pkg/numbat_wasm_bg.wasm) / 1024 )) KiB."
 
       - name: Install dependencies
         run: make deps
-
-      # The bindings are committed so a clean checkout can bundle, but a release
-      # must not merely ship whatever was committed. Deleting them first defeats
-      # build-wasm.xsh's up-to-date stamp, so what goes out is compiled from the
-      # pinned source during this run. REQUIRE_WASM_OPT makes a missing binaryen
-      # an error rather than a silent 3x size regression in the released bundle.
-      - name: Rebuild the wasm bindings from source
-        run: |
-          rm -rf src/wasm/pkg
-          make wasm
-        env:
-          REQUIRE_WASM_OPT: "1"
 
       - name: Check
         run: make check

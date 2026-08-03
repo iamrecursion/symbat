@@ -165,7 +165,13 @@ jobs:
       # error several minutes later. The integration suite makes the same
       # assertion at module load whenever CI is set, so a green run cannot mean
       # "the tests were skipped".
-      - name: Assert the bindings are present
+      #
+      # The size ceiling is the last line of defence for `wasm-opt`. The release
+      # ships the committed binary as-is, and an unoptimized one is roughly three
+      # times larger — a regression nobody would notice by reading a diff of a
+      # 1.8 MiB blob. build-wasm.xsh refuses to write one at all unless it is
+      # told to (REQUIRE_WASM_OPT=0); this catches the case where it was.
+      - name: Assert the committed bindings are present and optimized
         run: |
           for file in numbat_wasm.js numbat_wasm.d.ts numbat_wasm_bg.wasm; do
             if [ ! -s "src/wasm/pkg/$file" ]; then
@@ -173,6 +179,17 @@ jobs:
               exit 1
             fi
           done
+
+          # -Oz currently lands around 1.82 MiB, so this leaves room for Numbat
+          # to grow while staying far below an unoptimized build.
+          ceiling=$((2560 * 1024))
+          size=$(stat -c%s src/wasm/pkg/numbat_wasm_bg.wasm)
+          if [ "$size" -gt "$ceiling" ]; then
+            echo "::error::numbat_wasm_bg.wasm is $((size / 1024)) KiB, over the $((ceiling / 1024)) KiB ceiling."
+            echo "::error::That is the size of an unoptimized build. Rebuild with wasm-opt (binaryen) on PATH."
+            exit 1
+          fi
+          echo "numbat_wasm_bg.wasm is $((size / 1024)) KiB."
 
       - name: Type-check
         run: make typecheck

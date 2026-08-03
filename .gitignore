@@ -7,9 +7,9 @@
 # it needs a Rust toolchain, a matching wasm-bindgen and binaryen, none of which
 # a plain `npm ci && npm run build` has — and that build is what Obsidian's
 # plugin review runs. Committing the bindings is what lets a clean checkout
-# produce a bundle. `make wasm` regenerates them when NUMBAT_TAG moves; the
-# release workflow rebuilds them from pinned source regardless, so what ships is
-# never merely what was committed here.
+# produce a bundle, and the released main.js inlines exactly these bytes, so
+# that the review's build of the tagged source matches the asset it downloads.
+# `make wasm` regenerates them, and only a NUMBAT_TAG bump needs it.
 /main.js
 /main.js.map
 

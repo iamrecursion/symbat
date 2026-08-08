@@ -136,6 +136,12 @@ export function deriveScopeValue(run: LineInterpret, code: string): ScopeValue {
  *  incomplete hole, or an error), then define the binding so later properties see it, capturing the
  *  inferred type from the definition's echo. */
 function evaluateProperty(run: LineInterpret, entry: ScopeEntry): void {
+  // What the expression itself needs (an array of objects' element type) is declared first, and
+  // exactly once — it is deliberately not part of `code`.
+  for (const def of entry.defs ?? []) {
+    run(def);
+  }
+
   const value = deriveScopeValue(run, entry.expr);
   const def = run(entry.code);
   if (!def.isError && value.kind === "value" && value.type === null) {
@@ -202,7 +208,7 @@ function probeBoundEntry(run: LineInterpret, entry: ScopeEntry): void {
  */
 export function evaluateScopeTree(makeContext: ScopeContextFactory, tree: ScopeTree): void {
   const importChunks = tree.imports.flatMap((group) => group.chunks);
-  const baseCodes = [...importChunks, ...tree.properties.map((entry) => entry.code)];
+  const baseCodes = [...importChunks, ...tree.properties.flatMap((entry) => [...(entry.defs ?? []), entry.code])];
 
   // Phase A — imports, properties, and the (already-loaded) user prelude.
   const base = makeContext();

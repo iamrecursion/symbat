@@ -15,9 +15,17 @@ import {
   type Numbat,
 } from "../interpreter/numbat";
 import type SymbatPlugin from "../main";
-import { derivePreamble, EMPTY_PREAMBLE, frontmatterBody, type NotePreamble } from "./parse";
+import {
+  bindingKey,
+  derivePreamble,
+  EMPTY_PREAMBLE,
+  frontmatterBody,
+  type NotePreamble,
+  PLAIN_NONE,
+  type PlainBindings,
+} from "./parse";
 
-export { EMPTY_PREAMBLE, frontmatterBody, type NotePreamble };
+export { bindingKey, EMPTY_PREAMBLE, frontmatterBody, type NotePreamble };
 
 // THE NUMBAT PROPERTY TYPE
 // ================================================================================================
@@ -52,9 +60,25 @@ export function propertyTypeManager(app: App): PropertyTypeManager | null {
   return typeof manager === "object" && manager !== null ? manager : null;
 }
 
+/** The property type assigned to this name (vault-wide), as the registry's own id, or `null`. */
+export function assignedPropertyType(app: App, key: string): string | null {
+  return propertyTypeManager(app)?.getAssignedWidget?.(key) ?? null;
+}
+
 /** Whether this property name is assigned the numbat type (vault-wide). */
 export function isNumbatTypedKey(app: App, key: string): boolean {
-  return propertyTypeManager(app)?.getAssignedWidget?.(key) === NUMBAT_PROPERTY_TYPE;
+  return assignedPropertyType(app, key) === NUMBAT_PROPERTY_TYPE;
+}
+
+/** Which untyped values ride along, per the settings — one sub-toggle each, since they differ in
+ *  how much of a note's frontmatter they put into its namespace. */
+function plainBindings(plugin: SymbatPlugin): PlainBindings {
+  return {
+    numbers: plugin.settings.notePropertyNumbers,
+    text: plugin.settings.notePropertyText,
+    dates: plugin.settings.notePropertyDates,
+    booleans: plugin.settings.notePropertyBooleans,
+  };
 }
 
 // The prelude's name set (units ∪ functions ∪ variables ∪ dimensions, including the user prelude
@@ -118,7 +142,8 @@ function preambleFromRecord(
   return derivePreamble(frontmatter, {
     isNumbatTyped: (key) => isNumbatTypedKey(plugin.app, key),
     isReserved: isReservedName,
-    bindNumbers: plugin.settings.notePropertyNumbers,
+    plain: plainBindings(plugin),
+    assignedType: (key) => assignedPropertyType(plugin.app, key),
     namespace: sourcePath ?? "",
   });
 }
@@ -225,11 +250,12 @@ function importedPropsChunks(
   const preamble = derivePreamble(record, {
     isNumbatTyped: (key) => isNumbatTypedKey(plugin.app, key),
     isReserved: isReservedName,
-    bindNumbers: false,
+    plain: PLAIN_NONE,
+    assignedType: (key) => assignedPropertyType(plugin.app, key),
     namespace: notePath,
   });
 
-  return preamble.bindings.map((binding) => binding.code);
+  return preamble.bindings.flatMap((binding) => [...binding.defs, binding.code]);
 }
 
 /** Attach the note's cross-note imports to its preamble (folding the import chunks into {@link
@@ -327,6 +353,11 @@ export function replayPreamble(context: Numbat, preamble: NotePreamble): void {
     interpret(context, chunk);
   }
   for (const binding of preamble.bindings) {
+    // The definitions the binding's own expression needs (an array of objects' element type) come
+    // first; almost every binding has none.
+    for (const def of binding.defs) {
+      interpret(context, def);
+    }
     interpret(context, binding.code);
   }
 }
@@ -339,18 +370,21 @@ export function replayPreamble(context: Numbat, preamble: NotePreamble): void {
  *
  * `key` is the property's dotted path (`costs.total`), the form both {@link PropertyBinding.key}
  * and Obsidian's property UI use, so the stop applies to a nested property as exactly as to a
- * top-level one.
+ * top-level one. An array *item*'s key (`rates.#`) stops at its array, which is the binding it is
+ * part of — so an item is written against the scope its whole list has, not against the list's own
+ * previous value.
  *
  * Shared by the three surfaces that must agree on what a property can see: the widget's evaluation,
  * the widget's completer, and the Source-mode completer.
  */
 export function scopeChunksAbove(preamble: NotePreamble, key: string): string[] {
+  const stop = bindingKey(key);
   const chunks = [...(preamble.imports ?? [])];
   for (const binding of preamble.bindings) {
-    if (binding.key === key) {
+    if (binding.key === stop) {
       break;
     }
-    chunks.push(binding.code);
+    chunks.push(...binding.defs, binding.code);
   }
 
   return chunks;

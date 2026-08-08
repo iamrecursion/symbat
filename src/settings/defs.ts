@@ -151,6 +151,18 @@ export interface SymbatSettings {
    *  noteProperties}. */
   notePropertyNumbers: boolean;
 
+  /** Untyped properties whose value is text also bind, as Numbat strings. Gated by {@link
+   *  noteProperties}. */
+  notePropertyText: boolean;
+
+  /** Properties without the Numbat type but assigned Obsidian's Date type bind as Numbat
+   *  `DateTime`s. Gated by {@link noteProperties}. */
+  notePropertyDates: boolean;
+
+  /** Untyped properties whose value is a checkbox or toggle also bind, as Numbat booleans. Gated by
+   *  {@link noteProperties}. */
+  notePropertyBooleans: boolean;
+
   /** A `numbat-use` frontmatter property imports the named notes' `numbat-shared` blocks and typed
    *  properties into this note's scope. Gated by {@link noteProperties}. */
   noteImports: boolean;
@@ -223,6 +235,9 @@ export const DEFAULT_SETTINGS: SymbatSettings = {
   inlineEvalCodeBlocks: true,
   noteProperties: true,
   notePropertyNumbers: true,
+  notePropertyText: true,
+  notePropertyDates: true,
+  notePropertyBooleans: true,
   noteImports: true,
   replVimMode: "match",
   liveReplHighlight: true,
@@ -675,6 +690,34 @@ export const SETTING_BLOCKS: readonly SettingBlock[] = [
           + "dimensionless scalars.",
         visibleWhen: "noteProperties",
         control: { type: "toggle", key: "notePropertyNumbers" },
+        effects: ["refreshNoteScope"],
+      },
+      {
+        name: "Text properties bind as strings",
+        desc: "Properties without the Numbat type whose value is text also join the note's scope, as Numbat "
+          + "strings — so `str_length`, `str_append` and string interpolation apply to them. This is the widest "
+          + "of these four: most frontmatter is prose, so most of a note's properties become Numbat names.",
+        visibleWhen: "noteProperties",
+        control: { type: "toggle", key: "notePropertyText" },
+        effects: ["refreshNoteScope"],
+      },
+      {
+        name: "Date properties bind as datetimes",
+        desc: "Properties assigned Obsidian's Date type also join the note's scope, as Numbat `DateTime`s, so "
+          + "date arithmetic (`due - today() -> days`) works on them. The type has to be assigned — Obsidian "
+          + "shows its date picker without assigning one, and a date-shaped value that is not a date should not "
+          + "become a moment. A date with no time of day is read as local midnight, and a time written without a "
+          + "UTC offset as local wall-clock.",
+        visibleWhen: "noteProperties",
+        control: { type: "toggle", key: "notePropertyDates" },
+        effects: ["refreshNoteScope"],
+      },
+      {
+        name: "Checkbox properties bind as booleans",
+        desc: "Properties whose value is a checkbox or a toggle also join the note's scope, as Numbat booleans, "
+          + "for use with `if … then … else`. A checkbox that has never been ticked binds as `false`.",
+        visibleWhen: "noteProperties",
+        control: { type: "toggle", key: "notePropertyBooleans" },
         effects: ["refreshNoteScope"],
       },
       {

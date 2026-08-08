@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  bindingKey,
   derivePreamble,
   FIELD_KEYWORDS,
   frontmatterBody,
   frontmatterKeySites,
   MAX_PROPERTY_DEPTH,
+  PLAIN_ALL,
+  PLAIN_NONE,
   type PreambleRules,
   propertyValueAt,
   sanitizeIdentifier,
@@ -42,7 +45,7 @@ test("sanitize drops leading/trailing separators without underscoring them", () 
 const rules = (over: Partial<PreambleRules> = {}): PreambleRules => ({
   isNumbatTyped: (key) => key.startsWith("nb_"),
   isReserved: () => false,
-  bindNumbers: true,
+  plain: PLAIN_ALL,
   ...over,
 });
 
@@ -62,24 +65,56 @@ test("a numbat-typed number value still binds as an expression", () => {
   assert.equal(preamble.bindings[0].kind, "expression");
 });
 
-test("untyped plain numbers bind as scalars, other untyped values do not", () => {
+// A date binds as one only under a property explicitly assigned Obsidian's Date type, so the
+// records below say so where they mean a date.
+const dateTyped = { assignedType: (key: string) => key === "due" ? "date" : null };
+
+test("untyped plain values ride along as the kind of value they are", () => {
   const preamble = derivePreamble(
-    { weight: 80.5, title: "hello", done: true, tags: ["a"] },
-    rules(),
+    { weight: 80.5, title: "hello", done: true, due: new Date("2026-07-27T00:00:00Z") },
+    rules(dateTyped),
   );
-  assert.deepEqual(
-    preamble.bindings.map((b) => b.code),
-    ["let weight = (80.5)"],
-  );
-  assert.equal(preamble.bindings[0].kind, "number");
-  // Non-participants are quietly ignored — no skip entries.
+  assert.deepEqual(preamble.bindings.map((b) => [b.code, b.kind]), [
+    ["let weight = (80.5)", "number"],
+    ["let title = (\"hello\")", "text"],
+    ["let done = (true)", "boolean"],
+    ["let due = (date(\"2026-07-27\"))", "date"],
+  ]);
+  // None of it is opted into, so none of it can report a problem.
   assert.equal(preamble.skips.length, 0);
 });
 
-test("untyped numbers stay out when bindNumbers is off", () => {
-  const preamble = derivePreamble({ weight: 80.5 }, rules({ bindNumbers: false }));
+test("each kind of plain value is its own setting", () => {
+  const record = { weight: 80.5, title: "hello", done: true, due: new Date("2026-07-27T00:00:00Z") };
+  const only = (kind: keyof typeof PLAIN_ALL) =>
+    derivePreamble(record, rules({ ...dateTyped, plain: { ...PLAIN_NONE, [kind]: true } })).bindings.map((b) => b.key);
+
+  assert.deepEqual(only("numbers"), ["weight"]);
+  assert.deepEqual(only("booleans"), ["done"]);
+  assert.deepEqual(only("dates"), ["due"]);
+  // Text picks up the date too: without the dates setting it is the text it was written as, which
+  // is exactly what the surfaces reading Obsidian's property cache are handed.
+  assert.deepEqual(only("text"), ["title", "due"]);
+  assert.deepEqual(derivePreamble(record, rules({ plain: PLAIN_NONE })).bindings, []);
+});
+
+test("untyped values stay out entirely when nothing plain binds", () => {
+  const preamble = derivePreamble({ weight: 80.5 }, rules({ plain: PLAIN_NONE }));
   assert.equal(preamble.bindings.length, 0);
   assert.equal(preamble.source, "");
+});
+
+test("vault machinery is held back, unless it is explicitly Numbat-typed", () => {
+  const record = { tags: ["a"], aliases: ["b"], cssclasses: ["c"], "numbat-use": "[[Constants]]", title: "kept" };
+  assert.deepEqual(derivePreamble(record, rules()).bindings.map((b) => b.key), ["title"]);
+
+  // An explicit type assignment beats the default.
+  const typed = derivePreamble(record, rules({ isNumbatTyped: (key) => key === "tags.#" }));
+  assert.deepEqual(typed.bindings.map((b) => b.key), ["tags", "title"]);
+
+  // Only at the top level: a `tags` of your own inside an object is your data.
+  const nested = derivePreamble({ meta: { tags: ["a"] } }, rules());
+  assert.deepEqual(nested.bindings.map((b) => b.name), ["meta.tags"]);
 });
 
 test("bindings keep frontmatter order so later ones see earlier ones", () => {
@@ -101,7 +136,7 @@ test("reserved names are skipped with an error", () => {
   const preamble = derivePreamble(
     { m: 5, pi: "3" },
     rules({
-      isNumbatTyped: (key) => key === "pi",
+      isNumbatTyped: () => true,
       isReserved: (name) => name === "m" || name === "pi",
     }),
   );
@@ -112,32 +147,129 @@ test("reserved names are skipped with an error", () => {
   );
 });
 
+test("a plain value that cannot claim a name is a non-participant, not a problem", () => {
+  // `id`, `date`, `time`, `year`, `day`, `month` and `people` are all prelude names *and* ordinary
+  // frontmatter keys. Reporting them would put a row in the inspector on a great many notes that
+  // never opted into anything, so an untyped value that cannot have a name simply does not bind.
+  const preamble = derivePreamble(
+    { m: 5, "a b": 1, "a-b": 2, "---": 9 },
+    rules({ isReserved: (name) => name === "m" }),
+  );
+  assert.deepEqual(preamble.bindings.map((b) => b.code), ["let a_b = (1)"]);
+  assert.deepEqual(preamble.skips, []);
+});
+
 test("a reserved skip checks the sanitized name", () => {
-  const preamble = derivePreamble({ "p i": 5 }, rules({ isReserved: (name) => name === "p_i" }));
+  const preamble = derivePreamble(
+    { "p i": 5 },
+    rules({ isNumbatTyped: () => true, isReserved: (name) => name === "p_i" }),
+  );
   assert.equal(preamble.skips[0].reason, "reserved");
 });
 
 test("duplicate sanitized names keep the first and skip the rest", () => {
-  const preamble = derivePreamble({ "a b": 1, "a-b": 2 }, rules());
+  const preamble = derivePreamble({ "a b": 1, "a-b": 2 }, rules({ isNumbatTyped: () => true }));
   assert.deepEqual(preamble.bindings.map((b) => b.code), ["let a_b = (1)"]);
   assert.deepEqual(preamble.skips.map((s) => [s.key, s.reason]), [["a-b", "duplicate"]]);
 });
 
 test("typed properties with unusable values or names report skips", () => {
   const preamble = derivePreamble(
-    { nb_obj: { a: [{ b: 1 }] }, nb_flag: true, nb_blank: "  ", "nb_%%%": "1" },
+    { nb_flag: true, nb_blank: "  ", "nb_%%%": "1", nb_when: new Date("2026-07-27") },
     rules({ isNumbatTyped: () => true }),
   );
   assert.equal(preamble.bindings.length, 1); // nb_%%% sanitizes to nb_
   assert.deepEqual(
     preamble.skips.map((s) => s.reason),
-    ["unsupported", "unsupported", "empty"],
+    ["unsupported", "empty", "unsupported"],
   );
 });
 
 test("non-finite untyped numbers are ignored", () => {
   const preamble = derivePreamble({ bad: Number.POSITIVE_INFINITY, nan: Number.NaN }, rules());
   assert.equal(preamble.bindings.length, 0);
+});
+
+// --- text, dates and booleans -------------------------------------------------
+
+const exprFor = (value: unknown, over: Partial<PreambleRules> = {}): string | undefined =>
+  derivePreamble({ p: value }, rules(over)).bindings[0]?.expr;
+
+test("text is escaped so nothing in it can be read as Numbat", () => {
+  assert.equal(exprFor("plain prose"), "\"plain prose\"");
+  assert.equal(exprFor("has \"quotes\""), "\"has \\\"quotes\\\"\"");
+  assert.equal(exprFor("back\\slash"), "\"back\\\\slash\"");
+  // The one that matters: Numbat strings interpolate, so an unescaped `{rate}` would *evaluate*.
+  assert.equal(exprFor("cost {rate} each"), "\"cost {{rate}} each\"");
+  assert.equal(exprFor("a\nb\tc"), "\"a\\nb\\tc\"");
+});
+
+test("a date binds as local midnight, and a time as local wall-clock", () => {
+  const dated = { assignedType: () => "date" };
+  // A `due:` on a note is a day in the reader's life, so `date(…)` — which Numbat reads as local.
+  assert.equal(exprFor(new Date("2026-07-27T00:00:00Z"), dated), "date(\"2026-07-27\")");
+  // A timestamp keeps its clock: read back in UTC, which is the zone YAML gave it.
+  assert.equal(exprFor(new Date("2026-07-27T10:30:00Z"), dated), "datetime(\"2026-07-27 10:30:00\")");
+  // An unparseable date is not a date, and is not text either — there is no text to bind.
+  assert.equal(exprFor(new Date("nonsense"), dated), undefined);
+});
+
+test("a timestamp the YAML parsed reads exactly as the same value read as text", () => {
+  // One is what parsing the note's own YAML hands over, the other what Obsidian's property cache
+  // does. The surfaces split along that line, so the two readings must not.
+  const dated = { assignedType: () => "date" };
+  const pairs = [["2026-07-27", "2026-07-27T00:00:00Z"], ["2026-07-27 10:30:00", "2026-07-27T10:30:00Z"]];
+  for (const [text, parsed] of pairs) {
+    assert.equal(exprFor(new Date(parsed), dated), exprFor(text, dated), text);
+    // …and with no Date type assigned, both are the text they were written as.
+    assert.equal(exprFor(new Date(parsed)), exprFor(text), text);
+  }
+});
+
+test("a date that arrives as text is read as one only under a date property", () => {
+  const dated = { assignedType: () => "date" };
+  assert.equal(exprFor("2026-07-27", dated), "date(\"2026-07-27\")");
+  // The space form is local; the `T` form is a Numbat runtime error without an offset, so the
+  // separator is swapped — which is exactly the shape Better Properties writes.
+  assert.equal(exprFor("2026-07-27T10:30:00", dated), "datetime(\"2026-07-27 10:30:00\")");
+  assert.equal(exprFor("2026-07-27 10:30", dated), "datetime(\"2026-07-27 10:30:00\")");
+  // An explicit offset is kept, in the form that requires one.
+  assert.equal(exprFor("2026-07-27T10:30:00+02:00", dated), "datetime(\"2026-07-27T10:30:00+02:00\")");
+  assert.equal(exprFor("2026-07-27T10:30:00.500Z", dated), "datetime(\"2026-07-27T10:30:00Z\")");
+
+  // Without the type assignment it is text — Obsidian shows its date picker for a date-shaped value
+  // without assigning anything, so the shape is not the opt-in it looks like. Text that will not
+  // parse stays text either way.
+  assert.equal(exprFor("2026-07-27"), "\"2026-07-27\"");
+  assert.equal(exprFor("not a date", dated), "\"not a date\"");
+  // Better Properties' own date type counts as one.
+  assert.equal(exprFor("2026-07-27", { assignedType: () => "better-properties:datecustom" }), "date(\"2026-07-27\")");
+});
+
+test("an unticked checkbox binds false; every other empty property binds nothing", () => {
+  assert.equal(exprFor(null, { assignedType: () => "checkbox" }), "false");
+  assert.equal(exprFor(null, { assignedType: () => "better-properties:toggle" }), "false");
+  // `null` is what *every* empty property parses to, so without the type there is nothing to go on.
+  assert.equal(exprFor(null, { assignedType: () => "text" }), undefined);
+  assert.equal(exprFor(null), undefined);
+  // And the reading is the booleans setting's to make.
+  assert.equal(
+    exprFor(null, { assignedType: () => "checkbox", plain: { ...PLAIN_ALL, booleans: false } }),
+    undefined,
+  );
+});
+
+test("plain values ride along inside objects and lists alike", () => {
+  const preamble = derivePreamble(
+    { trip: { name: "Kyoto", days: 3, booked: true }, notes: ["one", "two"] },
+    rules(),
+  );
+  assert.deepEqual(preamble.bindings.map((b) => [b.name, b.expr]), [
+    ["trip.name", "\"Kyoto\""],
+    ["trip.days", "3"],
+    ["trip.booked", "true"],
+    ["notes", "[\"one\", \"two\"]"],
+  ]);
 });
 
 // --- nested (object) properties -----------------------------------------------
@@ -221,14 +353,14 @@ test("isNumbatTyped is asked about the dotted path", () => {
 });
 
 test("bindNumbers off suppresses nested numbers too, so no struct is built", () => {
-  const preamble = derivePreamble({ costs: { materials: 500 } }, rules({ bindNumbers: false }));
+  const preamble = derivePreamble({ costs: { materials: 500 } }, rules({ plain: PLAIN_NONE }));
   assert.equal(preamble.bindings.length, 0);
   assert.equal(preamble.source, "");
 });
 
-test("dates, nulls, empty objects and object lists contribute nothing and do not throw", () => {
+test("nulls, empty objects and unusable shapes contribute nothing and do not throw", () => {
   const preamble = derivePreamble(
-    { items: [{ a: 1 }], due: new Date("2026-07-27"), empty: null, blank: {}, nested: { tags: ["a"] } },
+    { empty: null, blank: {}, bad: new Date("nonsense"), fn: () => 1 },
     rules(),
   );
   assert.deepEqual(preamble.bindings, []);
@@ -239,7 +371,7 @@ test("an object key competes for its Numbat name like any other property", () =>
   const preamble = derivePreamble({ costs: 1, costs2: { x: 2 } }, rules());
   assert.deepEqual(preamble.bindings.map((b) => b.name), ["costs", "costs2.x"]);
   // A literal top-level name and an object key are the same namespace.
-  const clash = derivePreamble({ costs: 1, "costs ": { x: 2 } }, rules());
+  const clash = derivePreamble({ costs: 1, "costs ": { x: 2 } }, rules({ isNumbatTyped: () => true }));
   assert.deepEqual(clash.bindings.map((b) => b.name), ["costs"]);
   assert.deepEqual(clash.skips.map((s) => [s.key, s.reason]), [["costs ", "duplicate"]]);
 });
@@ -247,7 +379,7 @@ test("an object key competes for its Numbat name like any other property", () =>
 test("a reserved object key skips the whole object, once", () => {
   const preamble = derivePreamble(
     { m: { a: 1, b: 2, c: 3 } },
-    rules({ isReserved: (name) => name === "m" }),
+    rules({ isNumbatTyped: () => true, isReserved: (name) => name === "m" }),
   );
   assert.deepEqual(preamble.bindings, []);
   assert.deepEqual(preamble.skips.map((s) => [s.key, s.path, s.reason]), [["m", ["m"], "reserved"]]);
@@ -255,7 +387,7 @@ test("a reserved object key skips the whole object, once", () => {
 
 test("an object holding nothing bindable neither claims its name nor reports a skip", () => {
   const preamble = derivePreamble(
-    { m: { title: "text" }, note: "prose" },
+    { m: { empty: null }, note: null },
     rules({ isReserved: (name) => name === "m" }),
   );
   assert.deepEqual(preamble.bindings, []);
@@ -318,9 +450,12 @@ test("two keys that sanitize to one field name collide as a duplicate", () => {
 });
 
 test("a nested key with no usable name is skipped, not silently dropped", () => {
-  const preamble = derivePreamble({ costs: { "!!!": 1 } }, rules());
+  const preamble = derivePreamble({ costs: { "!!!": 1 } }, rules({ isNumbatTyped: () => true }));
   assert.deepEqual(preamble.bindings, []);
   assert.deepEqual(preamble.skips.map((s) => [s.key, s.reason]), [["costs.!!!", "invalid-name"]]);
+
+  // Untyped, it is a non-participant like any other plain value that cannot have a name.
+  assert.deepEqual(derivePreamble({ costs: { "!!!": 1 } }, rules()).skips, []);
 });
 
 test("a cyclic record terminates instead of hanging", () => {
@@ -377,26 +512,65 @@ test("arrays nest, and an empty array binds", () => {
   assert.deepEqual(preamble.bindings.map((b) => b.expr), ["[[1, 2], [3]]", "[]"]);
 });
 
-test("untyped arrays bind only when every item is a plain number, recursively", () => {
+test("an untyped array binds when its items are one kind, and stays quiet when they are not", () => {
   const preamble = derivePreamble(
-    { tags: ["a", "b"], part: [1, "a"], deep: [1, [2, "a"]], flags: [true], gaps: [1, null] },
+    { words: ["a", "b"], flags: [true, false], part: [1, "a"], deep: [1, [2]], gaps: [1, null] },
     rules(),
   );
-  assert.deepEqual(preamble.bindings, []);
-  assert.deepEqual(preamble.skips, []); // quiet, like every other untyped non-number
+  // A Numbat list holds one type, so only the homogeneous ones bind…
+  assert.deepEqual(preamble.bindings.map((b) => [b.key, b.expr, b.kind]), [
+    ["words", "[\"a\", \"b\"]", "text"],
+    ["flags", "[true, false]", "boolean"],
+  ]);
+  // …and the mixed ones are as quiet as any other non-participant, rather than binding a list that
+  // would report Numbat's type error on a property nobody opted in.
+  assert.deepEqual(preamble.skips, []);
 });
 
-test("an array of objects is unsupported when typed, and quiet when not", () => {
-  const typed = derivePreamble({ rows: [{ a: 1 }] }, rules({ isNumbatTyped: () => true }));
-  assert.deepEqual(typed.bindings, []);
-  assert.deepEqual(typed.skips.map((s) => [s.key, s.reason]), [["rows", "unsupported"]]);
-  const untyped = derivePreamble({ rows: [{ a: 1 }] }, rules());
-  assert.deepEqual(untyped.bindings, []);
-  assert.deepEqual(untyped.skips, []);
+test("agreement reaches inside an item, not just to its outermost shape", () => {
+  const preamble = derivePreamble(
+    {
+      // Same field names, different field types: one generated element type cannot be both.
+      rows: [{ a: 1 }, { a: "x" }],
+      // …at any depth.
+      deep: [{ a: { b: 1 } }, { a: { b: "x" } }],
+      // Two lists agree on being lists, and disagree on what they hold.
+      grid: [[1, 2], ["a"]],
+      // An empty list has no element type to disagree with — but it must not launder one either.
+      mixed: [[], [1], ["a"]],
+      // The same shapes, agreeing all the way down, still bind.
+      okRows: [{ a: 1 }, { a: 2 }],
+      okGrid: [[1, 2], [3]],
+      okGaps: [[], [1], [2]],
+    },
+    rules(),
+  );
+
+  assert.deepEqual(preamble.bindings.map((b) => b.key), ["okRows", "okGrid", "okGaps"]);
+  assert.deepEqual(preamble.skips, []);
 });
 
-test("bindNumbers off suppresses untyped arrays too", () => {
-  const preamble = derivePreamble({ weights: [70, 72] }, rules({ bindNumbers: false }));
+test("a typed array is still Numbat's to type-check, however its items disagree", () => {
+  // The untyped rule above must not leak into the opted-in reading, where Numbat's own message on
+  // the property beats anything guessable here.
+  const preamble = derivePreamble({ rows: [{ a: 1 }, { a: "x" }] }, rules({ isNumbatTyped: () => true }));
+  const [binding] = preamble.bindings;
+
+  assert.equal(binding.key, "rows");
+  assert.equal(binding.kind, "expression");
+  // Typed, an item's value is Numbat *source*, so `x` is a name and not a string literal — which is
+  // exactly the sort of thing the type system, and not this file, should be reporting.
+  assert.match(binding.expr, /^\[_Nb_RowsStruct_\w+ \{ a: \(\(1\)\) \}, _Nb_RowsStruct_\w+ \{ a: \(\(x\)\) \}\]$/);
+  assert.deepEqual(preamble.skips, []);
+});
+
+test("an untyped array reports the kind its items ultimately hold, through any nesting", () => {
+  const preamble = derivePreamble({ grid: [["a"], ["b"]], nested: [[[1]], [[2]]] }, rules());
+  assert.deepEqual(preamble.bindings.map((b) => [b.key, b.kind]), [["grid", "text"], ["nested", "number"]]);
+});
+
+test("no plain kinds bound suppresses untyped arrays too, empty ones included", () => {
+  const preamble = derivePreamble({ weights: [70, 72], none: [] }, rules({ plain: PLAIN_NONE }));
   assert.deepEqual(preamble.bindings, []);
 });
 
@@ -413,6 +587,209 @@ test("a mixed typed array binds and leaves the type error to Numbat", () => {
   const preamble = derivePreamble({ mixed: [1, "2 m"] }, rules({ isNumbatTyped: () => true }));
   assert.deepEqual(preamble.bindings.map((b) => b.expr), ["[(1), (2 m)]"]);
   assert.deepEqual(preamble.skips, []);
+});
+
+// --- arrays typed at their item key (`<key>.#`) --------------------------------
+
+test("an item type assignment makes every item an expression", () => {
+  // Better Properties keys an Array's shared sub-property `<parent>.#`; the array's own key carries
+  // no type at all.
+  const preamble = derivePreamble({ rates: ["5 EUR", "3 EUR"] }, rules({ isNumbatTyped: (key) => key === "rates.#" }));
+  assert.deepEqual(preamble.bindings.map((b) => [b.key, b.expr, b.kind]), [[
+    "rates",
+    "[(5 EUR), (3 EUR)]",
+    "expression",
+  ]]);
+});
+
+test("the item key is asked about at every level, arrays inside objects included", () => {
+  const asked: string[] = [];
+  derivePreamble(
+    { costs: { items: [[1], 2] } },
+    rules({
+      isNumbatTyped: (key) => {
+        asked.push(key);
+        return false;
+      },
+    }),
+  );
+  assert.deepEqual(asked, ["costs.items", "costs.items.#", "costs.items.#.#"]);
+});
+
+test("a nested array can be typed at its own level alone", () => {
+  const preamble = derivePreamble(
+    { grid: [["5 m", "3 m"]] },
+    rules({ isNumbatTyped: (key) => key === "grid.#.#" }),
+  );
+  assert.deepEqual(preamble.bindings.map((b) => b.expr), ["[[(5 m), (3 m)]]"]);
+});
+
+test("an array item's key resolves to the binding its list makes", () => {
+  assert.equal(bindingKey("rates"), "rates");
+  assert.equal(bindingKey("rates.#"), "rates");
+  assert.equal(bindingKey("people.#.pace"), "people");
+  assert.equal(bindingKey("costs.items.#"), "costs.items");
+  assert.equal(bindingKey("costs.total"), "costs.total");
+});
+
+// --- arrays of objects ---------------------------------------------------------
+
+test("an array of objects binds as a list of one generated struct type", () => {
+  const preamble = derivePreamble(
+    { legs: [{ distance: "5 km", time: "21 min" }, { distance: "10 km", time: "46 min" }] },
+    rules({ isNumbatTyped: (key) => key.startsWith("legs.#.") }),
+  );
+  const [binding] = preamble.bindings;
+  const [item] = structNames(binding.defs.join("\n"));
+
+  assert.equal(binding.key, "legs");
+  assert.equal(binding.kind, "expression");
+  // One type, declared once, generic in each field — so Numbat infers the field types at the first
+  // element and holds every other element to them.
+  assert.deepEqual(binding.defs, [`struct ${item}<T0, T1> { distance: T0, time: T1 }`]);
+  assert.equal(
+    binding.expr,
+    `[${item} { distance: ((5 km)), time: ((21 min)) }, ${item} { distance: ((10 km)), time: ((46 min)) }]`,
+  );
+  assert.equal(binding.code, `let legs = (${binding.expr})`);
+  // The definition is not in `code`: a surface that evaluates `expr` and then runs `code` would
+  // otherwise declare the struct twice, which Numbat rejects.
+  assert.equal(binding.code.includes("struct"), false);
+  assert.equal(preamble.source, `${binding.defs[0]}\n${binding.code}`);
+});
+
+test("an untyped array of objects rides along on the plain values in it", () => {
+  const preamble = derivePreamble({ readings: [{ weight: 80, note: "am" }, { weight: 81, note: "pm" }] }, rules());
+  const [binding] = preamble.bindings;
+  const [item] = structNames(binding.defs.join("\n"));
+  assert.deepEqual(binding.defs, [`struct ${item}<T0, T1> { weight: T0, note: T1 }`]);
+  assert.equal(
+    binding.expr,
+    `[${item} { weight: (80), note: ("am") }, ${item} { weight: (81), note: ("pm") }]`,
+  );
+
+  // A field that binds nowhere is dropped from every item alike, so the elements still agree.
+  const sparse = derivePreamble(
+    { readings: [{ weight: 80, note: "am" }, { weight: 81, note: "pm" }] },
+    rules({ plain: { ...PLAIN_NONE, numbers: true } }),
+  );
+  assert.equal(sparse.bindings[0].expr.includes("note"), false);
+});
+
+test("a typed field makes the whole list an expression binding", () => {
+  const preamble = derivePreamble(
+    { legs: [{ n: 1, pace: "5 min / 1 km" }] },
+    rules({ isNumbatTyped: (key) => key === "legs.#.pace" }),
+  );
+  assert.equal(preamble.bindings[0].kind, "expression");
+  assert.ok(preamble.bindings[0].expr.includes("pace: ((5 min / 1 km))"), preamble.bindings[0].expr);
+});
+
+test("objects nest inside array items, innermost type first", () => {
+  const preamble = derivePreamble({ rows: [{ a: 1, inner: { b: 2 } }] }, rules());
+  const [binding] = preamble.bindings;
+  const [inner, outer] = structNames(binding.defs.join("\n"));
+  // Definition order is innermost first, and each position gets exactly one type.
+  assert.deepEqual(binding.defs, [
+    `struct ${inner}<T0> { b: T0 }`,
+    `struct ${outer}<T0, T1> { a: T0, inner: T1 }`,
+  ]);
+  assert.equal(binding.expr, `[${outer} { a: (1), inner: (${inner} { b: (2) }) }]`);
+});
+
+test("an array of objects inside an object is one field holding the list", () => {
+  const preamble = derivePreamble({ trip: { legs: [{ km: 5 }], n: 1 } }, rules());
+  const [legs, n] = preamble.bindings;
+  const [item] = structNames(legs.defs.join("\n"));
+  assert.equal(legs.name, "trip.legs");
+  assert.ok(legs.code.endsWith(`{ legs: ([${item} { km: (5) }]) }`), legs.code);
+  // The element type is declared once, with the leaf that introduces it — the later leaf reads the
+  // list back off the object instead.
+  assert.deepEqual(n.defs, []);
+  assert.ok(n.code.includes("legs: trip.legs"), n.code);
+});
+
+test("items must bind the same fields, or the array binds nothing", () => {
+  const ragged = { people: [{ a: 1, b: 2 }, { a: 3 }] };
+  const typed = derivePreamble(ragged, rules({ isNumbatTyped: (key) => key.startsWith("people.#") }));
+  assert.deepEqual(typed.bindings, []);
+  assert.deepEqual(typed.skips.map((s) => [s.key, s.reason]), [["people", "unsupported"]]);
+  assert.match(typed.skips[0].message, /item 2 does not have the fields item 1 has/);
+
+  // Untyped, it is as quiet as any other non-participant.
+  const untyped = derivePreamble(ragged, rules());
+  assert.deepEqual(untyped.bindings, []);
+  assert.deepEqual(untyped.skips, []);
+});
+
+test("items may write the same fields in a different order", () => {
+  // Numbat constructs a struct by naming its fields, in any order — so this is one shape, not two.
+  const preamble = derivePreamble({ rows: [{ a: 1, b: 2 }, { b: 3, a: 4 }] }, rules());
+  const [binding] = preamble.bindings;
+  const [item] = structNames(binding.defs.join("\n"));
+  assert.deepEqual(binding.defs, [`struct ${item}<T0, T1> { a: T0, b: T1 }`]);
+  assert.equal(binding.expr, `[${item} { a: (1), b: (2) }, ${item} { b: (3), a: (4) }]`);
+});
+
+test("an item that binds nothing at all fails the list, naming its position", () => {
+  const preamble = derivePreamble(
+    { rates: ["5 EUR", true] },
+    rules({ isNumbatTyped: (key) => key === "rates.#" }),
+  );
+  assert.deepEqual(preamble.bindings, []);
+  assert.match(preamble.skips[0].message, /item 2 holds nothing Numbat can bind/);
+});
+
+test("a field Numbat cannot name is dropped once for the array, not once per item", () => {
+  const record = { rows: [{ type: 1, a: 2 }, { type: 3, a: 4 }] };
+  const preamble = derivePreamble(record, rules({ isNumbatTyped: (key) => key === "rows.#.a" }));
+  const [binding] = preamble.bindings;
+  const [item] = structNames(binding.defs.join("\n"));
+  // Every element drops the same key, so the elements still agree and the list still binds.
+  assert.equal(binding.expr, `[${item} { a: ((2)) }, ${item} { a: ((4)) }]`);
+  assert.deepEqual(preamble.skips.map((s) => [s.key, s.reason]), [["rows.#.type", "reserved"]]);
+
+  // With nothing in the array opted into, the dropped field is as quiet as any other plain value
+  // that could not have a name.
+  const untyped = derivePreamble(record, rules());
+  assert.equal(untyped.bindings[0].expr.includes("type"), false);
+  assert.deepEqual(untyped.skips, []);
+});
+
+test("an array that binds nothing reports itself and not its insides", () => {
+  const preamble = derivePreamble(
+    { rows: [{ type: 1, a: 2 }, { type: 3 }] },
+    rules({ isNumbatTyped: (key) => key.startsWith("rows.#") }),
+  );
+  assert.deepEqual(preamble.bindings, []);
+  assert.deepEqual(preamble.skips.map((s) => s.key), ["rows"]);
+});
+
+test("the generated element names are namespaced, and clear of an object's own", () => {
+  const one = derivePreamble({ rows: [{ a: 1 }] }, rules({ namespace: "One.md" }));
+  const two = derivePreamble({ rows: [{ a: 1 }] }, rules({ namespace: "Two.md" }));
+  assert.notDeepEqual(structNames(one.bindings[0].defs.join("\n")), structNames(two.bindings[0].defs.join("\n")));
+
+  // An object and an array of the same name in different notes must not collide either.
+  const object = derivePreamble({ rows: { a: 1 } }, rules({ namespace: "One.md" }));
+  assert.notDeepEqual(
+    structNames(one.bindings[0].defs.join("\n")),
+    structNames(object.bindings[0].code),
+  );
+  // The label the user reads is still derived from the key.
+  assert.match(one.bindings[0].defs[0], /struct _Nb_RowsStruct_[0-9a-z]+_0_0</);
+});
+
+test("a cyclic or absurdly deep array terminates instead of hanging", () => {
+  const cyclic: unknown[] = [1];
+  cyclic.push(cyclic);
+  assert.deepEqual(derivePreamble({ root: cyclic }, rules()).bindings, []);
+
+  let deep: unknown = 1;
+  for (let i = 0; i < MAX_PROPERTY_DEPTH + 3; i += 1) {
+    deep = [deep];
+  }
+  assert.deepEqual(derivePreamble({ root: deep }, rules()).bindings, []);
 });
 
 // --- frontmatterKeySites ------------------------------------------------------
@@ -478,14 +855,21 @@ test("only a key with no value opens a block — the three look-alikes are value
   ]);
 });
 
-test("sequences are skipped without hiding the keys after them", () => {
+test("a sequence places no key of its own, and hides no key after it", () => {
+  // An item shares one position with every other item, so it gets no site — but the array's own key
+  // now extends over the items it opens, at either indentation YAML allows.
   assert.deepEqual(sitesOf("---\ntags:\n- alpha\n- beta\nweight: 4\n---"), [
-    ["tags", 1, 0, 1],
+    ["tags", 1, 0, 3],
     ["weight", 4, 0, 4],
   ]);
   assert.deepEqual(sitesOf("---\nitems:\n  - a: 1\n    b: 2\nweight: 5\n---"), [
     ["items", 1, 0, 3],
     ["weight", 4, 0, 4],
+  ]);
+  // A key after a sequence of mappings closes it, however deep the last item ran.
+  assert.deepEqual(sitesOf("---\nlegs:\n  - a:\n      b: 1\nafter: 2\n---"), [
+    ["legs", 1, 0, 3],
+    ["after", 4, 0, 4],
   ]);
 });
 
@@ -537,6 +921,37 @@ test("propertyValueAt refuses the key half, and a bare key still counts", () => 
   assert.equal(propertyValueAt(FM, 1, 7), null); // on the colon
   // `empty:` has no value yet — which is exactly when completion is wanted.
   assert.deepEqual(propertyValueAt(FM, 4, 6), { key: "empty", valueCh: 6 });
+});
+
+const ITEMS = [
+  "---",
+  "rates:",
+  "  - 5 EUR",
+  "  - 3 EUR",
+  "legs:",
+  "  - distance: 5 km",
+  "    time: 21 min",
+  "flat:",
+  "- 1 m",
+  "---",
+];
+
+test("propertyValueAt names an array item under the key its type lives at", () => {
+  // An item's value starts past the dash, and every item shares the one position.
+  assert.deepEqual(propertyValueAt(ITEMS, 2, 4), { key: "rates.#", valueCh: 4 });
+  assert.deepEqual(propertyValueAt(ITEMS, 3, 8), { key: "rates.#", valueCh: 4 });
+  assert.equal(propertyValueAt(ITEMS, 2, 3), null); // on the dash
+  // An item at its key's own indentation is an item all the same.
+  assert.deepEqual(propertyValueAt(ITEMS, 8, 2), { key: "flat.#", valueCh: 2 });
+});
+
+test("propertyValueAt reads the fields of an array of objects", () => {
+  // The key opened by the dash, and the one written under it, are the same position.
+  assert.deepEqual(propertyValueAt(ITEMS, 5, 14), { key: "legs.#.distance", valueCh: 14 });
+  assert.deepEqual(propertyValueAt(ITEMS, 6, 10), { key: "legs.#.time", valueCh: 10 });
+  assert.equal(propertyValueAt(ITEMS, 6, 5), null); // on the key half
+  // And the array's own key is still just its key, never an item's.
+  assert.deepEqual(propertyValueAt(ITEMS, 4, 5), { key: "legs", valueCh: 5 });
 });
 
 test("propertyValueAt ignores everything outside the frontmatter", () => {

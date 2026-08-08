@@ -41,6 +41,12 @@ export function frontmatterHints(run: LineInterpret, preamble: NotePreamble): Fm
   }
 
   for (const binding of preamble.bindings) {
+    // The expression's own definitions (an array of objects' element type) must exist before it can
+    // be evaluated, and are kept out of `code` so they are declared exactly once.
+    for (const def of binding.defs) {
+      run(def);
+    }
+
     const result = inlineResultFor(run, binding.expr);
     if ((result.kind === "value" || result.kind === "binding") && result.resultHtml !== null) {
       if (!valueRepeatsExpr(result.plain, binding.expr)) {
@@ -63,4 +69,21 @@ export function frontmatterHints(run: LineInterpret, preamble: NotePreamble): Fm
  *  it would be noise. Whitespace-insensitive. */
 export function valueRepeatsExpr(plain: string | null, expr: string): boolean {
   return plain !== null && plain.replace(/\s+/g, "") === expr.replace(/\s+/g, "");
+}
+
+/**
+ * Whether a hint belongs on the property's key line, given where that key's value is written.
+ *
+ * A property whose value occupies the lines *below* its key — a block sequence, the only shape that
+ * binds this way — has already shown you its contents, item by item, right there. Restating the
+ * assembled list at the end of the `key:` line adds nothing, and for a list of objects it is a
+ * screenful of struct literals. So a **result** is dropped there, for the same reason an object
+ * property shows nothing on its own key line while its leaves each show their own.
+ *
+ * An **error** or an incomplete **hole** still places: neither restates data you can read, and both
+ * are the only warning that something in the block below is wrong. And a value written on the key
+ * line itself (`rates: [5 EUR, 3 EUR]`) keeps its result, because there the line *is* the value.
+ */
+export function hintPlacesOnKey(kind: FmHint["kind"], site: { line: number; endLine: number; }): boolean {
+  return kind !== "result" || site.endLine === site.line;
 }

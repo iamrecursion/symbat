@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CompletionVocabulary } from "../../../src/completion/expressions.ts";
 import { DEFAULT_INLINE_CONFIG } from "../../../src/evaluation/inline-parse.ts";
-import { derivePreamble } from "../../../src/properties/parse.ts";
+import { derivePreamble, PLAIN_ALL } from "../../../src/properties/parse.ts";
 import { buildScopeTree, type ScopeNode, type ScopeTree } from "../../../src/scope/model.ts";
 import {
   type FuzzyScorer,
@@ -35,8 +35,14 @@ const LINES = [
 
 function samplePreamble() {
   return derivePreamble(
-    { distance: "21.1 km", m: 5 },
-    { isNumbatTyped: (key) => key === "distance", isReserved: (name) => name === "m", bindNumbers: true },
+    // `m` is typed, so its clash with the unit is reported: only a property that opted in is owed
+    // the reason it did not reach the scope.
+    { distance: "21.1 km", m: "5" },
+    {
+      isNumbatTyped: (key) => key === "distance" || key === "m",
+      isReserved: (name) => name === "m",
+      plain: PLAIN_ALL,
+    },
   );
 }
 
@@ -248,7 +254,7 @@ test("a property searchable under two names still yields one row", () => {
   // A key that is not a valid identifier binds a different Numbat name.
   const preamble = derivePreamble(
     { "top speed": "10 m/s" },
-    { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true },
+    { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL },
   );
   const tree = buildScopeTree({
     file: "N.md",
@@ -275,7 +281,7 @@ function nestedTree(): ScopeTree {
     config,
     preamble: derivePreamble(
       { costs: { materials: 500 } },
-      { isNumbatTyped: () => false, isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL },
     ),
     importGroups: [],
   });

@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inlineResultFor } from "../../../src/evaluation/inline-parse.ts";
-import { derivePreamble } from "../../../src/properties/parse.ts";
+import { derivePreamble, PLAIN_NONE } from "../../../src/properties/parse.ts";
 import { loadNumbat, skip } from "../wasm-pkg.ts";
 
 function runnerFor(nb: any) {
@@ -31,7 +31,7 @@ function importChunks(frontmatter: Record<string, unknown>, sharedBlocks: string
   const props = derivePreamble(frontmatter, {
     isNumbatTyped: (key) => key.startsWith("nb_"),
     isReserved: () => false,
-    bindNumbers: false, // only typed properties are exported
+    plain: PLAIN_NONE, // only typed properties are exported
   });
   return [...props.bindings.map((b) => b.code), ...sharedBlocks];
 }

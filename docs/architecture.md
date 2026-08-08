@@ -255,7 +255,10 @@ carries a comment saying what it depends on:
   itself, painting `Decoration.mark` ranges.
 - **The `Numbat` Property Type:** This is directly registered into
   `metadataTypeManager.registeredTypeWidgets`, the undocumented registry Obsidian's own widgets and
-  the Better Properties plugin both use. Better Properties prefixes its ids, so the two coexist.
+  the Better Properties plugin both use. Better Properties prefixes its ids, so the two coexist. The
+  same registry is how a _sub_-property is typed: Better Properties keys an object's fields
+  `<parent>.<field>` and an array's items `<parent>.#`, which is the spelling `properties/parse.ts`
+  reads the assignment of a nested property or a list item under.
 - **Toggle Comment Interception:** It cannot be intercepted by a key handler by default as Obsidian
   handles it before any listener a plugin can register. `syntax/comment.ts` is therefore a
   CodeMirror _transaction filter_: when the built-in command inserts `%%` markers inside a numbat

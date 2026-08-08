@@ -35,6 +35,7 @@ import type SymbatPlugin from "../main";
 import { PROPERTY_EVAL_DEBOUNCE_MS } from "../tuning";
 import { NumbatInput } from "../views/input";
 import {
+  bindingKey,
   NUMBAT_PROPERTY_TYPE,
   preambleForFile,
   primeReservedNames,
@@ -387,12 +388,16 @@ async function propertyOutcome(
   const preamble = preambleForFile(plugin, ctx.sourcePath ?? "");
 
   // Key-level skips are stable while typing the value; value-shaped ones (empty / unsupported) are
-  // judged from the live text instead.
-  const skip = preamble.skips.find(
-    (entry) =>
-      entry.key === key
-      && (entry.reason === "reserved" || entry.reason === "invalid-name" || entry.reason === "duplicate"),
+  // judged from the live text instead. An array item is shown its array's skip (`rates.#` reads
+  // `rates`'s) unless the item's own position has one of its own, since the item is only bound
+  // through the list.
+  const owner = bindingKey(key);
+  const keyLevel = preamble.skips.filter(
+    (entry) => entry.reason === "reserved" || entry.reason === "invalid-name" || entry.reason === "duplicate",
   );
+
+  // The item's own position first, so the more specific message wins wherever both exist.
+  const skip = keyLevel.find((entry) => entry.key === key) ?? keyLevel.find((entry) => entry.key === owner);
 
   if (skip !== undefined) {
     return { kind: "error", text: skip.message };

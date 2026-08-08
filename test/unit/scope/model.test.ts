@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_INLINE_CONFIG, noteSignature, scanNote } from "../../../src/evaluation/inline-parse.ts";
-import { derivePreamble, EMPTY_PREAMBLE } from "../../../src/properties/parse.ts";
+import { derivePreamble, EMPTY_PREAMBLE, PLAIN_ALL } from "../../../src/properties/parse.ts";
 import {
   buildScopeTree,
   currentNodeId,
@@ -34,8 +34,14 @@ const LINES = [
 
 function samplePreamble() {
   return derivePreamble(
-    { distance: "21.1 km", m: 5 },
-    { isNumbatTyped: (key) => key === "distance", isReserved: (name) => name === "m", bindNumbers: true },
+    // `m` is typed, so its clash with the unit is reported: only a property that opted in is owed
+    // the reason it did not reach the scope.
+    { distance: "21.1 km", m: "5" },
+    {
+      isNumbatTyped: (key) => key === "distance" || key === "m",
+      isReserved: (name) => name === "m",
+      plain: PLAIN_ALL,
+    },
   );
 }
 
@@ -143,7 +149,7 @@ test("a later same-name binding shadows earlier ones across sources", () => {
     file: "N.md",
     lines,
     config,
-    preamble: derivePreamble({ d: "1 km" }, { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true }),
+    preamble: derivePreamble({ d: "1 km" }, { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL }),
     importGroups: [{ notePath: "Lib.md", chunks: ["let d = (2 km)"] }],
   });
   // import d (first) < property d < inline d (last, authoritative).
@@ -329,7 +335,7 @@ function nestedTree() {
     config,
     preamble: derivePreamble(
       { weight: 80, costs: { materials: 500, breakdown: { doubled: 12 } } },
-      { isNumbatTyped: () => false, isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL },
     ),
     importGroups: [],
   });
@@ -414,7 +420,7 @@ function defTree() {
     config,
     preamble: derivePreamble(
       { distance: "21.1 km", costs: { materials: 500 } },
-      { isNumbatTyped: (key) => key === "distance", isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: (key) => key === "distance", isReserved: () => false, plain: PLAIN_ALL },
     ),
     importGroups: [{ notePath: "lib/Constants.md", chunks: ["let g = (9.81 m/s^2)"] }],
   });

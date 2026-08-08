@@ -19,7 +19,7 @@ import { parseListNames, structFieldNames } from "../../../src/completion/expres
 import { plainText } from "../../../src/evaluation/inlay-parse.ts";
 import { inlineResultFor } from "../../../src/evaluation/inline-parse.ts";
 import { frontmatterHints } from "../../../src/properties/frontmatter-inlay.ts";
-import { derivePreamble, type NotePreamble } from "../../../src/properties/parse.ts";
+import { derivePreamble, type NotePreamble, PLAIN_ALL } from "../../../src/properties/parse.ts";
 import { loadNumbat, skip } from "../wasm-pkg.ts";
 
 // The LineInterpret shape over a live wasm context.
@@ -44,14 +44,21 @@ function reservedSet(nb: any): Set<string> {
   return new Set(names);
 }
 
-// Mirrors properties/note.ts's replayPreamble: interpret each binding, errors absorbed.
+// Mirrors properties/note.ts's replayPreamble: each binding's own definitions, then its statement,
+// errors absorbed.
 function replay(nb: any, preamble: NotePreamble): void {
   for (const binding of preamble.bindings) {
+    for (const def of binding.defs) {
+      nb.interpret(def).free();
+    }
     nb.interpret(binding.code).free();
   }
 }
 
 const plain = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ");
+
+// The generated struct names carry a hash, so assertions read them back rather than hard-code one.
+const structNamesIn = (code: string): string[] => [...code.matchAll(/struct (\w+)</g)].map((m) => m[1]);
 
 test("property bindings: reserved names are skipped and the rest chain in order", { skip }, async () => {
   const mod = await loadNumbat();
@@ -69,12 +76,13 @@ test("property bindings: reserved names are skipped and the rest chain in order"
 
     const preamble = derivePreamble(
       // `m` (reserved unit), `pi` (reserved variable), then a chain where a later property
-      // references an earlier one.
+      // references an earlier one. Both clashing keys are typed, because only a property that opted
+      // in is owed the reason it did not reach the scope.
       { m: 5, pi: 3, rate: "40 / 1 h", n_hours: 3, cost: "rate * n_hours * 1 h" },
       {
-        isNumbatTyped: (key) => key === "rate" || key === "cost",
+        isNumbatTyped: (key) => key === "rate" || key === "cost" || key === "m" || key === "pi",
         isReserved: (name) => reserved.has(name),
-        bindNumbers: true,
+        plain: PLAIN_ALL,
       },
     );
     assert.deepEqual(preamble.skips.map((s) => [s.key, s.reason]), [["m", "reserved"], ["pi", "reserved"]]);
@@ -117,7 +125,7 @@ test("frontmatter inlays: results chain, plain numbers are suppressed, holes/err
       {
         isNumbatTyped: (key) => key !== "weight",
         isReserved: () => false,
-        bindNumbers: true,
+        plain: PLAIN_ALL,
       },
     );
     const hints = frontmatterHints(runnerFor(nb), preamble);
@@ -148,7 +156,7 @@ test("property bindings: a botched binding is absorbed and later ones still land
   try {
     const preamble = derivePreamble(
       { broken: "let x = 5", after: "2 + 2" },
-      { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL },
     );
     assert.equal(preamble.bindings.length, 2);
     // The statement-in-expression binding parses to an error…
@@ -158,6 +166,69 @@ test("property bindings: a botched binding is absorbed and later ones still land
     const after = inlineResultFor(runnerFor(nb), "after");
     assert.equal(after.kind, "value");
     assert.equal(after.plain, "4");
+  } finally {
+    nb.free();
+  }
+});
+
+// --- text, dates and booleans --------------------------------------------------
+
+test("plain values: text, dates and booleans bind as the Numbat types they are", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  try {
+    const preamble = derivePreamble(
+      {
+        title: "Kyoto trip",
+        booked: true,
+        due: new Date("2026-07-27T00:00:00Z"),
+        starts: new Date("2026-07-27T10:30:00Z"),
+        words: ["one", "two"],
+      },
+      {
+        isNumbatTyped: () => false,
+        isReserved: () => false,
+        plain: PLAIN_ALL,
+        // A date binds as one only under a property explicitly assigned Obsidian's Date type.
+        assignedType: (key) => key === "due" || key === "starts" ? "date" : null,
+      },
+    );
+    replay(nb, preamble);
+    const run = runnerFor(nb);
+
+    assert.equal(plain(inlineResultFor(run, "str_length(title)").valueHtml ?? ""), "10");
+    assert.equal(inlineResultFor(run, "if booked then 1 else 2").plain, "1");
+    // Numbat's date arithmetic applies, which is the whole point of binding these as DateTimes.
+    assert.equal(plain(inlineResultFor(run, "(starts - due) -> minutes").valueHtml ?? ""), "630 min");
+    assert.equal(inlineResultFor(run, "len(words)").plain, "2");
+    // Each carries its own type, so the note's scope sees them as what they are.
+    for (const [expr, type] of [["title", "String"], ["booked", "Bool"], ["due", "DateTime"]]) {
+      assert.equal(plain(signatureFromTypeOutput(run(`type(${expr})`).output) ?? ""), type);
+    }
+  } finally {
+    nb.free();
+  }
+});
+
+test("plain values: a brace in prose is escaped, not interpolated", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  try {
+    // Unescaped, `{rate}` would be evaluated by Numbat's string interpolation — against a name the
+    // note may not even have. The property is prose; nothing in it may run.
+    const prose = "cost {rate} each, 50% \"off\", C:\\tmp";
+    const preamble = derivePreamble(
+      { note: prose },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL },
+    );
+    replay(nb, preamble);
+    const run = runnerFor(nb);
+
+    const value = inlineResultFor(run, "note");
+    assert.equal(value.kind, "value");
+    assert.equal(plain(value.valueHtml ?? "").includes("{rate}"), true, plain(value.valueHtml ?? ""));
+    // Round-tripped exactly: Numbat counts a string's length in UTF-8 bytes, and this is all ASCII.
+    assert.equal(inlineResultFor(run, "str_length(note)").plain, String(prose.length));
   } finally {
     nb.free();
   }
@@ -182,7 +253,7 @@ test("nested properties: a sibling chain resolves by its dotted name", { skip },
           breakdown: { doubled: "costs.total * 2" },
         },
       },
-      { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true, namespace: "Budget.md" },
+      { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL, namespace: "Budget.md" },
     );
     assert.deepEqual(preamble.bindings.map((b) => b.name), [
       "costs.materials",
@@ -208,7 +279,7 @@ test("nested properties: a field may shadow a unit name", { skip }, async () => 
     const reserved = reservedSet(nb);
     const preamble = derivePreamble(
       { si: { m: 5 } },
-      { isNumbatTyped: () => false, isReserved: (name) => reserved.has(name), bindNumbers: true },
+      { isNumbatTyped: () => false, isReserved: (name) => reserved.has(name), plain: PLAIN_ALL },
     );
     assert.deepEqual(preamble.bindings.map((b) => b.name), ["si.m"]);
     replay(nb, preamble);
@@ -227,7 +298,7 @@ test("nested properties: a broken leaf freezes the object, not its siblings", { 
   try {
     const preamble = derivePreamble(
       { costs: { materials: "500 EUR", labor: "nope + 1", total: "costs.materials * 2" } },
-      { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL },
     );
     replay(nb, preamble);
     const run = runnerFor(nb);
@@ -249,7 +320,7 @@ test("nested properties: the struct type reads as a name derived from the key", 
   try {
     const preamble = derivePreamble(
       { costs: { materials: 500, labor: 300 } },
-      { isNumbatTyped: () => false, isReserved: () => false, bindNumbers: true, namespace: "Budget.md" },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL, namespace: "Budget.md" },
     );
     replay(nb, preamble);
     // The raw interpreter prints the generated type name in front of every struct value;
@@ -273,7 +344,7 @@ test("nested properties: frontmatter hints are keyed by the dotted path", { skip
   try {
     const preamble = derivePreamble(
       { costs: { materials: 500, total: "costs.materials * 2" } },
-      { isNumbatTyped: (key) => key === "costs.total", isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: (key) => key === "costs.total", isReserved: () => false, plain: PLAIN_ALL },
     );
     const hints = frontmatterHints(runnerFor(nb), preamble);
     // The plain number repeats its own source, so it contributes no hint; the expression does,
@@ -291,7 +362,7 @@ test("member completion: a struct's fields come out of the missing-field error",
   try {
     const preamble = derivePreamble(
       { costs: { materials: 500, labor: 300, breakdown: { doubled: 12 } } },
-      { isNumbatTyped: () => false, isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL },
     );
     replay(nb, preamble);
     const run = runnerFor(nb);
@@ -322,7 +393,7 @@ test("arrays: a list binds, survives the rebuild, and carries its dimension", { 
         rates: ["5 EUR", "3 EUR"],
         costs: { items: [500, 300], total: "sum(costs.items)" },
       },
-      { isNumbatTyped: (key) => typed.has(key), isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: (key) => typed.has(key), isReserved: () => false, plain: PLAIN_ALL },
     );
     assert.deepEqual(preamble.bindings.map((b) => b.name), ["weights", "rates", "costs.items", "costs.total"]);
     replay(nb, preamble);
@@ -342,13 +413,140 @@ test("arrays: a list binds, survives the rebuild, and carries its dimension", { 
   }
 });
 
+test("arrays of objects: one element type, and Numbat's list vocabulary over it", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  try {
+    const preamble = derivePreamble(
+      {
+        legs: [
+          { distance: "5 km", time: "21 min" },
+          { distance: "10 km", time: "46 min" },
+        ],
+      },
+      {
+        // Better Properties types an Array's items once, at the shared `<parent>.#` sub-property.
+        isNumbatTyped: (key) => key.startsWith("legs.#."),
+        isReserved: () => false,
+        plain: PLAIN_ALL,
+        namespace: "Run.md",
+      },
+    );
+
+    const [binding] = preamble.bindings;
+    assert.equal(binding.key, "legs");
+    assert.equal(binding.defs.length, 1, "one element type, declared once");
+
+    replay(nb, preamble);
+    const run = runnerFor(nb);
+    assert.equal(inlineResultFor(run, "len(legs)").plain, "2");
+    // A field reads through an element, and — the point of a *homogeneous* list — a function over
+    // the element type maps across the whole of it.
+    assert.equal(plain(inlineResultFor(run, "element_at(0, legs).distance").valueHtml ?? ""), "5 km");
+
+    // The generated name is not something a user would type, so the mapping function is declared
+    // against the name the derivation actually minted.
+    const [item] = structNamesIn(binding.defs[0]);
+    const paced = run(`fn pace_of<T0, T1>(l: ${item}<T0, T1>) -> T1 / T0 = l.time / l.distance`);
+    assert.equal(paced.isError, false, paced.output);
+    assert.equal(plain(inlineResultFor(run, "map(pace_of, legs)").valueHtml ?? "").includes("4.2"), true);
+
+    // The type reads back as the label the name carries, like every other generated struct.
+    const raw = nb.interpret("legs");
+    const text = plain(raw.output as string);
+    raw.free();
+    assert.match(text, /_Nb_LegsStruct_[0-9a-z]+_0_0/);
+    assert.equal(text.replace(/_Nb_([A-Za-z0-9]+)_[0-9a-z]+_\d+_\d+/g, "$1").includes("_Nb"), false);
+  } finally {
+    nb.free();
+  }
+});
+
+test("arrays of objects: items that disagree dimensionally are Numbat's error", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  try {
+    // Same fields, incompatible dimensions — the derivation binds it and the type system is what
+    // reports the problem, on the property, which is exactly the guarantee an Array makes.
+    const preamble = derivePreamble(
+      { legs: [{ distance: "5 km" }, { distance: "10 s" }] },
+      { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL },
+    );
+    const [binding] = preamble.bindings;
+    assert.equal(runnerFor(nb)(binding.defs[0]).isError, false);
+    assert.equal(inlineResultFor(runnerFor(nb), binding.expr).kind, "error");
+  } finally {
+    nb.free();
+  }
+});
+
+test("untyped arrays: what binds type-checks, and what would not stays out", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  try {
+    // The untyped promise is that a property nobody opted in never volunteers an error — which is a
+    // claim about Numbat's type system, so the real interpreter is the only place to test it. Each
+    // of these disagrees somewhere Numbat can see and the derivation cannot unless it looks all the
+    // way down: a shared element type's field, and a nested list's elements.
+    const rules = { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL };
+    for (const value of [[{ a: 1 }, { a: "x" }], [[1, 2], ["a"]], [[], [1], ["a"]]]) {
+      assert.deepEqual(derivePreamble({ rows: value }, rules).bindings, [], JSON.stringify(value));
+    }
+
+    // And what does bind is replayed into a live interpreter without a single error.
+    const preamble = derivePreamble(
+      { rows: [{ a: 1, b: "x" }, { b: "y", a: 2 }], grid: [[1, 2], []], flags: [true, false] },
+      rules,
+    );
+    assert.deepEqual(preamble.bindings.map((b) => b.key), ["rows", "grid", "flags"]);
+
+    const run = runnerFor(nb);
+    for (const binding of preamble.bindings) {
+      for (const def of binding.defs) {
+        assert.equal(run(def).isError, false, def);
+      }
+      assert.equal(run(binding.code).isError, false, binding.code);
+    }
+    assert.equal(inlineResultFor(run, "element_at(0, rows).b").plain, "\"x\"");
+    assert.equal(inlineResultFor(run, "len(grid)").plain, "2");
+  } finally {
+    nb.free();
+  }
+});
+
+test("arrays of objects: the inlay evaluates the list without redeclaring its type", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  try {
+    // frontmatterHints runs each binding's defs, evaluates `expr`, then runs `code`. That order is
+    // why the definitions are kept out of `code`: declaring a struct twice is a hard error, so a
+    // binding that carried them in both would show its own type's redefinition as the property's
+    // result.
+    const preamble = derivePreamble(
+      { rows: [{ cost: "5 EUR" }, { cost: "3 EUR" }], after: "2 + 2" },
+      { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL },
+    );
+
+    const run = runnerFor(nb);
+    const hints = frontmatterHints(run, preamble);
+    assert.deepEqual(hints.map((h) => [h.key, h.kind]), [["rows", "result"], ["after", "result"]]);
+    assert.equal(plain(hints[0].content).includes("5 €"), true);
+
+    // …and the statement landed after its expression was shown, so the list is in scope for the
+    // rest of the note.
+    assert.equal(plain(inlineResultFor(run, "element_at(1, rows).cost").valueHtml ?? ""), "3 €");
+  } finally {
+    nb.free();
+  }
+});
+
 test("arrays: a mixed typed list fails as a Numbat type error, not a crash", { skip }, async () => {
   const mod = await loadNumbat();
   const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
   try {
     const preamble = derivePreamble(
       { mixed: [1, "2 m"] },
-      { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true },
+      { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL },
     );
     // The derivation binds it; Numbat is what reports the problem, on the property.
     assert.deepEqual(preamble.bindings.map((b) => b.expr), ["[(1), (2 m)]"]);

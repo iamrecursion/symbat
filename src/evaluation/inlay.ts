@@ -42,7 +42,7 @@ import {
 } from "../interpreter/numbat";
 import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
-import { type FmHint, frontmatterHints } from "../properties/frontmatter-inlay";
+import { type FmHint, frontmatterHints, hintPlacesOnKey } from "../properties/frontmatter-inlay";
 import { frontmatterBody, notePreamble, primeReservedNames, replayPreamble } from "../properties/note";
 import { frontmatterKeySites } from "../properties/parse";
 import { INLAY_CACHE_ENTRIES, INLAY_DEBOUNCE_MS } from "../tuning";
@@ -261,7 +261,8 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         }
 
         // Frontmatter property inlays: in Source mode, place each bound property's `= value` on its
-        // own line (Live Preview shows the widget instead).
+        // own line (Live Preview shows the widget instead) — except for a value written on the
+        // lines below its key, which shows only its problems (see hintPlacesOnKey).
         let needFrontmatter = false;
         if (filter.results && preamble.bindings.length > 0 && this.isSourceFrontmatter(view, doc)) {
           const region = frontmatterRegion(doc);
@@ -278,7 +279,7 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
 
               for (const hint of hints) {
                 const site = sites.get(hint.key);
-                if (site === undefined) {
+                if (site === undefined || !hintPlacesOnKey(hint.kind, site)) {
                   continue;
                 }
 

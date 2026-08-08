@@ -327,8 +327,34 @@ Frontmatter properties can feed the note's Numbat scope, in two ways:
   `40 EUR / 1 h`, `2 * pi`), edited in a monospace input that shows a live, muted `= value` right
   next to it — or the error, or a `⟨Type⟩` placeholder while the expression is incomplete, exactly
   like inline evaluation.
-- **Plain Numbers:** An property whose value is just a number (`hours: 3`) binds as a dimensionless
-  scalar (toggleable). This works for untyped numeric properties and `number`-typed properties.
+- **Plain Values:** A property without the Numbat type still binds the value it holds — a number
+  (`hours: 3`) as a dimensionless scalar, text as a Numbat `String`, a date as a `DateTime`, a
+  checkbox as a `Bool`. Each kind is its own toggle, since they differ in how much of a note's
+  frontmatter they put into its namespace: numbers are almost always arithmetic, text almost always
+  prose.
+
+Plain values follow a few rules worth knowing:
+
+- **Text is escaped**, so nothing in a note's prose can be read as Numbat. That matters most for `{`
+  as Numbat strings interpolate, so an unescaped `cost {rate} each` would _evaluate_ `rate`.
+- **A date needs the Date type**, assigned in the property's type menu. Obsidian shows its date
+  picker for anything date-shaped without assigning a type, so the shape alone is not the opt-in it
+  looks like — and a version, an ID or a bare year would otherwise read as a moment on the strength
+  of looking like one. Without the type it is text, like any other prose.
+- **A date is local**, so `due: 2026-07-27` binds `date("2026-07-27")`, which Numbat reads as local
+  midnight, and a time written without a UTC offset binds as local wall-clock. So
+  `due - today() -> days` means what you would expect it to. A timestamp written _with_ an offset is
+  the one shape to be careful of: reading the note's YAML has already collapsed it to an instant, at
+  which point `2026-07-27T10:30+02:00` is indistinguishable from a bare `2026-07-27 08:30`, so it
+  binds as local `08:30`. Read from Obsidian's property cache instead — which is what the property
+  widget and the scope inspector do — the offset survives as written, so the two can disagree.
+  Prefer writing a date, or a time with no offset.
+- **An unticked checkbox is `false`**, which subtly disagrees with Obsidian's Checkbox type which
+  has three states, and the unset one is written as an empty property. This reading applies only to
+  a property the type menu says is a checkbox or a toggle.
+- **`tags`, `aliases`, `cssclasses` and `numbat-use` are omitted** as they are vault machinery
+  rather than note data, and they are on a great many notes. Assigning one the Numbat type binds it
+  anyway, and the names are only special at the top level — a `meta.tags` of your own is your data.
 
 A **list** property binds as a Numbat list, so the whole of Numbat's list vocabulary applies to it:
 
@@ -342,9 +368,53 @@ costs:
   total: sum(costs.items)    # = 800
 ```
 
-Numbat lists hold one type, so a mixed list (`[1, "a"]`) cannot bind — a typed one reports Numbat's
-own type error on the property. Untyped lists join only when every item is a plain number, so `tags`
-and other prose metadata stay out of the note's namespace; and a list of objects does not bind.
+Numbat lists hold one type, so a **Numbat-typed** mixed list (`[1, "a"]`) binds and reports Numbat's
+own type error on the property. An **untyped** one instead stays quiet as it was never opted in. Its
+items still bind when they are all the same kind, under the plain-value rules above.
+
+A list's items share one **property key**, written `<key>.#`. This is a name in _Obsidian's_
+property registry, not a Numbat one — `#` is not Numbat syntax, and an array item has no Numbat name
+at all (the list binds under the array's own key, and you reach an item with `element_at`). It is
+[Better Properties](https://github.com/unxok/better-properties)' spelling for the sub-property every
+item of an **Array** type shares, which is why one type assignment covers all of them, and it is
+where Symbat reads that assignment from, at any depth: `rates.#`, `costs.items.#`, a nested array's
+`grid.#.#`. A type assigned to the array's own key works too, and is how a list binds with no extra
+plugin.
+
+The distinction matters because the two kinds of dotted name look alike. `costs.total` is _both_ a
+property key and a Numbat field path, so it reads the same in the frontmatter and in a code block.
+`rates.#` is only ever the former.
+
+An **array of objects** binds as a list of Numbat structs, with one type shared by every item, which
+is what an Array property already promises:
+
+```yaml
+legs:                        # the property keys `legs.#.distance` and `legs.#.time` carry the type
+  - distance: 5 km
+    time: 21 min
+  - distance: 10 km
+    time: 46 min
+```
+
+`legs` is then a two-element list: `len(legs)` is 2, `element_at(0, legs).distance` is `5 km`, and a
+`fn` written over the element type maps across the whole of it. Note the difference between the two
+columns above — `legs.#.distance` is what you assign the type to in the properties panel, while
+`element_at(0, legs).distance` is what you write in Numbat to read it. Every item must bind, and
+bind the same fields. An array that cannot manage that binds nothing and says so on the array. Items
+whose fields disagree _dimensionally_ (a `5 km` beside a `10 s`) do bind, and Numbat reports its own
+type error on the property: the same guarantee the rest of the plugin gives.
+
+Two things to know about arrays:
+
+- An item has **no line of its own** to anchor a result on, and a list written as a block shows no
+  result on its key line either — the items are right there to read. An **error** or an incomplete
+  `⟨Type⟩` still shows there, since that is the only warning you would get. A list written on its
+  key line (`rates: [5 EUR, 3 EUR]`) shows its `= [5 €, 3 €]` as any other value does, and the note
+  scope inspector always shows the whole list. In Source mode the completer, hover and auto-pairing
+  treat an item's text as the Numbat code it is.
+- An item **cannot reference its siblings** the way an object's properties can: there is no name for
+  an index. Items see the note's imports and the properties written above the array, as any property
+  does.
 
 Properties **nested inside a YAML object** count too, under both rules, however deep. An object
 binds as a Numbat _struct_ named after its own key, so each property is addressed by the dotted path
@@ -375,12 +445,13 @@ Four things to know about nesting:
 - If one nested property fails to evaluate, the object **stops being rebuilt** at that point: the
   broken property shows its own error as always, and the ones after it still evaluate on their own,
   but they **cannot be reached through the object** until it is fixed.
-- YAML **lists** are not descended into (a list item has no `key:` line to anchor a result on, and
-  no struct field can name an index).
+- A YAML **list** inside an object is one field holding the whole list, not a property per item — no
+  struct field can name an index. See [above](#note-properties) for how its items are typed.
 
-Assigning the Numbat type to a nested property needs the
+Assigning the Numbat type to a nested property, or to an array's items, needs the
 [Better Properties](https://github.com/unxok/better-properties) plugin, which is the only way to
-reach a nested property's type menu. Nested **plain numbers**, however, work with no extra plugin.
+reach the type menu of a sub-property. Nested **plain values**, however, work with no extra plugin,
+as does a type assigned to a top-level list's own key.
 
 Every binding is then in scope for **everything in the note** — plain `numbat` blocks,
 `numbat-shared` blocks, inline `` n`…` `` expressions, and their completions: a note with
@@ -392,8 +463,10 @@ the properties above it.
 When you edit the frontmatter as raw YAML in **Source mode**, each bound property shows the same
 muted `= value` (or `⟨Type⟩` / error) at the end of its line that a `numbat` block line does, so you
 get the result without leaving the text. In Live Preview and reading view the property widget shows
-it instead. This follows the inlay-hint settings and is suppressed for a value that just restates
-itself, like `weight: 80.5`.
+it instead. This follows the inlay-hint settings, and a result is suppressed when it would only
+repeat what the text already says: a value that restates itself, like `weight: 80.5`, and a value
+written on the lines _below_ its key, like a block list. An error or an incomplete `⟨Type⟩` is never
+suppressed.
 
 Two guardrails: a property whose (sanitized — spaces and punctuation become `_`) name collides with
 an existing Numbat name, a unit like `m` or `hours`, a function, a dimension, or a variable like
@@ -408,13 +481,13 @@ named note's `numbat-shared` blocks and its Numbat-typed properties become avail
 functions and typed properties (`g`, `c`, a `tax_rate`) that every note using it can reference.
 
 Links are followed **transitively** (a used note's own `numbat-use` chains in), with a cycle guard,
-and an imported note's _untyped_ numbers and plain `numbat` blocks stay private to it. Nested typed
-properties export like any other (a used note's `rates.vat` arrives as `rates.vat`); `numbat-use`
-itself is read at the top level only. Edits to an imported note re-evaluate the notes that use it.
-One broken import is contained, and does not sink the others.
+and an imported note's _untyped_ plain values and plain `numbat` blocks stay private to it. Nested
+typed properties export like any other (a used note's `rates.vat` arrives as `rates.vat`);
+`numbat-use` itself is read at the top level only. Edits to an imported note re-evaluate the notes
+that use it. One broken import is contained, and does not sink the others.
 
-All three behaviors live under the **Note properties** settings section: a master toggle, the
-plain-numbers sub-toggle, and the imports sub-toggle.
+All three behaviors live under the **Note properties** settings section: a master toggle, one
+sub-toggle per kind of plain value (numbers, text, dates, checkboxes), and the imports sub-toggle.
 
 ## Note Scope Inspector
 

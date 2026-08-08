@@ -75,6 +75,9 @@ const EXPECTED_EFFECTS: Record<string, readonly SettingEffect[]> = {
 
   noteProperties: ["refreshNoteScope"],
   notePropertyNumbers: ["refreshNoteScope"],
+  notePropertyText: ["refreshNoteScope"],
+  notePropertyDates: ["refreshNoteScope"],
+  notePropertyBooleans: ["refreshNoteScope"],
   noteImports: ["refreshNoteScope"],
 
   liveReplHighlight: ["refreshReplHighlight"],

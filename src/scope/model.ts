@@ -86,8 +86,11 @@ export interface ScopeValue {
  *  prelude. */
 export type ScopeSourceKind =
   | "import"
+  /** A frontmatter property assigned the Numbat type, whose value is an expression. */
   | "property"
-  | "number"
+  /** A frontmatter property that rode along untyped, as whichever plain value it holds — a number,
+   *  a string, a date, a boolean. */
+  | "plain"
   | "shared"
   | "local"
   | "inline"
@@ -123,6 +126,10 @@ export interface ScopeEntry {
   /** The full statement to run when evaluating (`let name = (expr)` for a property; the verbatim
    *  `let` statement for a block / inline / import binding). */
   code: string;
+
+  /** Definitions {@link expr} itself needs, run before it (see {@link PropertyBinding.defs}) — a
+   *  frontmatter property's, and empty or absent everywhere else. */
+  defs?: string[];
 
   /** How scope/eval.ts probes this binding: `expr` evaluates the RHS then defines the statement
    *  (properties, matching the frontmatter inlays); `definition` runs the statement then reads the
@@ -384,13 +391,14 @@ function buildProperties(preamble: NotePreamble, lines: string[]): {
   const entries = preamble.bindings.map((binding) => {
     const site = sites.get(binding.key);
     return {
-      sourceKind: binding.kind === "number" ? "number" : "property",
+      sourceKind: binding.kind === "expression" ? "property" : "plain",
       declKind: "let",
       name: binding.name,
       label: binding.key === binding.name ? binding.name : binding.key,
       path: binding.path,
       expr: binding.expr,
       code: binding.code,
+      defs: binding.defs,
       probe: "expr",
       defsite: { notePath: null, line: site?.line ?? null, ch: site?.ch ?? 0 },
       shadowed: false,
@@ -900,7 +908,7 @@ export interface DefinitionMatch {
 const SOURCE_LABEL: Record<ScopeSourceKind, string> = {
   import: "imported",
   property: "frontmatter",
-  number: "frontmatter",
+  plain: "frontmatter",
   shared: "shared block",
   local: "block",
   inline: "inline",

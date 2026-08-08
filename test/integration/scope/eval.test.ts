@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_INLINE_CONFIG } from "../../../src/evaluation/inline-parse.ts";
 import { frontmatterHints } from "../../../src/properties/frontmatter-inlay.ts";
-import { derivePreamble } from "../../../src/properties/parse.ts";
+import { derivePreamble, PLAIN_ALL } from "../../../src/properties/parse.ts";
 import { evaluateScopeTree } from "../../../src/scope/eval.ts";
 import { buildScopeTree, type ScopeEntry } from "../../../src/scope/model.ts";
 import { loadNumbat, skip } from "../wasm-pkg.ts";
@@ -59,7 +59,7 @@ const LINES = [
 function sampleTree() {
   const preamble = derivePreamble(
     { total: "e * 278", weight: 80.5, doubled: "total * 2", incomplete: "3 m +", bad: "abs(-5" },
-    { isNumbatTyped: (key) => key !== "weight", isReserved: () => false, bindNumbers: true },
+    { isNumbatTyped: (key) => key !== "weight", isReserved: () => false, plain: PLAIN_ALL },
   );
   return buildScopeTree({
     file: "Note.md",
@@ -134,7 +134,7 @@ test("a plain (local) block's bindings do not leak into scope", { skip }, async 
     "```",
     "then n`let leak = secret + 1` here",
   ];
-  const preamble = derivePreamble({}, { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true });
+  const preamble = derivePreamble({}, { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL });
   const tree = buildScopeTree({ file: "N.md", lines, config, preamble, importGroups: [] });
   evaluateScopeTree(makeContextFactory(mod), tree);
 
@@ -160,7 +160,7 @@ test("user prelude bindings resolve; fn/dimension show no value", { skip }, asyn
     }
     return { run: runnerFor(nb), free: () => nb.free() };
   };
-  const preamble = derivePreamble({}, { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true });
+  const preamble = derivePreamble({}, { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL });
   const tree = buildScopeTree({
     file: "N.md",
     lines: ["prose"],
@@ -198,7 +198,7 @@ test("a block's function shows its concrete signature; a broken one shows its er
     file: "N.md",
     lines,
     config,
-    preamble: derivePreamble({}, { isNumbatTyped: () => true, isReserved: () => false, bindNumbers: true }),
+    preamble: derivePreamble({}, { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL }),
     importGroups: [],
   });
   evaluateScopeTree(makeContextFactory(mod), tree);

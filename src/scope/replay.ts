@@ -115,7 +115,7 @@ export function replayChunksAt(
 
   // Cross-note imports open the scope before the note's own property bindings.
   const chunks: string[] = [...(preamble.imports ?? [])];
-  chunks.push(...preamble.bindings.map((binding) => binding.code));
+  chunks.push(...preamble.bindings.flatMap((binding) => [...binding.defs, binding.code]));
 
   const before = linesAbove(editor, position.line);
   const fence = numbatFenceContext(before);

@@ -17,6 +17,48 @@ The following are near-term goals that are relatively small.
   interpreter context on every evaluation, and ignores the default-decimal-places setting that
   inline evaluation honors. Both are small, but both are visible.
 
+## Better Handling of Dates and Datetimes
+
+Obsidian's frontmatter Dates are Datetimes have some notable limitations which makes interfacing
+with Numbat harder than it needs to be:
+
+- The datetime format continually overwrites any user-specified timezone, and the timezone widget
+  does not provide a way to specify a timezone.
+- The date format contains only the date, and never a timezone, and so Numbat gets the timezone
+  wrong.
+
+The simplest fix to this is monkey-patch the metadata widgets for each with the ability to specify a
+timezone, as well as monkey patch the widget updates to restore the source propertly.
+
+## Better Handling of Undefined Frontmatter Properties
+
+Currently an undefined frontmatter property is dropped entirely from the structure it is nested
+inside (or the top level). This is particularly annoying with uni-typed lists/arrays, so we can do
+better here. The proposal is as follows:
+
+- We ship a `struct __Nullable<T> { present: bool, value: T }` type that gets injected into every
+  numbat context provided by symbat. This is not an enum because they are not supported by numbat,
+  see [sum types](#sum-types) below), and is not really exposed to the user.
+- Whenever we would display `__Nullable<T>` we instead display as `T?`, and when displaying a value
+  of nullable type we either display `value` if `present == true` or `undefined` otherwise.
+- We provide the following utility functions that users can call on `T?`.
+  - `fn get<T>(n: T?) -> T` results in a runtime error if called where `!present`.
+  - `fn get_or<T>(n: T?, T) -> T`
+  - `fn is_defined<T>(n: T?) -> bool`
+  - `fn is_undefined<T>(n: T?) -> bool`
+
+## Better Numbers
+
+Enhancing Numbat's numerical backend with a hierarchical number system that encompasses
+arbitrary-precision integers, fixed-width integers, arbitrary-precision decimals, rationals, and
+complex numbers.
+
+## Sum Types
+
+Currently Numbat only has `struct`, which declares a product type. It could be quite useful to be
+able to compute with `enum`s (sum types) as well, especially if each arm is also a type in and of
+itself
+
 ## Graphing
 
 Plot a Numbat function over a set of ranges (in $n$ dimensions), as its own fenced block
@@ -57,8 +99,20 @@ one cause, which is that the WASM boundary hands over less than the interpreter 
 [soft fork docs](./design/soft-fork.md) for some reasoning for opening it up).
 
 - **Nested Properties are Janky:** Assigning the Numbat property type to a property inside a YAML
-  object requires [Better Properties](https://github.com/unxok/better-properties), which is the only
-  way to reach a nested property's type menu.
+  object, or to the items of an array, requires
+  [Better Properties](https://github.com/unxok/better-properties), which is the only way to reach a
+  sub-property's type menu.
+- **An Array Item has No Line of its Own:** Every item of an array shares one property key
+  (`<key>.#`, Obsidian's name for it — not a Numbat one), which is what makes a list bind at all,
+  but it means no item can carry its own inlay. A block list therefore shows only its errors in
+  Source mode, and the whole list's value is read from the scope inspector, which lists the array as
+  the one binding it is.
+- **A Zoned Timestamp Reads Two Ways:** A frontmatter value like `2026-07-27T10:30+02:00` reaches
+  the bindings as an instant when the note's own YAML is parsed (Source mode) and as text when it
+  comes from Obsidian's property cache (the widget, the scope inspector, imports). An instant cannot
+  say whether an offset was written, so the first binds local `08:30` while the second keeps the
+  offset as written — the two surfaces disagree by the offset. A date, or a time with no offset,
+  reads the same either way.
 - **The Bundled Prelude is Unstructured:** The WASM exposes the standard library as a flat list of
   names with no module structure or per-item origin. The sources _exist in the bundle_ but are not
   accessible.

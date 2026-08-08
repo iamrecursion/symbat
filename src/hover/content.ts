@@ -12,7 +12,8 @@
 // see hover/declarations.ts).
 
 import type { App } from "obsidian";
-import { type CompletionInfo, describedInfo } from "../completion/docs";
+import { type CompletionInfo, decoratorInfo, describedInfo } from "../completion/docs";
+import { decoratorDoc } from "../completion/expressions";
 import { buildDocPopupContent } from "../completion/render";
 import { escapeHtml } from "../interpreter/markup";
 import { completionInfo, completionSignature, interpret, type Numbat } from "../interpreter/numbat";
@@ -38,6 +39,14 @@ const FUNCTION_CARD = /^\s*Function:/;
  * the caller may still have a {@link declarationCard} for it.
  */
 export function symbolCard(context: Numbat, symbol: HoverSymbol): HTMLElement | null {
+  // A decorator exists only in the grammar — no context has heard of it, and `print_info` would
+  // answer for a binding that happens to share the name — so its card comes from the completer's
+  // table. An `@` on a name Numbat has no decorator for says nothing at all.
+  if (symbol.kind === "decorator") {
+    const doc = decoratorDoc(symbol.name);
+    return doc === null ? null : buildDocPopupContent(decoratorInfo(symbol.name, doc));
+  }
+
   if (symbol.kind === "name") {
     const info = completionInfo(context, symbol.probe);
     if (info !== null) {

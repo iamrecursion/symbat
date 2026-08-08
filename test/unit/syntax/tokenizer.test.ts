@@ -28,6 +28,20 @@ test("classifies strings and decorators", () => {
   ]);
 });
 
+test("a decorator's parentheses and argument are not part of its token", () => {
+  // Only `@name` takes the decorator color; the string stays a string and the parens stay
+  // unclassed, which is how Numbat's own formatter splits them too.
+  assert.deepEqual(tag("@name(\"Foo\")"), [
+    ["@name", "numbat-decorator"],
+    ["\"Foo\"", "numbat-string"],
+  ]);
+  assert.deepEqual(tag("@aliases(m: short)"), [
+    ["@aliases", "numbat-decorator"],
+    ["m", "numbat-identifier"],
+    ["short", "numbat-keyword"], // an alias suffix is a keyword of the decorator's own grammar
+  ]);
+});
+
 test("handles the -> conversion operator and units", () => {
   assert.deepEqual(tag("3 mile -> km"), [
     ["3", "numbat-value"],

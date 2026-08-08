@@ -86,6 +86,34 @@ test("declarationSite: a unit declaration is recognized, leading indent included
   });
 });
 
+test("declarationSite: decorators on the declaration's own line are stepped over", () => {
+  // `nameEnd` is a column on that line, so it counts the decorators it skipped.
+  assert.deepEqual(declarationSite("@metric_prefixes unit foo = 3 m"), {
+    keyword: "unit",
+    name: "foo",
+    nameEnd: 25,
+    annotated: false,
+  });
+  assert.deepEqual(declarationSite("@name(\"Foo\") @aliases(f) let x: Length = 5 m"), {
+    keyword: "let",
+    name: "x",
+    nameEnd: 30,
+    annotated: true,
+  });
+});
+
+test("declarationSite: a paren inside a decorator's own text does not end the prefix", () => {
+  // `@example` carries code by definition, so its argument routinely holds parens. Blanking the
+  // strings preserves length, so `nameEnd` is still a column of the original line.
+  const line = "@example(\"f([1, 2])\") let total = 3 m";
+  assert.deepEqual(declarationSite(line), {
+    keyword: "let",
+    name: "total",
+    nameEnd: line.indexOf("total") + "total".length,
+    annotated: false,
+  });
+});
+
 test("resultValueHtml: drops the trailing [dimension] annotation", () => {
   const { result } = splitInterpretOutput(EXPR_RESULT);
   assert.ok(result !== null);
@@ -121,6 +149,22 @@ test("bindingValueRepeatsSource: true when the value matches the bound source", 
 test("bindingValueRepeatsSource: false when evaluation reduces the expression", () => {
   const value = resultFragment(`<span class="numbat-value">4</span>`, "Scalar");
   assert.equal(bindingValueRepeatsSource("let x = 1 + 3", value), false);
+});
+
+test("bindingValueRepeatsSource: a whole statement's decorators and comments are stepped over", () => {
+  const value = resultFragment(`<span class="numbat-value">5</span> <span class="numbat-unit">m</span>`, "Length");
+
+  // The statement carries its decorators, so an `=` inside one of their strings must not be
+  // mistaken for the binding's — or the right-hand side reads as `5") let x = 5 m` and the
+  // redundant hint is shown after all.
+  assert.equal(bindingValueRepeatsSource("@description(\"x = 5\")\nlet x = 5 m", value), true);
+
+  // A `#` on one line ends that line's code, not the statement's: the declaration below a commented
+  // decorator is still found.
+  assert.equal(bindingValueRepeatsSource("@name(\"Ex\") # why\nlet x = 5 m", value), true);
+
+  // And a comment after the value still ends it.
+  assert.equal(bindingValueRepeatsSource("let x = 5 m # five", value), true);
 });
 
 test("declarationSite: an expression is not a declaration", () => {
@@ -215,29 +259,101 @@ test("errorSummary: a generic header defers to the caret annotation, then a note
 
 test("groupStatements: balanced lines are single-line statements; blanks are skipped", () => {
   assert.deepEqual(groupStatements(["let x = 2 m", "", "x + 1 m"]), [
-    { startLine: 0, endLine: 0, text: "let x = 2 m" },
-    { startLine: 2, endLine: 2, text: "x + 1 m" },
+    { startLine: 0, codeLine: 0, endLine: 0, text: "let x = 2 m" },
+    { startLine: 2, codeLine: 2, endLine: 2, text: "x + 1 m" },
   ]);
 });
 
 test("groupStatements: an open bracket absorbs lines until it balances", () => {
   assert.deepEqual(groupStatements(["abs(", "  -5", ")", "1 m"]), [
-    { startLine: 0, endLine: 2, text: "abs(\n  -5\n)" },
-    { startLine: 3, endLine: 3, text: "1 m" },
+    { startLine: 0, codeLine: 0, endLine: 2, text: "abs(\n  -5\n)" },
+    { startLine: 3, codeLine: 3, endLine: 3, text: "1 m" },
   ]);
 });
 
 test("groupStatements: an unclosed bracket at end of block closes the statement there", () => {
   assert.deepEqual(groupStatements(["1 m", "abs(-5"]), [
-    { startLine: 0, endLine: 0, text: "1 m" },
-    { startLine: 1, endLine: 1, text: "abs(-5" },
+    { startLine: 0, codeLine: 0, endLine: 0, text: "1 m" },
+    { startLine: 1, codeLine: 1, endLine: 1, text: "abs(-5" },
   ]);
 });
 
 test("groupStatements: brackets inside strings and comments do not count", () => {
   assert.deepEqual(groupStatements(["\"a ( b\"", "1 m # not open (("]), [
-    { startLine: 0, endLine: 0, text: "\"a ( b\"" },
-    { startLine: 1, endLine: 1, text: "1 m # not open ((" },
+    { startLine: 0, codeLine: 0, endLine: 0, text: "\"a ( b\"" },
+    { startLine: 1, codeLine: 1, endLine: 1, text: "1 m # not open ((" },
+  ]);
+});
+
+// --- groupStatements: decorators ----------------------------------------------
+//
+// A decorator is a prefix of the statement below it, not a statement — evaluating one alone is a
+// different, invalid program, and it leaves the declaration undecorated. `codeLine` is where the
+// statement proper starts, which is what a caller reading a declaration off "the first line" wants.
+
+test("groupStatements: a decorator absorbs the declaration below it", () => {
+  assert.deepEqual(groupStatements(["@name(\"Foo\")", "unit foo = 1 m", "2 foo"]), [
+    { startLine: 0, codeLine: 1, endLine: 1, text: "@name(\"Foo\")\nunit foo = 1 m" },
+    { startLine: 2, codeLine: 2, endLine: 2, text: "2 foo" },
+  ]);
+});
+
+test("groupStatements: decorators stack, and each argument shape is recognized", () => {
+  const body = ["@metric_prefixes", "@aliases(m: short)", "@description(\"a length\")", "unit foo = 1 m"];
+  assert.deepEqual(groupStatements(body), [
+    { startLine: 0, codeLine: 3, endLine: 3, text: body.join("\n") },
+  ]);
+});
+
+test("groupStatements: a blank line or a comment between a decorator and its declaration still binds", () => {
+  // Numbat's parser skips empty lines after a decorator before reading the statement, and comments
+  // never reach it at all.
+  assert.deepEqual(groupStatements(["@name(\"Foo\")", "", "# why it is named", "unit foo = 1 m"]), [
+    { startLine: 0, codeLine: 3, endLine: 3, text: "@name(\"Foo\")\n\n# why it is named\nunit foo = 1 m" },
+  ]);
+});
+
+test("groupStatements: a decorated declaration's open bracket still absorbs to its close", () => {
+  const body = ["@description(\"first\")", "fn first(xs) = xs[", "  0", "]"];
+  assert.deepEqual(groupStatements(body), [
+    { startLine: 0, codeLine: 1, endLine: 3, text: body.join("\n") },
+  ]);
+});
+
+test("groupStatements: a multi-line decorator argument is still only a prefix", () => {
+  const body = ["@aliases(", "  metre,", "  meters", ")", "unit foo = 1 m"];
+  assert.deepEqual(groupStatements(body), [
+    { startLine: 0, codeLine: 4, endLine: 4, text: body.join("\n") },
+  ]);
+});
+
+test("groupStatements: a decorator on the declaration's own line is one statement, code from the top", () => {
+  assert.deepEqual(groupStatements(["@metric_prefixes unit foo = 1 m"]), [
+    { startLine: 0, codeLine: 0, endLine: 0, text: "@metric_prefixes unit foo = 1 m" },
+  ]);
+});
+
+test("groupStatements: a dangling decorator still evaluates, anchored on its own last line", () => {
+  // It is an error either way — but the error belongs on the decorator, not on the empty space the
+  // user had not filled in yet.
+  assert.deepEqual(groupStatements(["1 m", "@name(\"Foo\")", "", ""]), [
+    { startLine: 0, codeLine: 0, endLine: 0, text: "1 m" },
+    { startLine: 1, codeLine: 1, endLine: 1, text: "@name(\"Foo\")" },
+  ]);
+});
+
+test("groupStatements: a decorator's own text may hold parens without ending it", () => {
+  // `@example` arguments routinely contain calls; the closing paren is the one outside the string.
+  const body = ["@example(\"last([1, 2])\", \"a list\")", "@description(\"the last element\")", "fn last(xs) = xs"];
+  assert.deepEqual(groupStatements(body), [
+    { startLine: 0, codeLine: 2, endLine: 2, text: body.join("\n") },
+  ]);
+});
+
+test("groupStatements: an `@` inside an expression is not a decorator", () => {
+  assert.deepEqual(groupStatements(["\"a @name b\"", "1 m"]), [
+    { startLine: 0, codeLine: 0, endLine: 0, text: "\"a @name b\"" },
+    { startLine: 1, codeLine: 1, endLine: 1, text: "1 m" },
   ]);
 });
 

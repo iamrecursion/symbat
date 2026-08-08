@@ -74,6 +74,15 @@ Five independent toggles under **Expression completion** each gate one kind:
 - **Complete dimensions** includes physical dimensions (`Length`, `Time`, `Mass`, …).
 - **Complete types** includes built-in and structural types (`Bool`, `String`, struct, …).
 
+Typing `@` at the start of a statement offers Numbat's **decorators** — `@name`, `@description`,
+`@url`, `@example`, `@aliases`, `@metric_prefixes`, `@binary_prefixes` and `@abbreviation` — from
+the first character, since the set is small and closed. Accepting one writes the punctuation its
+grammar requires and leaves the caret where the argument goes (`@name("‸")`). They are gated by
+**Complete keywords**, being syntax rather than names, and each carries a one-line description in
+the documentation popup and on hover. Both only where a statement can be written — a code block, the
+REPL, or a `.nbt` file; an inline evaluation and a frontmatter value each hold a single expression,
+which gives a decorator nothing to annotate, so neither completes nor describes one there.
+
 Each row carries its **type signature** after the name (e.g. `abs : forall A: Dim. Fn[(A) -> A]`,
 `meter : Length`), muted and truncated so it never crowds out the name.
 
@@ -282,6 +291,13 @@ A bracketed expression spanning several lines (`abs(` … `)`) is valid Numbat a
 statement: its result sits at the end of its last line, and its intermediate lines are never flagged
 as errors.
 
+**Decorators** belong to the declaration below them, so they are read together with it — a
+`@description("…")` on its own line is not evaluated alone and is never flagged as an error. Any
+number of them may stack, with blank lines and comments between, and the declaration's own hints
+still anchor on the declaration's line rather than on the annotations above it. The annotations
+themselves take effect: a `@description` or `@aliases` you write shows up wherever that name is
+later completed, hovered, or listed.
+
 The hints are display-only (never selected or copied) and update as you type. The type hints appear
 wherever the interpreter can name a type — for each binding and each complete line — not for every
 subexpression. Turn the whole feature off, or just the results or the type hints, under **Editor →
@@ -295,8 +311,12 @@ earlier in the REPL session are in scope). It follows the same **Show type hints
 ## Live REPL Highlighting
 
 The REPL input is syntax-highlighted as you type, using the same token colors as `numbat` code
-blocks. Keywords, numbers, strings, operators, comments, and decorators all take their theme color,
-so an expression reads the same in the REPL as it would in a block.
+blocks. Keywords, numbers, strings, operators and comments all take their theme color, so an
+expression reads the same in the REPL as it would in a block. A **decorator** takes the theme's tag
+color, distinct from units — only the `@name` itself, with its parentheses and string argument
+keeping their own colors. Override it with `--numbat-decorator` (as `--numbat-unit` and
+`--numbat-dimension` override theirs). Ordinary names take the theme's own code color
+(`--code-normal`) rather than its prose color, so they sit with the rest of the tokens.
 
 It is purely visual: the caret, selection, history recall, unicode expansion, and completers all
 behave exactly as before. Turn it off with the **Live REPL highlighting** setting to type against

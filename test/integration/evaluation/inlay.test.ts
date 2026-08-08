@@ -238,3 +238,103 @@ test("REPL hole type resolves against a session-defined name and does not mutate
 
   nb.free();
 });
+
+// The regression this file exists to catch: a decorator written on its own line is a *prefix* of
+// the declaration below it, not a statement. Fed to the interpreter alone it is a different,
+// invalid program ("decorators can only be used on unit, let or function definitions"), and the
+// declaration below it is then defined undecorated — so the annotation never reaches anything
+// downstream. Both halves are checked here against the real wasm.
+test("a decorated declaration evaluates as one statement, and its annotations take effect", { skip }, async () => {
+  const { Numbat, FormatType } = await loadNumbat();
+  const nb = Numbat.new(true, true, FormatType.Html);
+  const run = (code: string) => {
+    const out = nb.interpret(code);
+    const data = { output: out.output, isError: out.is_error };
+    out.free();
+    return data;
+  };
+
+  const body = [
+    "@description(\"the last element\")",
+    "@example(\"last([1, 2])\", \"gives 2\")",
+    "fn last<A>(xs: List<A>) -> A = head(reverse(xs))",
+    "",
+    "last([1, 2, 3])",
+  ];
+  const hints = hintsForBlock(run, body);
+
+  // No error anywhere — in particular not on either decorator line.
+  assert.deepEqual(hints.filter((h) => h.kind === "error").map((h) => h.bodyLine), []);
+
+  // The call below the definition resolves, so the `fn` really was defined.
+  const result = hints.find((h) => h.kind === "result" && h.bodyLine === 4);
+  assert.ok(result, "expected the call's result");
+  assert.match(result.content, /numbat-value">3</);
+
+  // And the decorators reached the interpreter: it can describe the function by them. (`print_info`
+  // renders the description but not the examples, so only the former is assertable — the `@example`
+  // above earns its place by carrying parens inside its string, which the grouping must not read as
+  // the decorator's own closing paren.)
+  assert.match(nb.print_info("last"), /Description: the last element/);
+
+  nb.free();
+});
+
+// A decorator on a `unit` declaration must still yield the declaration's own hints — the type hint
+// is anchored on the declaration line, not on the decorator above it.
+test("a decorated let/unit anchors its inline type hint on the declaration line", { skip }, async () => {
+  const { Numbat, FormatType } = await loadNumbat();
+  const nb = Numbat.new(true, true, FormatType.Html);
+  const run = (code: string) => {
+    const out = nb.interpret(code);
+    const data = { output: out.output, isError: out.is_error };
+    out.free();
+    return data;
+  };
+
+  const body = ["@name(\"Widget\")", "@aliases(widgets)", "unit widget = 3 m"];
+  const hints = hintsForBlock(run, body);
+
+  assert.deepEqual(hints.filter((h) => h.kind === "error"), []);
+  const typeHint = hints.find((h) => h.kind === "type");
+  assert.ok(typeHint, "expected an inferred type hint");
+  assert.equal(typeHint.bodyLine, 2); // the `unit` line, not either decorator
+  assert.equal(typeHint.column, "unit widget".length);
+  assert.match(typeHint.content, /Length/);
+
+  // The alias the decorator introduced resolves, so the decorator was really applied.
+  const aliased = run("2 widgets");
+  assert.equal(aliased.isError, false);
+
+  nb.free();
+});
+
+// A decorated `let` whose value just repeats its source shows no value hint — the redundancy check
+// reads the whole statement, so an `=` inside a decorator's own text must not be taken for the
+// binding's.
+test("a decorated let suppresses the value hint that merely repeats its source", { skip }, async () => {
+  const { Numbat, FormatType } = await loadNumbat();
+  const nb = Numbat.new(true, true, FormatType.Html);
+  const run = (code: string) => {
+    const out = nb.interpret(code);
+    const data = { output: out.output, isError: out.is_error };
+    out.free();
+    return data;
+  };
+
+  const body = ["@description(\"where x = 5\")", "let x = 5 m", "@description(\"a sum\")", "let y = 1 m + 3 m"];
+  const hints = hintsForBlock(run, body);
+
+  assert.deepEqual(hints.filter((h) => h.kind === "error"), []);
+
+  // `x` binds exactly what it evaluates to, so only its type is annotated.
+  assert.deepEqual(hints.filter((h) => h.bodyLine === 1).map((h) => h.kind), ["type"]);
+
+  // `y` reduces, so its value is worth showing — and lands on the declaration line, not on a
+  // decorator.
+  const valueHint = hints.find((h) => h.bodyLine === 3 && h.kind === "result");
+  assert.ok(valueHint, "expected the reduced value");
+  assert.match(valueHint.content, /numbat-value">4</);
+
+  nb.free();
+});

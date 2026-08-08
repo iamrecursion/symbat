@@ -77,3 +77,18 @@ test("nothing is declared outside a declaration, however near", () => {
   assert.equal(declared(10, "paid"), null);
   assert.equal(declared(10, "total"), null);
 });
+
+test("a decorator on the declaration's own line is stepped over, parens in its text and all", () => {
+  // Without this, a decorated `fn` is not recognized as the enclosing declaration, and a parameter
+  // hover falls through to whatever outer binding happens to share the name.
+  const decorated = [
+    "let x = 9",
+    "@example(\"double(2)\") fn double(x: Scalar) -> Scalar = 2 x",
+  ];
+  assert.deepEqual(declaredSymbolAt(decorated, 1, "x"), {
+    kind: "parameter",
+    name: "x",
+    type: "Scalar",
+    owner: "double",
+  });
+});

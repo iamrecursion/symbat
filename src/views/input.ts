@@ -45,10 +45,11 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
-import { type CompletionInfo } from "../completion/docs";
+import { type CompletionInfo, decoratorInfo } from "../completion/docs";
 import {
   allowedCategoriesAt,
   boundCompletions,
+  decoratorCompletions,
   type ExprCategories,
   type ExprCategory,
   type ExprCompletion,
@@ -173,6 +174,13 @@ export interface NumbatInputOptions {
    *  hold. */
   singleLine?: boolean;
 
+  /** The input holds one *expression*, not a statement — a Numbat-typed property's value, which
+   *  commits a value rather than a definition. Decorators are then neither completed nor carded on
+   *  hover: there is nothing below an `@` for one to annotate. The REPL and a `.nbt` document both
+   *  evaluate statements, so neither sets it. Separate from {@link singleLine}, which is about what
+   *  YAML can hold rather than about what Numbat will parse. */
+  expressionOnly?: boolean;
+
   /** A whole Numbat document rather than one expression (a `.nbt` file). Enter inserts a newline
    *  and there is nothing to submit to, find/replace is available (Obsidian's own does not reach
    *  a custom view), and the inlay hints cover every line instead of just the last one's typed
@@ -207,6 +215,26 @@ interface ReplCompletion extends Completion {
 
   /** The inline `type()` signature HTML, on expression completions that have one. */
   numbatSignature?: string;
+
+  /** A ready-made description for a row the interpreter cannot be asked about — a decorator, which
+   *  no context has ever heard of. */
+  numbatDoc?: string;
+}
+
+/** How accepting `completion` writes it, or `undefined` to insert its name as usual. A decorator
+ *  writes the punctuation its grammar requires and drops the caret where the argument goes. */
+function applyOf(completion: ExprCompletion): Completion["apply"] {
+  const { applied } = completion;
+  if (applied === undefined) {
+    return undefined;
+  }
+
+  return (view, _completion, from, to) => {
+    view.dispatch({
+      changes: { from, to, insert: applied.text },
+      selection: { anchor: from + applied.caret },
+    });
+  };
 }
 
 // COMPLETION
@@ -217,8 +245,15 @@ interface ReplCompletion extends Completion {
  * completer wins when the caret sits in a code; otherwise, when the whole input opens with the
  * history leader, previous inputs are offered (fuzzy-filtered by the text after the leader).
  * Results are pre-filtered, so `filter: false` shows them as-is.
+ *
+ * `admitsStatements` is false for an input holding one expression (a property value), which cannot
+ * take a decorator — see the `expressionOnly` option.
  */
-function numbatCompletionSource(plugin: SymbatPlugin, host: NumbatInputHost): CompletionSource {
+function numbatCompletionSource(
+  plugin: SymbatPlugin,
+  host: NumbatInputHost,
+  admitsStatements: boolean,
+): CompletionSource {
   return (context): CompletionResult | null => {
     const { settings } = plugin;
 
@@ -300,13 +335,14 @@ function numbatCompletionSource(plugin: SymbatPlugin, host: NumbatInputHost): Co
           dimensions: settings.completeDimensions,
           types: settings.completeTypes,
         };
-
         const beforeAnchor = before.slice(0, from);
-        // A type-parameter bound position (`fn foo<D: `) admits exactly one name — `Dim` — so it
-        // bypasses the engine (whose candidates are all parse errors there); otherwise the
-        // enclosing declaration's type variables, which the engine does not know, complete ahead of
-        // its candidates.
-        let completions = boundCompletions(beforeAnchor, trigger.query, enabled);
+
+        // A type-parameter bound position (`fn foo<D: `) admits exactly one name — `Dim` — and a
+        // decorator position (`@`) a closed set of its own, so both bypass the engine (whose
+        // candidates are all parse errors in either place); otherwise the enclosing declaration's
+        // type variables, which the engine does not know, complete ahead of its candidates.
+        let completions = boundCompletions(beforeAnchor, trigger.query, enabled)
+          ?? decoratorCompletions(beforeAnchor, trigger.query, enabled, admitsStatements);
         if (completions === null) {
           const allowed = allowedCategoriesAt(beforeAnchor);
           const typeVars = typeVariableCompletions(beforeAnchor, trigger.query, enabled, allowed);
@@ -317,10 +353,16 @@ function numbatCompletionSource(plugin: SymbatPlugin, host: NumbatInputHost): Co
           ];
         }
 
+        // A decorator has no runtime existence, so it is neither typed nor described by the
+        // interpreter — its card and its inserted text come from the completer's own table.
         const options: ReplCompletion[] = completions.map((completion) => ({
           label: completion.name,
           numbatCategory: completion.category,
-          numbatSignature: host.completionSignature(completion.name) ?? undefined,
+          numbatSignature: completion.category === "decorator"
+            ? undefined
+            : host.completionSignature(completion.name) ?? undefined,
+          numbatDoc: completion.doc,
+          apply: applyOf(completion),
         }));
         if (options.length === 0) {
           return null;
@@ -404,6 +446,11 @@ export class NumbatInput {
    *  which inlay-hint extension the compartment carries. */
   private readonly documentMode: boolean;
 
+  /** Whether this editor holds one expression rather than a statement (see the `expressionOnly`
+   *  option), which decides whether a decorator can be written — and so completed or hovered — in
+   *  it. */
+  private readonly expressionOnly: boolean;
+
   /** The shared floating documentation popup, its dwell timer, and the completion it is (or will
    *  be) showing — so re-selecting the same row does not re-arm it. */
   private readonly docPopup = new DocPopup();
@@ -427,9 +474,11 @@ export class NumbatInput {
     options: NumbatInputOptions,
   ) {
     const { highlight, vimMode, inlayHoles, hover, singleLine = false, document: documentMode = false } = options;
+    const expressionOnly = options.expressionOnly ?? false;
     this.plugin = plugin;
     this.host = host;
     this.documentMode = documentMode;
+    this.expressionOnly = expressionOnly;
 
     // Enter/Shift-Enter/arrows. Sits below the completion keymap (so an open popup owns
     // Enter/arrows) and below Vim (so Vim owns normal-mode keys), but above the default keymap (so
@@ -542,7 +591,7 @@ export class NumbatInput {
         tooltips({ parent: document.body }),
         placeholder(options.placeholder),
         autocompletion({
-          override: [numbatCompletionSource(plugin, host)],
+          override: [numbatCompletionSource(plugin, host, !expressionOnly)],
 
           // A scoped class on the popup, so its z-index/width can be styled without touching any
           // other CodeMirror tooltip.
@@ -671,14 +720,16 @@ export class NumbatInput {
 
     if (label !== null) {
       const category = selected?.numbatCategory ?? null;
-      this.dwellTimer = window.setTimeout(() => this.showDwellPopup(label, category), COMPLETION_DWELL_MS);
+      const doc = selected?.numbatDoc;
+      this.dwellTimer = window.setTimeout(() => this.showDwellPopup(label, category, doc), COMPLETION_DWELL_MS);
     }
   }
 
   /** Show the documentation popup for the dwelt-on completion, above the completer. */
-  private showDwellPopup(label: string, category: ExprCategory | null): void {
+  private showDwellPopup(label: string, category: ExprCategory | null, doc?: string): void {
     this.dwellTimer = null;
-    const info = this.host.completionInfo(label);
+    // A row carrying its own description is one the interpreter cannot answer for (a decorator).
+    const info = doc === undefined ? this.host.completionInfo(label) : decoratorInfo(label, doc);
     if (info === null) {
       return;
     }
@@ -691,7 +742,9 @@ export class NumbatInput {
 
     // A non-function entry gets a `Type:` field from `type(<name>)` (functions already carry a
     // `Signature:` line; see formatDocBody).
-    const typeSignature = category === "function" ? null : this.host.completionSignature(label);
+    const typeSignature = category === "function" || doc !== undefined
+      ? null
+      : this.host.completionSignature(label);
     this.docPopup.showAbove(tooltip.getBoundingClientRect(), buildDocPopupContent(info, typeSignature));
   }
 
@@ -794,7 +847,7 @@ export class NumbatInput {
     }
 
     const line = view.state.doc.lineAt(pos);
-    const symbol = hoverSymbolAt(line.text, pos - line.from);
+    const symbol = hoverSymbolAt(line.text, pos - line.from, { statements: !this.expressionOnly });
     if (symbol === null) {
       return { miss: "nothing to hover at the cursor" };
     }

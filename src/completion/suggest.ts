@@ -1,8 +1,9 @@
 // Expression-completion popover for the editor, using Obsidian's native completer UI:
 // `NumbatExprEditorSuggest` (an `EditorSuggest`) offers Numbat identifiers, operators, and types
 // inside `numbat` / `numbat-shared` blocks — and inside an inline-eval span's expression (`` n`…`
-// ``) — as you type: two characters into a word, or straight after `.`, `:`, a generic's `<`, or a
-// declaration's return `->`. Selecting a row inserts the name. It is the code-block counterpart of
+// ``) — as you type: two characters into a word, or straight after `.`, `:`, a generic's `<`, a
+// declaration's return `->`, or a decorator's `@`. Selecting a row inserts the name (a decorator
+// also gets the punctuation its grammar requires). It is the code-block counterpart of
 // the REPL completer (see views/input.ts), sharing the categorization and trigger logic in
 // completion/expressions.ts; only the source context differs (a shared prelude context here, the
 // live session context in the REPL).
@@ -40,9 +41,11 @@ import { numbatPropertySiteAt, replayChunksAt } from "../scope/replay";
 import { COMPLETION_DWELL_MS } from "../tuning";
 import { unicodePrefixAt } from "../unicode/codes";
 import { chooserOf, registerSuggestKeys } from "../unicode/suggest";
+import { decoratorInfo } from "./docs";
 import {
   allowedCategoriesAt,
   boundCompletions,
+  decoratorCompletions,
   type ExprCompletion,
   expressionCompletions,
   exprTriggerAt,
@@ -286,6 +289,21 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       return bound;
     }
 
+    // A decorator position (`@`) is the same story: a closed set the interpreter has no vocabulary
+    // for, and every engine candidate is a parse error after the `@`. Only a fence body takes
+    // statements, though — an inline span and a frontmatter value each hold a single expression,
+    // which a decorator has nothing to annotate in.
+    const decorators = decoratorCompletions(
+      beforeAnchor,
+      context.query,
+      enabled,
+      inlineSpan === null && fmSite === null,
+    );
+    if (decorators !== null) {
+      this.shown = decorators;
+      return decorators;
+    }
+
     // The wasm can take a moment to initialize on first use. Rather than block the popover
     // silently, warm it up in the background and show a placeholder row; a subsequent keystroke,
     // once ready, shows real completions.
@@ -368,23 +386,29 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       el.setText("Loading Numbat…");
       return;
     }
+    // A decorator has no type — and must not be probed, or a binding that happens to share the name
+    // would put its signature on the row.
     const probe = value.probeName ?? value.name;
-    const live = this.liveBlockContext();
+    const live = value.category === "decorator" ? null : this.liveBlockContext();
     const signature = live !== null ? completionSignature(live, probe) : null;
     renderExprSuggestion(el, value, signature);
     // The popover exists now, so its container is reachable for the dwell observer.
     this.ensureDwellObserver();
   }
 
-  /** Insert the chosen name over the triggering range and put the caret after it. */
+  /** Insert the chosen name over the triggering range and put the caret after it — or, for a
+   *  decorator, its name plus the punctuation its grammar requires, caret at the argument. */
   selectSuggestion(value: ExprSuggestion): void {
     const { context } = this;
     if (context === null || isLoading(value)) {
       return; // the placeholder is not actionable
     }
-    context.editor.replaceRange(value.name, context.start, context.end);
-    const ch = context.start.ch + value.name.length;
-    context.editor.setCursor({ line: context.start.line, ch });
+
+    // A decorator writes the punctuation its grammar requires, and puts the caret where its arg
+    // goes rather than after the closing paren.
+    const { text, caret } = value.applied ?? { text: value.name, caret: value.name.length };
+    context.editor.replaceRange(text, context.start, context.end);
+    context.editor.setCursor({ line: context.start.line, ch: context.start.ch + caret });
     this.close();
   }
 
@@ -462,12 +486,24 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     this.dwellTimer = null;
     const chooser = chooserOf(this);
     const container = this.popoverContainer();
-    const live = this.liveBlockContext();
-    if (chooser == null || container == null || live === null) {
+    if (chooser == null || container == null) {
       return;
     }
     const value = this.shown[chooser.selectedItem];
     if (value === undefined || isLoading(value)) {
+      return;
+    }
+
+    // A row carrying its own description is one the interpreter cannot answer for — a decorator,
+    // which no context has heard of — so it needs neither a live context nor a `type()` probe.
+    if (value.doc !== undefined) {
+      const card = buildDocPopupContent(decoratorInfo(value.name, value.doc));
+      this.docPopup.showAbove(container.getBoundingClientRect(), card);
+      return;
+    }
+
+    const live = this.liveBlockContext();
+    if (live === null) {
       return;
     }
     const info = completionInfo(live, value.name);

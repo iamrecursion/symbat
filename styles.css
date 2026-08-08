@@ -29,8 +29,10 @@
   color: var(--numbat-unit, var(--code-function, var(--color-purple)));
 }
 
+/* Ordinary names — variables, constants, and functions, which Numbat does not distinguish. Uses
+ * `--code-normal` so a name takes the theme's own code color rather than its prose color. */
 .numbat-identifier {
-  color: var(--text-normal);
+  color: var(--code-normal, var(--text-normal));
 }
 
 .numbat-type-identifier {
@@ -56,8 +58,13 @@
   font-weight: 600;
 }
 
+/* Decorators (`@name`, `@aliases`, …). Uses `--code-tag` — an annotation is metadata about the
+ * declaration it sits above — so decorators stay clear of units, which borrow `--code-function`.
+ * Only the `@name` token itself: the parentheses and the string argument are separate tokens and
+ * keep their own colors, which is how Numbat's own formatter splits them too. Override with
+ * `--numbat-decorator`. */
 .numbat-decorator {
-  color: var(--code-function, var(--color-purple));
+  color: var(--numbat-decorator, var(--code-tag, var(--color-yellow)));
 }
 
 .numbat-comment {

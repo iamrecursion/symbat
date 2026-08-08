@@ -76,10 +76,11 @@ export function parsePrintInfo(html: string): CompletionInfo | null {
 }
 
 /** A field label `print_info` writes at a line's start (`Function:`, `A unit of:`, …), captured
- *  with the alignment padding after its colon. The last four are the plugin's own (see {@link
- *  describedInfo}), styled to match the rest. */
+ *  with the alignment padding after its colon. The tail of the list is the plugin's own — `Field`
+ *  through `Declared in` from {@link describedInfo}, and `Decorator` from {@link decoratorInfo} —
+ *  styled to match the rest. */
 const DOC_LABEL =
-  /^(Function|Signature|Description|Unit|Aliases|A unit of|Variable|Dimension|Units|Field|Parameter|Type parameter|Quantity|Declared in)(:)[^\S\n]*/;
+  /^(Function|Signature|Description|Unit|Aliases|A unit of|Variable|Dimension|Units|Field|Parameter|Type parameter|Quantity|Declared in|Decorator)(:)[^\S\n]*/;
 
 /**
  * A card for something Numbat's own `print_info` cannot describe, in the shape {@link
@@ -114,6 +115,19 @@ export function describedInfo(
   }
 
   return { bodyHtml: lines.join("\n"), referenceUrl: null };
+}
+
+/**
+ * A card for a decorator, in the same shape as {@link describedInfo}'s. Decorators are the one part
+ * of Numbat's grammar with no runtime existence at all — no context has heard of `@name`, and
+ * `print_info` answers `Not found` — so the text comes from the completer's own table
+ * (completion/expressions.ts) rather than from the interpreter.
+ */
+export function decoratorInfo(name: string, description: string): CompletionInfo {
+  return {
+    bodyHtml: `Decorator: @${escapeHtml(name)}\nDescription: ${escapeHtml(description)}`,
+    referenceUrl: null,
+  };
 }
 
 /**

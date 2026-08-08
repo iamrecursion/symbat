@@ -12,7 +12,7 @@
 
 import { numbatBlockRanges } from "../document/fences";
 import { FRONTMATTER_CLOSE, FRONTMATTER_OPEN } from "../document/frontmatter";
-import { groupStatements, stripLineComment } from "../evaluation/inlay-parse";
+import { blankStrings, groupStatements, stripLineComment } from "../evaluation/inlay-parse";
 import { type InlineEvalConfig, noteSignature, scanNote } from "../evaluation/inline-parse";
 import { escapeHtml } from "../interpreter/markup";
 import { EMPTY_PREAMBLE, frontmatterKeySites, type NotePreamble, type PropertySkip } from "../properties/parse";
@@ -24,14 +24,17 @@ import { EMPTY_PREAMBLE, frontmatterKeySites, type NotePreamble, type PropertySk
  *  value; `fn` and `dimension` are shown by name + kind only. */
 export type DeclKind = "let" | "unit" | "fn" | "dimension";
 
-// A `let`/`unit`/`fn`/`dimension` declaration and its declared name. Broader than
-// evaluation/inlay-parse.ts's `declarationSite` (which the type-hint placement restricts to
-// `let`/`unit`) so the inspector can list functions, units, and dimensions too.
-const DECLARATION = /^\s*(let|unit|fn|dimension)\s+([\p{L}_][\p{L}\p{N}_]*)/u;
+// A `let`/`unit`/`fn`/`dimension` declaration and its declared name, past any decorators written on
+// the same line. Broader than evaluation/inlay-parse.ts's `declarationSite` (which the type-hint
+// placement restricts to `let`/`unit`) so the inspector can list functions, units, and dimensions
+// too.
+const DECLARATION = /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(let|unit|fn|dimension)\s+([\p{L}_][\p{L}\p{N}_]*)/u;
 
 /** The declaration a source line introduces, or `null` when it is not one. */
 export function scopeDeclaration(line: string): { keyword: DeclKind; name: string; } | null {
-  const match = DECLARATION.exec(stripLineComment(line));
+  // Blanked before matching so a paren inside a decorator's own argument (`@example("f()") fn g(x)
+  // = x`) does not end the decorator prefix early; the keyword and name lie outside any string.
+  const match = DECLARATION.exec(blankStrings(stripLineComment(line)));
   return match === null ? null : { keyword: match[1] as DeclKind, name: match[2] };
 }
 
@@ -358,8 +361,12 @@ function buildImports(groups: { notePath: string; chunks: string[]; }[]): Import
   return groups.map((group) => {
     const entries: ScopeEntry[] = [];
     for (const chunk of group.chunks) {
-      for (const statement of groupStatements(chunk.split("\n"))) {
-        const decl = scopeDeclaration(statement.text);
+      const lines = chunk.split("\n");
+      for (const statement of groupStatements(lines)) {
+        // `codeLine`, as everywhere else: the declaration is read off the statement proper, never
+        // off the whole statement text — decorator lines sit above it, and a `#` on any of them
+        // would take the declaration with it when the comment is stripped.
+        const decl = scopeDeclaration(lines[statement.codeLine]);
 
         if (decl !== null) {
           entries.push(declEntry("import", statement.text, decl, { notePath: group.notePath, line: null, ch: 0 }));
@@ -478,11 +485,13 @@ function blockStatements(
   sourceKind: ScopeSourceKind,
 ): { code: string; entry: ScopeEntry | null; }[] {
   return groupStatements(body).map((statement) => {
-    const decl = scopeDeclaration(body[statement.startLine]);
+    // `codeLine`, not `startLine`: decorator lines sit above the declaration they annotate, so both
+    // the keyword and the line the caret jumps to are found there.
+    const decl = scopeDeclaration(body[statement.codeLine]);
     const entry = decl !== null
       ? declEntry(sourceKind, statement.text, decl, {
         notePath: null,
-        line: bodyStartLine + statement.startLine,
+        line: bodyStartLine + statement.codeLine,
         ch: 0,
       })
       : null;
@@ -518,11 +527,11 @@ function buildPrelude(files: PreludeFileLines[]): PreludeScope[] {
   return files.map((file) => {
     const entries: ScopeEntry[] = [];
     for (const statement of groupStatements(file.lines)) {
-      const decl = scopeDeclaration(file.lines[statement.startLine]);
+      const decl = scopeDeclaration(file.lines[statement.codeLine]);
       if (decl !== null) {
         entries.push(declEntry("prelude", statement.text, decl, {
           notePath: file.path,
-          line: statement.startLine,
+          line: statement.codeLine,
           ch: 0,
         }));
       }

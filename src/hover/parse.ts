@@ -14,7 +14,10 @@ export type HoverSymbolKind =
   | "member"
   /** A literal, with its unit when one follows (`21.1 km`) — asked about by evaluating it, which is
    *  the only way a literal has anything to say. */
-  | "quantity";
+  | "quantity"
+  /** A decorator (`@description`), which no context has ever heard of — the card comes from the
+   *  completer's own table rather than from the interpreter. */
+  | "decorator";
 
 /** A symbol found at a position. */
 export interface HoverSymbol {
@@ -107,6 +110,15 @@ export interface HoverSymbolOptions {
    * as well.
    */
   quoted?: boolean;
+
+  /**
+   * The line belongs to a surface that holds *statements* — a `numbat` block, the REPL, a `.nbt`
+   * document — where a word behind an `@` is a decorator. False for one holding a single expression
+   * (an inline evaluation, a frontmatter value): a decorator has no declaration to annotate there,
+   * so an `@` is a syntax error however it is read, and carding one would explain a construct the
+   * position cannot take. Defaults to true, matching the surfaces that do take statements.
+   */
+  statements?: boolean;
 }
 
 /**
@@ -131,6 +143,15 @@ export function hoverSymbolAt(line: string, ch: number, options: HoverSymbolOpti
       from: quantity.from,
       to: quantity.to,
     };
+  }
+
+  // `@` is Numbat's decorator sigil and nothing else, so a word directly behind one is a decorator
+  // name — never the binding that happens to share it. The anchor covers the `@` too, since that is
+  // what the pointer is reading. Only where a decorator could have been written: elsewhere the word
+  // is read as the ordinary name it would be without the sigil.
+  if (options.statements !== false && word.from > 0 && line[word.from - 1] === "@") {
+    const name = line.slice(word.from, word.to);
+    return { kind: "decorator", name, probe: name, from: word.from - 1, to: word.to };
   }
 
   const path = dottedPathAt(line, ch) ?? word;

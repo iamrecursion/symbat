@@ -227,6 +227,7 @@ function renderWidget(
     hover: plugin.settings.hover,
     placeholder: "Numbat expression",
     singleLine: true,
+    expressionOnly: true, // a property commits a value, so there is no declaration to decorate
   });
   input.setValue(committed);
 

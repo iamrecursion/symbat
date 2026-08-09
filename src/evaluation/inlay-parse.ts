@@ -88,10 +88,12 @@ export interface DeclarationSite {
   annotated: boolean;
 }
 
-// `let`/`unit` followed by the declared name. Identifiers are Unicode letters, digits (not first),
-// and `_`, matching Numbat's identifier rule closely enough for hint placement (evaluation is
-// unaffected if an exotic name is missed).
-const DECLARATION = /^(\s*)(let|unit)\s+([\p{L}_][\p{L}\p{N}_]*)/u;
+// `let`/`unit` followed by the declared name, past any decorators written on the same line
+// (`@metric_prefixes unit foo = …`; decorators on lines of their own are folded into the statement
+// by `groupStatements`, which reports the line this must be matched against). Identifiers are
+// Unicode letters, digits (not first), and `_`, matching Numbat's identifier rule closely enough
+// for hint placement (evaluation is unaffected if an exotic name is missed).
+const DECLARATION = /^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*(let|unit)\s+([\p{L}_][\p{L}\p{N}_]*)/u;
 
 /**
  * Recognize a `let` / `unit` declaration at the start of `line`, reporting where its name ends (for
@@ -100,7 +102,10 @@ const DECLARATION = /^(\s*)(let|unit)\s+([\p{L}_][\p{L}\p{N}_]*)/u;
  */
 export function declarationSite(line: string): DeclarationSite | null {
   const src = stripLineComment(line);
-  const match = DECLARATION.exec(src);
+  // Matched against string-blanked source, so a paren inside a decorator's own argument
+  // (`@example("f()") let x = …`) does not end the prefix early. Blanking preserves length, so
+  // `nameEnd` is still a column of `src`, and the keyword and name lie outside any string.
+  const match = DECLARATION.exec(blankStrings(src));
   if (match === null) {
     return null;
   }
@@ -152,10 +157,15 @@ function normalizeSpaces(text: string): string {
  * — so showing it as a hint would merely repeat the code (`let x = 5 m` evaluates to `5 m`).
  * Compares the plain-text value (its leading `=` removed) against the source's right-hand side,
  * ignoring whitespace. `let x = 1 + 3` (value `4`) differs from its source, so it is not redundant.
+ *
+ * `text` is a whole statement, which is not always one line: a decorated declaration carries its
+ * annotations above it, and a bracketed value spans until it closes. So comments come off line by
+ * line, and the binding's `=` is sought in code rather than in a string a decorator's own text may
+ * hold (`@description("x = 5")`).
  */
-export function bindingValueRepeatsSource(line: string, valueHtml: string): boolean {
-  const src = stripLineComment(line);
-  const equals = src.indexOf("=");
+export function bindingValueRepeatsSource(text: string, valueHtml: string): boolean {
+  const src = text.split("\n").map(stripLineComment).join("\n");
+  const equals = blankStrings(src).indexOf("=");
   if (equals === -1) {
     return false;
   }
@@ -380,36 +390,64 @@ export function endPadding(line: string, kind: "result" | "hole"): number {
 export type LineInterpret = (code: string) => { output: string; isError: boolean; };
 
 /** One statement of a block body: a single line, or a run of lines that belong together because a
- *  bracket is still open (Numbat allows an expression to span lines inside `(…)` / `[…]` /
- *  `{…}`). */
+ *  bracket is still open (Numbat allows an expression to span lines inside `(…)` / `[…]` / `{…}`)
+ *  or because decorator lines precede it. */
 export interface BlockStatement {
-  /** 0-indexed first body line of the statement. */
+  /** 0-indexed first body line of the statement — a decorator line, where it has any. */
   startLine: number;
 
   /** 0-indexed last body line of the statement. */
   endLine: number;
 
+  /** 0-indexed body line where the statement proper begins, past any decorator lines above it.
+   *  Equal to `startLine` when the statement carries no decorators on lines of their own — which is
+   *  also what a dangling decorator with no statement below it reports. */
+  codeLine: number;
+
   /** The statement's source: the body lines, newline-joined, verbatim. */
   text: string;
+}
+
+/**
+ * `src` with the contents of every string literal blanked out, so punctuation inside a string
+ * cannot be mistaken for code — `"a ( b"` opens no bracket, and `@example("last([1, 2])")` closes
+ * on its own paren, not on one in its text. Escapes are honored, quotes and newlines survive, and
+ * lengths are preserved so offsets still line up. The caller strips comments first.
+ *
+ * Exported for the declaration scanners that must step over a decorator prefix (see {@link
+ * declarationSite}, scope/model.ts, hover/declarations.ts): their `@name(…)` pattern would
+ * otherwise end at the first `)` in the decorator's own text.
+ */
+export function blankStrings(src: string): string {
+  let out = "";
+  let inString = false;
+
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (!inString) {
+      out += ch;
+      inString = ch === "\"";
+    } else if (ch === "\\" && i + 1 < src.length) {
+      out += "  "; // the escape and the character it escapes
+      i += 1;
+    } else if (ch === "\"") {
+      out += ch;
+      inString = false;
+    } else {
+      out += ch === "\n" ? ch : " ";
+    }
+  }
+
+  return out;
 }
 
 /** The bracket-depth change of one line — `(`/`[`/`{` up, their closers down — ignoring brackets
  *  inside string literals. The caller strips comments first. */
 function bracketDelta(src: string): number {
   let depth = 0;
-  let inString = false;
 
-  for (let i = 0; i < src.length; i += 1) {
-    const ch = src[i];
-    if (inString) {
-      if (ch === "\\") {
-        i += 1; // skip the escaped character
-      } else if (ch === "\"") {
-        inString = false;
-      }
-    } else if (ch === "\"") {
-      inString = true;
-    } else if (ch === "(" || ch === "[" || ch === "{") {
+  for (const ch of blankStrings(src)) {
+    if (ch === "(" || ch === "[" || ch === "{") {
       depth += 1;
     } else if (ch === ")" || ch === "]" || ch === "}") {
       depth -= 1;
@@ -419,15 +457,59 @@ function bracketDelta(src: string): number {
   return depth;
 }
 
+/** A run of nothing but decorator applications — `@metric_prefixes`, `@name("Foo")`, a multi-line
+ *  `@aliases(…)`. Anchored at both ends, so any code beside them fails it. */
+const DECORATORS_ONLY = /^(?:\s*@\w+(?:\([^)]*\))?)+\s*$/;
+
+/** Whether `lines` hold only decorators, and so are a prefix of the statement below rather than a
+ *  statement of their own. Comments are stripped and strings blanked first, so a note between a
+ *  decorator and the declaration it annotates does not break them apart, and neither does a paren
+ *  inside a decorator's own text (`@example("last([1, 2])")`). */
+function decoratorsOnly(lines: string[]): boolean {
+  const stripped = lines.map(stripLineComment);
+  return stripped[0].trimStart().startsWith("@") && DECORATORS_ONLY.test(blankStrings(stripped.join("\n")));
+}
+
+/** The last line of `body` in `[start, end]` that is not blank. At least `start`, which a statement
+ *  never begins on. */
+function lastNonBlank(body: string[], start: number, end: number): number {
+  for (let i = end; i > start; i -= 1) {
+    if (body[i].trim() !== "") {
+      return i;
+    }
+  }
+
+  return start;
+}
+
 /**
  * Group a block body into statements: a line with a still-open bracket absorbs the following lines
  * until the brackets balance (or the block ends), since that is how Numbat itself reads a
  * multi-line expression. Balanced lines — the common case — stay single-line statements; blank
  * lines between statements are skipped (a blank inside an open bracket is part of the statement).
+ *
+ * Decorator lines absorb the statement *below* them, which is the reading Numbat's own parser takes
+ * — `parse_decorators` pushes onto a decorator stack, skips blank lines, and falls through to the
+ * next statement. Evaluating `@description("…")` on its own is not a smaller piece of the same
+ * program but a different, invalid one ("decorators can only be used on unit, let or function
+ * definitions"), and it leaves the declaration below it undecorated, so nothing downstream ever
+ * sees the annotation. `codeLine` reports where the statement proper begins, for the callers that
+ * read a declaration off its first line.
  */
 export function groupStatements(body: string[]): BlockStatement[] {
   const statements: BlockStatement[] = [];
+  const push = (start: number, end: number, prefixEnd: number): void => {
+    statements.push({
+      startLine: start,
+      endLine: end,
+      codeLine: prefixEnd === -1 ? start : prefixEnd + 1,
+      text: body.slice(start, end + 1).join("\n"),
+    });
+  };
+
   let start = -1;
+  // The last line of the decorator run this statement opened with, or -1 when it opened with code.
+  let prefixEnd = -1;
   let depth = 0;
 
   for (let i = 0; i < body.length; i += 1) {
@@ -438,14 +520,30 @@ export function groupStatements(body: string[]): BlockStatement[] {
       }
 
       start = i;
+      prefixEnd = -1;
       depth = 0;
     }
 
     depth += bracketDelta(stripLineComment(line));
-    if (depth <= 0 || i === body.length - 1) {
-      statements.push({ startLine: start, endLine: i, text: body.slice(start, i + 1).join("\n") });
-      start = -1;
+    const last = i === body.length - 1;
+    if (depth > 0 && !last) {
+      continue;
     }
+
+    if (decoratorsOnly(body.slice(start, i + 1))) {
+      prefixEnd = i;
+      if (!last) {
+        continue; // hold the decorators open for the statement they annotate
+      }
+
+      // Nothing followed them. They still evaluate — and still error — so the hint is anchored on
+      // the last line they occupy rather than on the blank space that ran out beneath them.
+      push(start, lastNonBlank(body, start, i), -1);
+    } else {
+      push(start, i, prefixEnd);
+    }
+
+    start = -1;
   }
 
   return statements;
@@ -465,7 +563,8 @@ export function hintsForBlock(run: LineInterpret, body: string[]): Hint[] {
   const hints: Hint[] = [];
 
   for (const statement of groupStatements(body)) {
-    const firstLine = body[statement.startLine];
+    // The declaration is read off the statement proper, which decorator lines sit above.
+    const firstLine = body[statement.codeLine];
     const lastLine = body[statement.endLine];
     const result = run(statement.text);
     if (!result.isError) {
@@ -484,7 +583,7 @@ export function hintsForBlock(run: LineInterpret, body: string[]): Hint[] {
           const typeHtml = declarationTypeHtml(echo);
           if (typeHtml !== null) {
             hints.push({
-              bodyLine: statement.startLine,
+              bodyLine: statement.codeLine,
               column: site.nameEnd,
               kind: "type",
               content: typeHtml,

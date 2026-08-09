@@ -23,8 +23,9 @@ import { dismissHover, type HoverOutcome, type HoverSource, numbatHover, showHov
 import { type HoverSymbol, hoverSymbolAt } from "./parse";
 
 /** Where in a note a position sits, when it is Numbat source at all. A property's value carries the
- *  column its expression starts at — the key half is YAML. */
-type NumbatRegion = { kind: "code"; } | { kind: "property"; valueCh: number; };
+ *  column its expression starts at — the key half is YAML. A fence is kept apart from the other
+ *  two: it is the only one whose body holds statements rather than a single expression. */
+type NumbatRegion = { kind: "fence"; } | { kind: "inline"; } | { kind: "property"; valueCh: number; };
 
 /** The active editor and note path behind a CodeMirror view, or `null` when the view is not a note
  *  (the REPL input, a property field — those hover through their own host). */
@@ -117,7 +118,12 @@ function resolveInNote(
     };
   }
 
-  const symbol = hoverSymbolAt(line.text, position.ch, { quoted: region.kind === "property" });
+  // Only a fence body holds statements; an inline span and a property value are each one
+  // expression, so an `@` in either is not a decorator sigil to be carded.
+  const symbol = hoverSymbolAt(line.text, position.ch, {
+    quoted: region.kind === "property",
+    statements: region.kind === "fence",
+  });
   if (symbol === null) {
     return { miss: "nothing to hover at the cursor" };
   }
@@ -203,11 +209,11 @@ function numbatRegionAt(
   position: { line: number; ch: number; },
 ): NumbatRegion | null {
   if (cursorInNumbatFence(view.state.doc, pos)) {
-    return { kind: "code" };
+    return { kind: "fence" };
   }
 
   if (plugin.settings.inlineEval && cursorInInlineExpr(view.state.doc, pos, inlineConfig(plugin))) {
-    return { kind: "code" };
+    return { kind: "inline" };
   }
 
   if (!plugin.settings.noteProperties) {

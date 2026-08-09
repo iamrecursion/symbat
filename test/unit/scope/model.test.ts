@@ -234,6 +234,56 @@ test("a shared block lists all declaration kinds, not just lets", () => {
   ]);
 });
 
+test("a decorated declaration is listed, and its defsite is the declaration line", () => {
+  // The decorators are part of the statement, so the entry's code carries them — but the caret
+  // jumps to the `fn`, not to the annotation above it.
+  const lines = [
+    "```numbat-shared",
+    "@description(\"the last element\")",
+    "@example(\"last([1, 2])\")",
+    "fn last(xs) = xs",
+    "```",
+  ];
+  const tree = buildScopeTree({ file: "N.md", lines, config, preamble: EMPTY_PREAMBLE, importGroups: [] });
+  const block = tree.nodes.find((n) => n.kind === "block");
+  assert.deepEqual(block?.entries.map((e) => [e.name, e.declKind]), [["last", "fn"]]);
+  assert.equal(block?.entries[0].defsite.line, 3);
+  assert.match(block?.entries[0].code ?? "", /^@description/);
+});
+
+test("scopeDeclaration steps over decorators on the declaration's own line", () => {
+  assert.deepEqual(scopeDeclaration("@metric_prefixes unit foo = 5 m"), { keyword: "unit", name: "foo" });
+  // A paren inside the decorator's own text does not end the prefix early — `@example` carries code
+  // by definition, so this is the ordinary case rather than an exotic one.
+  assert.deepEqual(scopeDeclaration("@example(\"f([1, 2])\") fn f(xs) = xs"), { keyword: "fn", name: "f" });
+  assert.deepEqual(scopeDeclaration("@description(\"a (nice) unit\") unit foo = 1 m"), {
+    keyword: "unit",
+    name: "foo",
+  });
+});
+
+test("an imported decorated declaration is listed, however its decorators are written", () => {
+  // The chunk is grouped into statements and the declaration read off `codeLine`, so neither a
+  // paren inside a decorator's text nor a comment above the declaration hides it.
+  const chunk = [
+    "@example(\"last([1, 2])\", \"gives 2\")",
+    "@description(\"the last element\")",
+    "",
+    "# why it is the last",
+    "fn last(xs) = xs",
+  ].join("\n");
+  const tree = buildScopeTree({
+    file: "N.md",
+    lines: ["prose"],
+    config,
+    preamble: EMPTY_PREAMBLE,
+    importGroups: [{ notePath: "Lib.md", chunks: [chunk] }],
+  });
+
+  const imports = tree.nodes.find((n) => n.kind === "imports");
+  assert.deepEqual(imports?.children[0].entries.map((e) => [e.name, e.declKind]), [["last", "fn"]]);
+});
+
 test("declarationHeadHtml renders unit/dimension as their declaration, nothing else", () => {
   const lines = ["```numbat-shared", "let a = 1", "unit u = 2 m", "fn f(x) = x", "dimension D = Length", "```"];
   const tree = buildScopeTree({ file: "N.md", lines, config, preamble: EMPTY_PREAMBLE, importGroups: [] });

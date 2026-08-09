@@ -128,3 +128,41 @@ test("hoverSymbolAt: a member chain reports itself as one", () => {
   assert.equal(hoverSymbolAt(line, line.indexOf("items"))?.kind, "member");
   assert.equal(hoverSymbolAt(line, line.indexOf("costs"))?.kind, "name");
 });
+
+test("hoverSymbolAt: a decorator is its own kind, anchored over its `@`", () => {
+  // `@` is Numbat's decorator sigil and nothing else, so the name behind one is never read as the
+  // binding that happens to share it.
+  const line = "@description(\"the last element\")";
+  const symbol = hoverSymbolAt(line, line.indexOf("descr"));
+  assert.deepEqual(symbol, { kind: "decorator", name: "description", probe: "description", from: 0, to: 12 });
+
+  // The same word without the sigil is an ordinary name.
+  assert.equal(hoverSymbolAt("description + 1", 2)?.kind, "name");
+
+  // A decorator on the declaration's own line, past some indent.
+  const inline = "  @metric_prefixes unit foo = 1 m";
+  assert.equal(hoverSymbolAt(inline, 5)?.kind, "decorator");
+  assert.equal(hoverSymbolAt(inline, inline.indexOf("foo"))?.kind, "name");
+});
+
+test("hoverSymbolAt: a surface holding one expression has no decorators to read", () => {
+  // An inline evaluation and a frontmatter value take an expression, not a statement, so there is
+  // no declaration for an `@` to annotate — the word behind it is read as the ordinary name it
+  // would be without the sigil, and the sigil is left out of the anchor.
+  const line = "@description(\"x\")";
+  assert.deepEqual(hoverSymbolAt(line, line.indexOf("descr"), { statements: false }), {
+    kind: "name",
+    name: "description",
+    probe: "description",
+    from: 1,
+    to: 12,
+  });
+
+  // The default is the statement reading, so every other surface is unaffected.
+  assert.equal(hoverSymbolAt(line, line.indexOf("descr"))?.kind, "decorator");
+  assert.equal(hoverSymbolAt(line, line.indexOf("descr"), { statements: true })?.kind, "decorator");
+
+  // A quoted (YAML) value is an expression surface too, and the two options are independent.
+  const quoted = "total: 5 km + 3 mi";
+  assert.equal(hoverSymbolAt(quoted, quoted.indexOf("km"), { quoted: true, statements: false })?.name, "km");
+});

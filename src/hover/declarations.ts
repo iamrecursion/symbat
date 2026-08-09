@@ -11,6 +11,7 @@
 // `typeVariablesInScopeAt` does the same job for type parameters and is reused here.
 
 import { declarationStillOpen, typeVariablesInScopeAt } from "../completion/expressions";
+import { blankStrings } from "../evaluation/inlay-parse";
 
 /** What a declaration says about one of the names it introduces. */
 export interface DeclaredSymbol {
@@ -28,8 +29,9 @@ export interface DeclaredSymbol {
   owner: string | null;
 }
 
-/** A declaration opener, with the keyword and the declared name. */
-const DECLARATION = /^\s*(fn|struct)\s+([\p{L}_][\p{L}\p{N}_]*)/u;
+/** A declaration opener, with the keyword and the declared name, past any decorators written on the
+ *  same line (`@description("…") fn f(x) = …`). */
+const DECLARATION = /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(fn|struct)\s+([\p{L}_][\p{L}\p{N}_]*)/u;
 
 /** How far back a declaration's header can reasonably sit from the line using one of its names — a
  *  long multi-line signature and body, but not the whole note. */
@@ -80,7 +82,10 @@ function enclosingDeclaration(
 ): { keyword: string; owner: string; startLine: number; } | null {
   const first = Math.max(0, line - MAX_LOOKBACK);
   for (let n = line; n >= first; n -= 1) {
-    const match = DECLARATION.exec(lines[n] ?? "");
+    // Blanked before matching so a paren inside a decorator's own argument (`@example("f()") fn
+    // g(x) = x`) does not end the decorator prefix early; the keyword and name lie outside any
+    // string, so the captures are the source's own.
+    const match = DECLARATION.exec(blankStrings(lines[n] ?? ""));
     if (match === null) {
       continue;
     }

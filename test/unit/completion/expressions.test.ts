@@ -5,6 +5,8 @@ import {
   boundCompletions,
   classifyCompletion,
   type CompletionVocabulary,
+  decoratorCompletions,
+  decoratorDoc,
   expressionCompletions,
   exprTriggerAt,
   exprWordPrefixAt,
@@ -398,6 +400,77 @@ test("boundCompletions stands aside outside a bound position", () => {
   assert.equal(boundCompletions("let x: ", "", ALL_CATEGORIES), null);
   assert.equal(boundCompletions("fn foo<D: Dim>(x: ", "", ALL_CATEGORIES), null); // list already closed
   assert.equal(boundCompletions("1 + me", "me", ALL_CATEGORIES), null);
+});
+
+// --- decoratorCompletions ------------------------------------------------------
+
+test("decoratorCompletions offers the whole set on a bare `@`, with what to insert", () => {
+  const all = decoratorCompletions("@", "", ALL_CATEGORIES, true);
+  assert.ok(all !== null);
+  assert.deepEqual(all.map((c) => c.name).sort(), [
+    "abbreviation",
+    "aliases",
+    "binary_prefixes",
+    "description",
+    "example",
+    "metric_prefixes",
+    "name",
+    "url",
+  ]);
+  assert.ok(all.every((c) => c.category === "decorator"));
+
+  // A string-argument decorator writes its quotes and puts the caret between them; a bare one
+  // writes just its name, caret at the end.
+  const byName = new Map(all.map((c) => [c.name, c.applied]));
+  assert.deepEqual(byName.get("name"), { text: "name(\"\")", caret: 6 });
+  assert.deepEqual(byName.get("aliases"), { text: "aliases()", caret: 8 });
+  assert.deepEqual(byName.get("metric_prefixes"), { text: "metric_prefixes", caret: 15 });
+});
+
+test("decoratorCompletions filters by the query and the keywords toggle", () => {
+  assert.deepEqual(decoratorCompletions("@", "me", ALL_CATEGORIES, true)?.map((c) => c.name), ["metric_prefixes"]);
+  assert.deepEqual(decoratorCompletions("@", "zz", ALL_CATEGORIES, true), []);
+  assert.deepEqual(decoratorCompletions("@", "", { ...ALL_CATEGORIES, keywords: false }, true), []);
+});
+
+test("decoratorCompletions recognizes an `@` after earlier decorators, on any line", () => {
+  assert.ok(decoratorCompletions("@metric_prefixes @", "", ALL_CATEGORIES, true) !== null);
+  assert.ok(decoratorCompletions("@name(\"Foo\") @", "", ALL_CATEGORIES, true) !== null);
+  assert.ok(decoratorCompletions("let x = 1\n@", "", ALL_CATEGORIES, true) !== null);
+  assert.ok(decoratorCompletions("  @", "", ALL_CATEGORIES, true) !== null);
+});
+
+test("decoratorCompletions stands aside where an `@` does not open a decorator", () => {
+  assert.equal(decoratorCompletions("1 + @", "", ALL_CATEGORIES, true), null);
+  assert.equal(decoratorCompletions("let x = @", "", ALL_CATEGORIES, true), null);
+  assert.equal(decoratorCompletions("@name", "name", ALL_CATEGORIES, true), null); // past the name, not at it
+  assert.equal(decoratorCompletions("me", "me", ALL_CATEGORIES, true), null);
+});
+
+test("decoratorCompletions offers nothing on a surface that holds only an expression", () => {
+  // An inline span and a frontmatter value have no statement for a decorator to annotate. The
+  // position is still claimed — an empty list, not `null` — so the caller shows nothing rather than
+  // falling through to engine names, which are just as illegal after the `@`.
+  assert.deepEqual(decoratorCompletions("@", "", ALL_CATEGORIES, false), []);
+  assert.deepEqual(decoratorCompletions("@", "na", ALL_CATEGORIES, false), []);
+  // Somewhere that is not a decorator position at all still stands aside, so ordinary completion
+  // carries on as before.
+  assert.equal(decoratorCompletions("1 + me", "me", ALL_CATEGORIES, false), null);
+});
+
+test("decoratorDoc answers for Numbat's decorators and nothing else", () => {
+  assert.match(decoratorDoc("description") ?? "", /describing/);
+  assert.equal(decoratorDoc("nonexistent"), null);
+  assert.equal(decoratorDoc("name "), null);
+});
+
+test("exprTriggerAt fires on a decorator's `@` before the two-character minimum", () => {
+  // The `@` is not replaced — only the name typed after it.
+  assert.deepEqual(exprTriggerAt("@"), { query: "", replaceLength: 0 });
+  assert.deepEqual(exprTriggerAt("@n"), { query: "n", replaceLength: 1 });
+  assert.deepEqual(exprTriggerAt("@metric_prefixes\n@d"), { query: "d", replaceLength: 1 });
+  // Not a decorator position: the ordinary rules apply, so a single character does not fire.
+  assert.equal(exprTriggerAt("1 + @"), null);
 });
 
 // --- member access ------------------------------------------------------------

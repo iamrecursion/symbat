@@ -20,7 +20,15 @@
  * built-in/structural type (`Bool`, `String`, `List`, …); `dimension` is a physical dimension
  * (`Length`, `Time`, …) — Numbat renders both as type identifiers, but they are distinct kinds.
  */
-export type ExprCategory = "variable" | "function" | "unit" | "dimension" | "type" | "keyword" | "field";
+export type ExprCategory =
+  | "variable"
+  | "function"
+  | "unit"
+  | "dimension"
+  | "type"
+  | "keyword"
+  | "field"
+  | "decorator";
 
 /** One categorized expression completion. */
 export interface ExprCompletion {
@@ -34,6 +42,15 @@ export interface ExprCompletion {
    *  differs from what is inserted. A struct field inserts its bare name but is typed through its
    *  whole path (`type(costs.total)`). */
   probeName?: string;
+
+  /** What accepting the row writes, when that is more than `name`, and where the caret lands within
+   *  it. A decorator's parentheses are mandatory, so they are written with it and the caret is put
+   *  where the argument goes. */
+  applied?: { text: string; caret: number; };
+
+  /** A ready-made documentation card for a row the interpreter cannot be asked about (it knows no
+   *  decorator vocabulary). Rendered in place of a `print_info` lookup. */
+  doc?: string;
 }
 
 /** Which category groups the user has enabled (the five sub-toggles). */
@@ -78,8 +95,10 @@ export interface CompletionVocabulary {
 /**
  * Numbat keywords and keyword-operators, surfaced under the "keywords" category. These are the
  * non-name entries of Numbat's completion vocabulary (its `KEYWORDS` table), minus the built-in
- * type names (see {@link BUILTIN_TYPE_NAMES}, surfaced as types) and the decorator argument words
- * (`aliases`, `name`, …), which only apply after `@` and would clash with ordinary identifiers. The
+ * type names (see {@link BUILTIN_TYPE_NAMES}, surfaced as types) and the decorator names
+ * (`aliases`, `name`, …), which only apply after `@` and would clash with ordinary identifiers —
+ * those are offered in that position instead, from {@link DECORATORS}, which is the whole set
+ * rather than the few Numbat's vocabulary happens to list. The
  * wasm trims the trailing space/`(` Numbat stores on some of these, so they are bare words here.
  */
 export const KEYWORDS: ReadonlySet<string> = new Set([
@@ -184,7 +203,8 @@ function categoryEnabled(category: ExprCategory, enabled: ExprCategories): boole
     case "function": // Intentional fallthrough
     case "field":
       return enabled.identifiers;
-    case "keyword":
+    case "keyword": // Intentional fallthrough — a decorator is syntax, like a keyword.
+    case "decorator":
       return enabled.keywords;
     case "unit":
       return enabled.units;
@@ -655,6 +675,111 @@ export function boundCompletions(
   return [{ name: "Dim", category: "dimension" }];
 }
 
+// DECORATORS
+// ================================================================================================
+
+/** One Numbat decorator: what it is called, what accepting it writes, and one line about it. */
+interface DecoratorDef {
+  /** The name, without its `@`. */
+  name: string;
+
+  /** What is written after the `@`, and where the caret lands in it. Decorators that take an
+   *  argument write their mandatory punctuation, since the name alone never parses. */
+  applied: { text: string; caret: number; };
+
+  /** The one-line description shown on the row's card. */
+  doc: string;
+}
+
+/** A decorator taking a single string argument, whose caret belongs between the quotes. */
+function stringArg(name: string, doc: string): DecoratorDef {
+  return { name, applied: { text: `${name}("")`, caret: name.length + 2 }, doc };
+}
+
+/**
+ * Numbat's decorators — the complete set its parser accepts (`parse_decorators`), which is closed:
+ * an unknown name is a parse error, and the interpreter exposes no decorator vocabulary to ask, so
+ * the list lives here. Ordered as they are usually written, annotation before behavior, rather than
+ * alphabetically.
+ */
+const DECORATORS: readonly DecoratorDef[] = [
+  stringArg("name", "The unit's full, human-readable name, as shown when it is described."),
+  stringArg("description", "A sentence describing the definition, shown on completion and hover."),
+  stringArg("url", "A reference URL for the definition, linked wherever it is described."),
+  stringArg("example", "Example code for a function. A second string argument describes it."),
+  {
+    name: "aliases",
+    applied: { text: "aliases()", caret: "aliases(".length },
+    doc: "Alternative names for a unit, comma-separated. Each may carry a suffix — short, long, "
+      + "both or none — saying which spellings a prefix may attach to.",
+  },
+  {
+    name: "metric_prefixes",
+    applied: { text: "metric_prefixes", caret: "metric_prefixes".length },
+    doc: "Allow metric prefixes on the unit: kilometer, millisecond.",
+  },
+  {
+    name: "binary_prefixes",
+    applied: { text: "binary_prefixes", caret: "binary_prefixes".length },
+    doc: "Allow binary prefixes on the unit: kibibyte, mebibyte.",
+  },
+  {
+    name: "abbreviation",
+    applied: { text: "abbreviation", caret: "abbreviation".length },
+    doc: "Mark the unit as shorthand for a compound one, like mph, so results are not simplified to it.",
+  },
+];
+
+/** The one-line description of the decorator `name` (written without its `@`), or `null` when it is
+ *  not one of Numbat's. Lets a surface with only a name in hand — a hover — build the same card the
+ *  completer shows. */
+export function decoratorDoc(name: string): string | null {
+  return DECORATORS.find((decorator) => decorator.name === name)?.doc ?? null;
+}
+
+/** The anchor sits directly after an `@` that opens a decorator: at the start of a statement, with
+ *  only whitespace and complete decorators before it. Written against the whole text up to the
+ *  anchor, so a mid-expression `@` — or one inside a string — does not match. */
+const DECORATOR_POSITION = /(?:^|\n)[^\S\n]*(?:@\w+(?:\([^)]*\))?[^\S\n]*)*@$/;
+
+/** Whether the anchor sits just after a decorator's `@`. */
+export function isDecoratorPosition(beforeAnchor: string): boolean {
+  return DECORATOR_POSITION.test(beforeAnchor);
+}
+
+/**
+ * The completions for a decorator position, or `null` when the anchor is not at one. Like {@link
+ * boundCompletions}, callers short-circuit on a non-null result *instead of* asking the engine:
+ * every engine candidate is a parse error after an `@`, and no decorator name is in any vocabulary.
+ * Gated on the keywords toggle — a decorator is syntax rather than a name — and prefix-filtered
+ * against the typed query, which the engine could not do.
+ *
+ * `admitsStatements` is false on the surfaces that hold an *expression* rather than a statement —
+ * an inline-eval span, a Numbat-typed frontmatter value — where a decorator has nothing to annotate
+ * and so can never be written at all. The position is still claimed (an empty list, not `null`):
+ * the engine's names are no more legal after an `@` than the decorators are, so offering them would
+ * only dress a syntax error up as a completion.
+ */
+export function decoratorCompletions(
+  beforeAnchor: string,
+  query: string,
+  enabled: ExprCategories,
+  admitsStatements: boolean,
+): ExprCompletion[] | null {
+  if (!isDecoratorPosition(beforeAnchor)) {
+    return null;
+  }
+
+  if (!enabled.keywords || !admitsStatements) {
+    return [];
+  }
+
+  const prefix = query.toLowerCase();
+  return DECORATORS
+    .filter((decorator) => decorator.name.startsWith(prefix))
+    .map(({ name, applied, doc }) => ({ name, category: "decorator" as const, applied, doc }));
+}
+
 /**
  * Decide whether an expression completion should open for text ending at the caret, and on what
  * query. The triggers:
@@ -668,6 +793,8 @@ export function boundCompletions(
  *     its first character;
  *   * a `fn` declaration's return arrow (`fn f(x: Scalar) -> `) — but not a conversion arrow, which
  *     sits outside a declaration.
+ *   * a decorator's `@` at the start of a statement (`@`, `@na`), which offers the closed set of
+ *     decorator names from the first character.
  *
  * The two-character minimum keeps the popover from flickering on every single character; the other
  * triggers mark member/type positions, and relax it so those complete from the first character.
@@ -679,10 +806,17 @@ export function boundCompletions(
  */
 export function exprTriggerAt(before: string): ExprTrigger | null {
   const word = exprWordPrefixAt(before);
+  const beforeWord = before.slice(0, before.length - word.length);
+
+  // A decorator's `@` is checked before the two-character minimum, so the popover opens on the `@`
+  // itself and lists the whole (small, closed) set. The `@` is not part of the replacement.
+  if (isDecoratorPosition(beforeWord)) {
+    return { query: word, replaceLength: word.length };
+  }
+
   if (word.length >= 2) {
     return { query: word, replaceLength: word.length };
   }
-  const beforeWord = before.slice(0, before.length - word.length);
 
   // A short (0–1 char) word triggers when it directly follows `.`/`:` after an expression — so a
   // member or type position completes from the first character.

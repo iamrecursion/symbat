@@ -45,15 +45,17 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
-import { type CompletionInfo, decoratorInfo } from "../completion/docs";
+import { type CompletionInfo, declaredInfo, declaredTypeHtml, decoratorInfo } from "../completion/docs";
 import {
   allowedCategoriesAt,
   boundCompletions,
+  declaredNameCompletions,
   decoratorCompletions,
   type ExprCategories,
   type ExprCategory,
   type ExprCompletion,
   exprTriggerAt,
+  isInterpreterKnown,
   memberBaseAt,
   typeVariableCompletions,
 } from "../completion/expressions";
@@ -219,6 +221,17 @@ interface ReplCompletion extends Completion {
   /** A ready-made description for a row the interpreter cannot be asked about — a decorator, which
    *  no context has ever heard of. */
   numbatDoc?: string;
+
+  /** What a locally-declared row's card says — a parameter or a `where`/`and` local, described by
+   *  its own declaration rather than by the interpreter. */
+  numbatDeclared?: ExprCompletion["declared"];
+}
+
+/** The inline signature for a row the interpreter cannot type: the declaration's own annotation on
+ *  a parameter or local, and nothing at all for a decorator. */
+function declaredSignature(completion: ExprCompletion): string | undefined {
+  const type = completion.declared?.type;
+  return type === undefined || type === null ? undefined : declaredTypeHtml(type);
 }
 
 /** How accepting `completion` writes it, or `undefined` to insert its name as usual. A decorator
@@ -339,29 +352,37 @@ function numbatCompletionSource(
 
         // A type-parameter bound position (`fn foo<D: `) admits exactly one name — `Dim` — and a
         // decorator position (`@`) a closed set of its own, so both bypass the engine (whose
-        // candidates are all parse errors in either place); otherwise the enclosing declaration's
-        // type variables, which the engine does not know, complete ahead of its candidates.
+        // candidates are all parse errors in either place); otherwise what the enclosing
+        // declaration itself binds — its type variables at a type position, its parameters and
+        // `where`/`and` locals in a value one — completes ahead of the engine's candidates, none of
+        // which it knows.
         let completions = boundCompletions(beforeAnchor, trigger.query, enabled)
           ?? decoratorCompletions(beforeAnchor, trigger.query, enabled, admitsStatements);
         if (completions === null) {
           const allowed = allowedCategoriesAt(beforeAnchor);
-          const typeVars = typeVariableCompletions(beforeAnchor, trigger.query, enabled, allowed);
-          const injected = new Set(typeVars.map((completion) => completion.name));
+          const local = [
+            ...typeVariableCompletions(beforeAnchor, trigger.query, enabled, allowed),
+            ...declaredNameCompletions(beforeAnchor, trigger.query, enabled, allowed),
+          ];
+          const injected = new Set(local.map((completion) => completion.name));
           completions = [
-            ...typeVars,
+            ...local,
             ...host.exprCompletions(trigger.query, enabled, allowed).filter((c) => !injected.has(c.name)),
           ];
         }
 
-        // A decorator has no runtime existence, so it is neither typed nor described by the
-        // interpreter — its card and its inserted text come from the completer's own table.
+        // A row the interpreter has never heard of is neither typed nor described by it — a
+        // decorator has no runtime existence, and a parameter would be answered for by whatever
+        // outer binding shares its name. Their card, their signature and their inserted text all
+        // come from the completer's own tables instead.
         const options: ReplCompletion[] = completions.map((completion) => ({
           label: completion.name,
           numbatCategory: completion.category,
-          numbatSignature: completion.category === "decorator"
-            ? undefined
-            : host.completionSignature(completion.name) ?? undefined,
+          numbatSignature: isInterpreterKnown(completion.category)
+            ? host.completionSignature(completion.name) ?? undefined
+            : declaredSignature(completion),
           numbatDoc: completion.doc,
+          numbatDeclared: completion.declared,
           apply: applyOf(completion),
         }));
         if (options.length === 0) {
@@ -719,17 +740,24 @@ export class NumbatInput {
     }
 
     if (label !== null) {
-      const category = selected?.numbatCategory ?? null;
-      const doc = selected?.numbatDoc;
-      this.dwellTimer = window.setTimeout(() => this.showDwellPopup(label, category, doc), COMPLETION_DWELL_MS);
+      const row = selected;
+      this.dwellTimer = window.setTimeout(() => this.showDwellPopup(label, row), COMPLETION_DWELL_MS);
     }
   }
 
   /** Show the documentation popup for the dwelt-on completion, above the completer. */
-  private showDwellPopup(label: string, category: ExprCategory | null, doc?: string): void {
+  private showDwellPopup(label: string, row: ReplCompletion | null): void {
     this.dwellTimer = null;
-    // A row carrying its own description is one the interpreter cannot answer for (a decorator).
-    const info = doc === undefined ? this.host.completionInfo(label) : decoratorInfo(label, doc);
+
+    // A row carrying its own card is one the interpreter cannot answer for: a decorator, or a name
+    // the enclosing declaration binds, whose type and owner only its own source states.
+    const doc = row?.numbatDoc;
+    const declared = row?.numbatDeclared;
+    const info = doc !== undefined
+      ? decoratorInfo(label, doc)
+      : declared !== undefined
+      ? declaredInfo(declared.kind, label, declared.owner)
+      : this.host.completionInfo(label);
     if (info === null) {
       return;
     }
@@ -740,9 +768,13 @@ export class NumbatInput {
       return;
     }
 
-    // A non-function entry gets a `Type:` field from `type(<name>)` (functions already carry a
-    // `Signature:` line; see formatDocBody).
-    const typeSignature = category === "function" || doc !== undefined
+    // A non-function entry gets a `Type:` field: `type(<name>)` for one the interpreter knows, the
+    // declaration's own annotation for one it does not. (A function already carries a `Signature:`
+    // line; see formatDocBody.)
+    const category = row?.numbatCategory ?? null;
+    const typeSignature = declared !== undefined
+      ? (declared.type === null ? null : declaredTypeHtml(declared.type))
+      : category === "function" || doc !== undefined
       ? null
       : this.host.completionSignature(label);
     this.docPopup.showAbove(tooltip.getBoundingClientRect(), buildDocPopupContent(info, typeSignature));

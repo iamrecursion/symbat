@@ -41,14 +41,16 @@ import { numbatPropertySiteAt, replayChunksAt } from "../scope/replay";
 import { COMPLETION_DWELL_MS } from "../tuning";
 import { unicodePrefixAt } from "../unicode/codes";
 import { chooserOf, registerSuggestKeys } from "../unicode/suggest";
-import { decoratorInfo } from "./docs";
+import { declaredInfo, declaredTypeHtml, decoratorInfo } from "./docs";
 import {
   allowedCategoriesAt,
   boundCompletions,
+  declaredNameCompletions,
   decoratorCompletions,
   type ExprCompletion,
   expressionCompletions,
   exprTriggerAt,
+  isInterpreterKnown,
   memberBaseAt,
   typeVariableCompletions,
 } from "./expressions";
@@ -358,13 +360,18 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     const raw = expressionCompletionCandidates(built.context, context.query);
     const engine = expressionCompletions(raw, built.vocab, enabled, allowed);
 
-    // The enclosing declaration's type variables complete first — they are the most contextual, and
-    // the engine does not know them. The declaration header may sit on a line above the cursor, so
-    // the scope text spans the replayed code as well as the current line.
+    // What the enclosing declaration itself binds completes first — its type variables at a type
+    // position, its parameters and `where`/`and` locals in a value one. They are the most
+    // contextual names there are, and the engine knows none of them. The declaration header may sit
+    // several lines above the cursor, so the scope text spans the replayed code as well as the
+    // current line.
     const scopeText = `${chunks.join("\n")}\n${beforeAnchor}`;
-    const typeVars = typeVariableCompletions(scopeText, context.query, enabled, allowed);
-    const injected = new Set(typeVars.map((completion) => completion.name));
-    const suggestions = [...typeVars, ...engine.filter((completion) => !injected.has(completion.name))];
+    const local = [
+      ...typeVariableCompletions(scopeText, context.query, enabled, allowed),
+      ...declaredNameCompletions(scopeText, context.query, enabled, allowed),
+    ];
+    const injected = new Set(local.map((completion) => completion.name));
+    const suggestions = [...local, ...engine.filter((completion) => !injected.has(completion.name))];
     this.shown = suggestions;
 
     return suggestions;
@@ -386,11 +393,17 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       el.setText("Loading Numbat…");
       return;
     }
-    // A decorator has no type — and must not be probed, or a binding that happens to share the name
-    // would put its signature on the row.
+    // A row the interpreter has never heard of must not be probed, or a binding that happens to
+    // share the name would put its signature on the row. A parameter still shows a signature — the
+    // type its own declaration writes.
     const probe = value.probeName ?? value.name;
-    const live = value.category === "decorator" ? null : this.liveBlockContext();
-    const signature = live !== null ? completionSignature(live, probe) : null;
+    const live = isInterpreterKnown(value.category) ? this.liveBlockContext() : null;
+    const declaredType = value.declared?.type ?? null;
+    const signature = live !== null
+      ? completionSignature(live, probe)
+      : declaredType === null
+      ? null
+      : declaredTypeHtml(declaredType);
     renderExprSuggestion(el, value, signature);
     // The popover exists now, so its container is reachable for the dwell observer.
     this.ensureDwellObserver();
@@ -494,10 +507,20 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       return;
     }
 
-    // A row carrying its own description is one the interpreter cannot answer for — a decorator,
-    // which no context has heard of — so it needs neither a live context nor a `type()` probe.
+    // A row carrying its own card is one the interpreter cannot answer for — a decorator, which no
+    // context has heard of, or a name the enclosing declaration binds, which only its own source
+    // describes — so it needs neither a live context nor a `type()` probe.
     if (value.doc !== undefined) {
       const card = buildDocPopupContent(decoratorInfo(value.name, value.doc));
+      this.docPopup.showAbove(container.getBoundingClientRect(), card);
+      return;
+    }
+    if (value.declared !== undefined) {
+      const { kind, type, owner } = value.declared;
+      const card = buildDocPopupContent(
+        declaredInfo(kind, value.name, owner),
+        type === null ? null : declaredTypeHtml(type),
+      );
       this.docPopup.showAbove(container.getBoundingClientRect(), card);
       return;
     }

@@ -119,6 +119,19 @@ signature, the body, and `where`/`and` clauses), and drops out of the list after
 `Dim`-bounded parameter is tagged and colored as a **dimension** (it stands for one); an unbounded
 one as a **type**.
 
+In a **value** position the same declaration offers what it binds there instead: its **parameters**,
+and the **locals** of its `where`/`and` clauses.
+
+Inside `fn price_level(local_price: Money, bench_price: Money) -> Scalar = r where r = …`, typing
+`loc` offers `local_price` tagged **parameter** with `Money` as its signature, and `r` is offered as
+a **local**. They are gated by the **Complete identifiers** setting, prefix-filtered like everything
+else, and drop out of the list once the declaration ends. A struct's fields are not offered this
+way: those are reached through a value of the struct (`costs.`), never bare.
+
+Because no context knows these names, neither their signature nor their documentation is asked of
+the interpreter as an outer binding that happened to share the name would answer in their place.
+Both come from the declaration itself, which is also where the hover card for one comes from.
+
 The `<` trigger recognizes a capitalized name touching its `<` (`List<`), so a spaced comparison
 (`a < b`) never opens it. The unicode and history leaders take precedence, so typing a `\code` or a
 `?:` history query never triggers expression completion.
@@ -172,10 +185,11 @@ own.
   docs by name, and a member path is not one.
 - A **literal** is read with the unit that follows it, so hovering the `21.1` of `21.1 km` answers
   `Length`, not nothing.
-- A **parameter**, a **type parameter**, or a **field in a `struct` declaration** exists only inside
-  the declaration that introduces it, where no context has ever heard of it — so its card is what
-  the declaration says: the kind, the declared type, and which `fn` or `struct` it belongs to, found
-  from the body as well as the signature.
+- A **parameter**, a **type parameter**, a **`where`/`and` local**, or a **field in a `struct`
+  declaration** exists only inside the declaration that introduces it, where no context has ever
+  heard of it. Its card is what the declaration says: the kind, the declared type, and which `fn` or
+  `struct` it belongs to, found from the body as well as the signature. It is the same card the
+  completer shows for the same name.
 
 A symbol **you** defined also gets a **Go to definition** row, with where it lives noted beside it;
 clicking or tapping it jumps there. This can take you to a frontmatter key (the nested one, for
@@ -290,6 +304,17 @@ block:
 A bracketed expression spanning several lines (`abs(` … `)`) is valid Numbat and evaluates as one
 statement: its result sits at the end of its last line, and its intermediate lines are never flagged
 as errors.
+
+So is a **function definition laid out over several lines**, which needs no brackets at all. Numbat
+reads on past a definition's `=` and around a `where`, an `and`, a `then` and an `else`, and the
+hints follow it — a `fn … = r` and the `where r = …` beneath it are one statement, as are a body
+written on the line below its `=` and a multi-line `if`/`then`/`else`. Blank lines and comments
+between the halves are stepped over. Split apart they would be a different program: the body alone
+reports its `where` names as unknown identifiers, and the clause alone does not parse.
+
+One consequence is worth knowing: since a trailing `=` reads on, an unfinished `let x =` with any
+statement below it takes that statement as its value, rather than showing the missing-operand
+placeholder. That is what the rendered block does with it too.
 
 **Decorators** belong to the declaration below them, so they are read together with it — a
 `@description("…")` on its own line is not evaluated alone and is never flagged as an error. Any

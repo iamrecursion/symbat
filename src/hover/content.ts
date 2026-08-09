@@ -8,14 +8,13 @@
 //
 // Not everything hoverable is a name the interpreter knows. Three kinds are not, and each has a
 // card built from what *is* knowable: a struct field (typed and evaluated, but undocumented), a
-// literal (evaluated), and a declaration's own parameters and fields (read back out of the source —
-// see hover/declarations.ts).
+// literal (evaluated), and the names a declaration itself binds — its parameters, its fields, its
+// `where`/`and` locals (read back out of the source — see hover/declarations.ts).
 
 import type { App } from "obsidian";
-import { type CompletionInfo, decoratorInfo, describedInfo } from "../completion/docs";
+import { type CompletionInfo, declaredInfo, declaredTypeHtml, decoratorInfo, describedInfo } from "../completion/docs";
 import { decoratorDoc } from "../completion/expressions";
 import { buildDocPopupContent } from "../completion/render";
-import { escapeHtml } from "../interpreter/markup";
 import { completionInfo, completionSignature, interpret, type Numbat } from "../interpreter/numbat";
 import { deriveScopeValue } from "../scope/eval";
 import { hasDefinitionTarget, jumpToDefinition } from "../scope/goto-definition";
@@ -65,20 +64,14 @@ export function symbolCard(context: Numbat, symbol: HoverSymbol): HTMLElement | 
 }
 
 /**
- * The card for a name its own declaration introduces — a parameter, a type parameter, a struct's
- * field. Nothing in any context knows these, so the card is what the declaration says: the kind,
- * the declared type, and which `fn`/`struct` it belongs to.
+ * The card for a name its own declaration introduces — a parameter, a `where`/`and` local, a type
+ * parameter, a struct's field. Nothing in any context knows these, so the card is what the
+ * declaration says: the kind, the declared type, and which `fn`/`struct` it belongs to. Built by
+ * the completer's own card builder, which the completion popover shows for the same names.
  */
 export function declarationCard(declared: DeclaredSymbol): HTMLElement {
-  const label = declared.kind === "field" ? "Field" : declared.kind === "parameter" ? "Parameter" : "Type parameter";
-  const info = describedInfo(label, declared.name, null, declared.owner);
-  return buildDocPopupContent(info, declared.type === null ? null : typeHtml(declared.type));
-}
-
-/** A declared type as it is written, rendered as a type identifier so it colors like one (it is
- *  source text, not formatter output). */
-function typeHtml(type: string): string {
-  return `<span class="numbat-type-identifier">${escapeHtml(type)}</span>`;
+  const info = declaredInfo(declared.kind, declared.name, declared.owner);
+  return buildDocPopupContent(info, declared.type === null ? null : declaredTypeHtml(declared.type));
 }
 
 /** The evaluated value of an expression, or `null` when it has none to show. */

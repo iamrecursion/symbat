@@ -1,4 +1,5 @@
 import type { NumbatBlockRange } from "../document/fences";
+import { continuesAfter, continuesBefore } from "../syntax/statements";
 
 // Pure helpers for the inlay-hint pass (evaluation/inlay.ts). Given a single Numbat line's
 // interpreter output, or the line's source text, these extract the pieces the hints render: a
@@ -414,6 +415,10 @@ export interface BlockStatement {
  * on its own paren, not on one in its text. Escapes are honored, quotes and newlines survive, and
  * lengths are preserved so offsets still line up. The caller strips comments first.
  *
+ * A newline ends any string still open at it, as it does for {@link stripLineComment}: Numbat has
+ * no multi-line string, so an unclosed quote is a half-typed line rather than a literal reaching
+ * down the document — and letting it reach would blank every line below it out of existence.
+ *
  * Exported for the declaration scanners that must step over a decorator prefix (see {@link
  * declarationSite}, scope/model.ts, hover/declarations.ts): their `@name(…)` pattern would
  * otherwise end at the first `)` in the decorator's own text.
@@ -427,14 +432,17 @@ export function blankStrings(src: string): string {
     if (!inString) {
       out += ch;
       inString = ch === "\"";
-    } else if (ch === "\\" && i + 1 < src.length) {
+    } else if (ch === "\n") {
+      out += ch;
+      inString = false; // the line ended before the literal did
+    } else if (ch === "\\" && i + 1 < src.length && src[i + 1] !== "\n") {
       out += "  "; // the escape and the character it escapes
       i += 1;
     } else if (ch === "\"") {
       out += ch;
       inString = false;
     } else {
-      out += ch === "\n" ? ch : " ";
+      out += " ";
     }
   }
 
@@ -470,6 +478,35 @@ function decoratorsOnly(lines: string[]): boolean {
   return stripped[0].trimStart().startsWith("@") && DECORATORS_ONLY.test(blankStrings(stripped.join("\n")));
 }
 
+/** A line's code — its comment off and its string contents blanked — trimmed. Empty for a blank or
+ *  comment-only line, which is what makes those skippable below. */
+function codeOf(line: string): string {
+  return blankStrings(stripLineComment(line)).trim();
+}
+
+/**
+ * Whether the statement running from `start` through `i` is continued by the line below it: Numbat
+ * reads on past a definition's `=` and around a `where`/`and`/`then`/`else` (see
+ * syntax/statements.ts), which is how a function definition spans lines with every bracket closed.
+ *
+ * The blank and comment-only lines on either side of the newline are stepped over, as Numbat's own
+ * parser steps over them — a note written between a function's body and its `where` clause does not
+ * break the two apart. False at the end of the body: there is nothing left to read on into.
+ */
+function continuesBelow(body: string[], start: number, i: number): boolean {
+  let tail = "";
+  for (let n = i; n >= start && tail === ""; n -= 1) {
+    tail = codeOf(body[n]);
+  }
+
+  let head = "";
+  for (let n = i + 1; n < body.length && head === ""; n += 1) {
+    head = codeOf(body[n]);
+  }
+
+  return head !== "" && (continuesAfter(tail) || continuesBefore(head));
+}
+
 /** The last line of `body` in `[start, end]` that is not blank. At least `start`, which a statement
  *  never begins on. */
 function lastNonBlank(body: string[], start: number, end: number): number {
@@ -487,6 +524,12 @@ function lastNonBlank(body: string[], start: number, end: number): number {
  * until the brackets balance (or the block ends), since that is how Numbat itself reads a
  * multi-line expression. Balanced lines — the common case — stay single-line statements; blank
  * lines between statements are skipped (a blank inside an open bracket is part of the statement).
+ *
+ * Brackets are not the only way a statement spans lines. A function definition carries its body,
+ * its `where`/`and` local bindings and its `if`/`then`/`else` across newlines with everything
+ * closed, and Numbat reads them as one statement — so {@link continuesBelow} does too. Splitting
+ * them is not a smaller piece of the same program: the body alone reports its `where` names as
+ * unknown identifiers, and the clause alone does not parse at all.
  *
  * Decorator lines absorb the statement *below* them, which is the reading Numbat's own parser takes
  * — `parse_decorators` pushes onto a decorator stack, skips blank lines, and falls through to the
@@ -540,6 +583,10 @@ export function groupStatements(body: string[]): BlockStatement[] {
       // the last line they occupy rather than on the blank space that ran out beneath them.
       push(start, lastNonBlank(body, start, i), -1);
     } else {
+      if (!last && continuesBelow(body, start, i)) {
+        continue; // Numbat reads on past this newline, so the statement has not ended
+      }
+
       push(start, i, prefixEnd);
     }
 

@@ -338,3 +338,44 @@ test("a decorated let suppresses the value hint that merely repeats its source",
 
   nb.free();
 });
+
+// A function definition spans lines with every bracket closed: Numbat reads on past its `=` and
+// around a `where`/`and`/`then`/`else`. Split apart, the body reports its `where` names as unknown
+// identifiers and the clause alone does not parse — which is exactly what the grouper used to do.
+test("a multi-line function definition is one statement, however its body is laid out", { skip }, async () => {
+  const { Numbat, FormatType } = await loadNumbat();
+  const nb = Numbat.new(true, true, FormatType.Html);
+  const run = (code: string) => {
+    const out = nb.interpret(code);
+    const data = { output: out.output, isError: out.is_error };
+    out.free();
+    return data;
+  };
+
+  const body = [
+    "@description(\"the ratio of two prices\")",
+    "fn price_level(local_price: Scalar, bench_price: Scalar) -> Scalar = r",
+    "  where r = local_price / bench_price",
+    "",
+    "fn magnitude(a: Scalar) =",
+    "  if a > 0",
+    "  then a",
+    "  else -a",
+    "",
+    "magnitude(price_level(10, -5))",
+  ];
+  const hints = hintsForBlock(run, body);
+
+  // Nothing errored — in particular not the `fn` line missing its `where`, nor the clause alone.
+  assert.deepEqual(hints.filter((h) => h.kind === "error").map((h) => h.bodyLine), []);
+
+  // Both definitions really took: the call below them resolves, and to the right number.
+  const result = hints.find((h) => h.kind === "result" && h.bodyLine === 9);
+  assert.ok(result, "expected the call's result");
+  assert.match(result.content, /numbat-value">2</);
+
+  // The decorator above the multi-line definition still reached the interpreter with it.
+  assert.match(nb.print_info("price_level"), /Description: the ratio of two prices/);
+
+  nb.free();
+});

@@ -5,11 +5,16 @@ import {
   boundCompletions,
   classifyCompletion,
   type CompletionVocabulary,
+  declaredNameCompletions,
+  declaredNamesIn,
   decoratorCompletions,
   decoratorDoc,
+  enclosingDeclarationAt,
+  type ExprCategory,
   expressionCompletions,
   exprTriggerAt,
   exprWordPrefixAt,
+  isInterpreterKnown,
   isTypePosition,
   memberBaseAt,
   parseListNames,
@@ -343,6 +348,114 @@ test("typeVariablesInScopeAt scopes struct parameters to the struct body", () =>
 test("typeVariablesInScopeAt only sees the nearest declaration", () => {
   assert.deepEqual(scopedNames("fn foo<A: Dim>(x: A) -> A = x\nfn bar<B: Dim>(y: "), ["B"]);
   assert.deepEqual(scopedNames("let plain = 2\nlet x: "), []);
+});
+
+test("typeVariablesInScopeAt keeps the variables through a multi-line if", () => {
+  // `then`/`else` open a line of their own as readily as `where` does.
+  assert.deepEqual(scopedNames("fn foo<D: Dim>(x: D) -> D =\n  if x > 0 D\n  then x\n  else -"), ["D"]);
+  assert.deepEqual(scopedNames("fn foo<D: Dim>(x: D) -> D = if x > 0 D then\n  x\nelse\n  -"), ["D"]);
+});
+
+// --- declaredNamesIn -----------------------------------------------------------
+
+/** The names an enclosing declaration binds at the end of `before`, as readable tuples. */
+function bound(before: string): [string, string, string | null][] | null {
+  const declaration = enclosingDeclarationAt(before);
+  return declaration === null
+    ? null
+    : declaredNamesIn(declaration).map((name) => [name.kind, name.name, name.type]);
+}
+
+test("declaredNamesIn reads a function's parameters, typed and untyped", () => {
+  assert.deepEqual(bound("fn f(a: Money, b: Money) -> Scalar = "), [
+    ["parameter", "a", "Money"],
+    ["parameter", "b", "Money"],
+  ]);
+  assert.deepEqual(bound("fn f(a, b) = "), [["parameter", "a", null], ["parameter", "b", null]]);
+  // A generic's type parameters are not value parameters, and a type holding commas stays whole.
+  assert.deepEqual(bound("fn mean<D: Dim>(xs: List<D>) -> D =\n  "), [["parameter", "xs", "List<D>"]]);
+  assert.deepEqual(bound("fn apply(cb: Fn[(Scalar) -> Scalar], x: Scalar) = "), [
+    ["parameter", "cb", "Fn[(Scalar) -> Scalar]"],
+    ["parameter", "x", "Scalar"],
+  ]);
+});
+
+test("declaredNamesIn reads the `where` and `and` locals of the body", () => {
+  assert.deepEqual(bound("fn f(a: Scalar) = r + s\n  where r = a\n  and s: Scalar = a * 2\n  "), [
+    ["parameter", "a", "Scalar"],
+    ["local", "r", null],
+    ["local", "s", "Scalar"],
+  ]);
+});
+
+test("declaredNamesIn reads a struct's fields, and a struct has no locals", () => {
+  assert.deepEqual(bound("struct Costs {\n  total: Money,\n  tax: Money,\n  "), [
+    ["field", "total", "Money"],
+    ["field", "tax", "Money"],
+  ]);
+});
+
+test("declaredNamesIn reads a half-typed signature as far as it goes", () => {
+  assert.deepEqual(bound("fn f(a: Money, b"), [["parameter", "a", "Money"], ["parameter", "b", null]]);
+  // Nothing yet is nothing, rather than a guess.
+  assert.deepEqual(bound("fn f"), []);
+});
+
+test("declaredNamesIn is not fooled by a comment or a decorator's own text", () => {
+  assert.deepEqual(bound("@example(\"where q = 1\")\nfn f(a: Scalar) = r\n  where r = a\n  "), [
+    ["parameter", "a", "Scalar"],
+    ["local", "r", null],
+  ]);
+  assert.deepEqual(bound("fn f(a: Scalar) = r # where q = 1\n  where r = a\n  "), [
+    ["parameter", "a", "Scalar"],
+    ["local", "r", null],
+  ]);
+});
+
+test("enclosingDeclarationAt reports the nearest open declaration, and nothing once it closes", () => {
+  assert.deepEqual(enclosingDeclarationAt("fn f(a: Scalar) = a\nfn g(b: Scalar) = ")?.owner, "g");
+  assert.equal(enclosingDeclarationAt("fn f(a: Scalar) = a\n1 + "), null);
+  assert.equal(enclosingDeclarationAt("let x = 2\n"), null);
+});
+
+// --- declaredNameCompletions ---------------------------------------------------
+
+test("declaredNameCompletions offers the parameters and locals of the enclosing function", () => {
+  assert.deepEqual(
+    declaredNameCompletions("fn f(a: Money, b: Money) = r\n  where r = ", "", ALL_CATEGORIES, null),
+    [
+      { name: "a", category: "parameter", declared: { kind: "parameter", type: "Money", owner: "f" } },
+      { name: "b", category: "parameter", declared: { kind: "parameter", type: "Money", owner: "f" } },
+      { name: "r", category: "local", declared: { kind: "local", type: null, owner: "f" } },
+    ],
+  );
+  // Prefix-filtered against the typed query, which the engine could not do — it knows no such name.
+  assert.deepEqual(
+    declaredNameCompletions("fn f(local_price: Money, bench: Money) = ", "loc", ALL_CATEGORIES, null)
+      .map((completion) => completion.name),
+    ["local_price"],
+  );
+});
+
+test("declaredNameCompletions stays out of type positions and off closed declarations", () => {
+  // A type position is where the *type* variables go; a parameter is a value.
+  assert.deepEqual(declaredNameCompletions("fn f(a: Money, b: ", "", ALL_CATEGORIES, AT_TYPE), []);
+  // Past the end of the declaration the names it bound are gone.
+  assert.deepEqual(declaredNameCompletions("fn f(a: Money) = a\n1 + ", "", ALL_CATEGORIES, null), []);
+  // A struct's fields are reached through a value of it, never bare.
+  assert.deepEqual(declaredNameCompletions("struct S {\n  x: Scalar,\n  ", "", ALL_CATEGORIES, null), []);
+  // And the whole group is gated on the identifiers toggle.
+  assert.deepEqual(
+    declaredNameCompletions("fn f(a: Money) = ", "", { ...ALL_CATEGORIES, identifiers: false }, null),
+    [],
+  );
+});
+
+test("isInterpreterKnown is false for exactly the names no context has heard of", () => {
+  const own: ExprCategory[] = ["decorator", "parameter", "local"];
+  const engine: ExprCategory[] = ["variable", "function", "unit", "dimension", "type", "keyword", "field"];
+  assert.deepEqual(own.map(isInterpreterKnown), own.map(() => false));
+  assert.deepEqual(engine.map(isInterpreterKnown), engine.map(() => true));
 });
 
 // --- typeVariableCompletions ---------------------------------------------------

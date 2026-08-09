@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { NumbatBlockRange } from "../../../src/document/fences.ts";
 import {
   bindingValueRepeatsSource,
+  blankStrings,
   blockKey,
   declarationSite,
   declarationTypeHtml,
@@ -178,6 +179,26 @@ test("stripLineComment: strips a trailing comment but keeps `#` inside a string"
   assert.equal(stripLineComment("a + \"b\\\"# c\" # real"), "a + \"b\\\"# c\" ");
 });
 
+test("blankStrings: a literal's contents go, its quotes and the line's length stay", () => {
+  assert.equal(blankStrings("f(\"a ( b\") + 1"), "f(\"     \") + 1");
+  // The escape and the character it escapes are one unit, and both are blanked.
+  assert.equal(blankStrings("\"a\\\"b\""), "\"    \"");
+  // Nothing outside a literal is touched.
+  assert.equal(blankStrings("1 + 1"), "1 + 1");
+});
+
+test("blankStrings: a newline ends a literal left open, so it cannot blank the lines below", () => {
+  // Numbat has no multi-line string, and a half-typed one is routine while typing — letting it
+  // reach down the document would blank out the declaration the completer is looking for.
+  assert.equal(blankStrings("let s = \"abc\nfn f(x: Scalar) = x"), "let s = \"   \nfn f(x: Scalar) = x");
+
+  // A backslash at the line's end escapes nothing: the newline survives, and so does the length.
+  const dangling = "let s = \"abc\\\nfn f(x: Scalar) = x";
+  assert.equal(blankStrings(dangling), "let s = \"    \nfn f(x: Scalar) = x");
+  assert.equal(blankStrings(dangling).length, dangling.length);
+  assert.equal(blankStrings(dangling).split("\n").length, 2);
+});
+
 test("holeForm: a trailing operator gets a hole operand", () => {
   assert.equal(holeForm("3 m +"), "3 m + ?");
   assert.equal(holeForm("3 m ->"), "3 m -> ?");
@@ -282,6 +303,67 @@ test("groupStatements: brackets inside strings and comments do not count", () =>
   assert.deepEqual(groupStatements(["\"a ( b\"", "1 m # not open (("]), [
     { startLine: 0, codeLine: 0, endLine: 0, text: "\"a ( b\"" },
     { startLine: 1, codeLine: 1, endLine: 1, text: "1 m # not open ((" },
+  ]);
+});
+
+// --- groupStatements: multi-line definitions ----------------------------------
+//
+// A function definition spans lines with every bracket closed — Numbat reads on past the `=` and
+// around a `where`/`and`/`then`/`else` (syntax/statements.ts). Split apart, the body reports its
+// `where` names as unknown identifiers and the clause alone does not parse at all.
+
+test("groupStatements: a `where` clause belongs to the definition above it", () => {
+  const body = [
+    "@description(\"the PTB price level\")",
+    "fn price_level(local_price: Money, bench_price: Money) -> Scalar = r",
+    "  where r = local_price / bench_price",
+    "",
+    "price_level(10 EUR, 5 EUR)",
+  ];
+  assert.deepEqual(groupStatements(body), [
+    { startLine: 0, codeLine: 1, endLine: 2, text: body.slice(0, 3).join("\n") },
+    { startLine: 4, codeLine: 4, endLine: 4, text: body[4] },
+  ]);
+});
+
+test("groupStatements: each `and` binding continues the `where` it extends", () => {
+  const body = ["fn f(a: Scalar) = r + s", "  where r = a", "  and s = a * 2", "1 + 1"];
+  assert.deepEqual(groupStatements(body), [
+    { startLine: 0, codeLine: 0, endLine: 2, text: body.slice(0, 3).join("\n") },
+    { startLine: 3, codeLine: 3, endLine: 3, text: "1 + 1" },
+  ]);
+});
+
+test("groupStatements: a body on the line below the `=`, and a multi-line `if`", () => {
+  const body = ["fn sign(a: Scalar) =", "  if a > 0", "  then 1", "  else -1", "sign(2)"];
+  assert.deepEqual(groupStatements(body), [
+    { startLine: 0, codeLine: 0, endLine: 3, text: body.slice(0, 4).join("\n") },
+    { startLine: 4, codeLine: 4, endLine: 4, text: "sign(2)" },
+  ]);
+});
+
+test("groupStatements: a blank line or a comment between a body and its `where` still binds", () => {
+  // Numbat's parser steps over both, so a note written between the two does not break them apart.
+  const body = ["fn f(a: Scalar) = r", "", "  # why it is halved", "  where r = a / 2"];
+  assert.deepEqual(groupStatements(body), [
+    { startLine: 0, codeLine: 0, endLine: 3, text: body.join("\n") },
+  ]);
+});
+
+test("groupStatements: a trailing operator is not a continuation", () => {
+  // Numbat rejects `3 m +` ⏎ `2 m`, so the two stay separate statements — which is what leaves the
+  // first free to report the type of the operand it is missing.
+  assert.deepEqual(groupStatements(["3 m +", "2 m"]), [
+    { startLine: 0, codeLine: 0, endLine: 0, text: "3 m +" },
+    { startLine: 1, codeLine: 1, endLine: 1, text: "2 m" },
+  ]);
+  // Nor is a comparison's `=`, which only looks like a definition's.
+  assert.deepEqual(groupStatements(["1 ==", "1"]).length, 2);
+});
+
+test("groupStatements: a definition's `=` with nothing below it ends the statement", () => {
+  assert.deepEqual(groupStatements(["let x =", "", ""]), [
+    { startLine: 0, codeLine: 0, endLine: 0, text: "let x =" },
   ]);
 });
 

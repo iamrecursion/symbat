@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_INLINE_CONFIG, noteSignature, scanNote } from "../../../src/evaluation/inline-parse.ts";
-import { derivePreamble, EMPTY_PREAMBLE, PLAIN_ALL } from "../../../src/properties/parse.ts";
+import { derivePreamble, EMPTY_PREAMBLE, PLAIN_ALL, PLAIN_NONE } from "../../../src/properties/parse.ts";
 import {
   buildScopeTree,
   currentNodeId,
@@ -70,6 +70,48 @@ test("imports are grouped by source note with a basename label", () => {
   assert.equal(imports?.children[0].id, "import:lib/Constants.md");
   assert.equal(imports?.children[0].label, "Constants");
   assert.deepEqual(imports?.children[0].entries.map((e) => e.name), ["g"]);
+});
+
+// An object property is emitted as one `let` per leaf, each superseding the last (properties/parse
+// generationCode). Read back off the chunk text those are N identically-named declarations with N-1
+// struck through — the progressive build, which is not something to show a reader. Given the
+// bindings the chunks came from, the group renders the object the way the note's own frontmatter
+// does instead: a sub-tree, one row per leaf.
+test("an imported object shows one row per leaf, not one per generation", () => {
+  const source = derivePreamble(
+    { costs: { materials: "500 €", total: "costs.materials * 1.2" }, nb_g: "9.81 m/s^2" },
+    {
+      isNumbatTyped: (key) => key.startsWith("costs.") || key.startsWith("nb_"),
+      isReserved: () => false,
+      plain: PLAIN_NONE,
+      plainNested: PLAIN_ALL,
+    },
+  );
+
+  const sharedChunks = ["fn scale2(x) = 2 * x"];
+  const tree = buildScopeTree({
+    file: "Note.md",
+    lines: LINES,
+    config,
+    preamble: EMPTY_PREAMBLE,
+    importGroups: [{
+      notePath: "lib/Constants.md",
+      chunks: [...source.bindings.flatMap((b) => [...b.defs, b.code]), ...sharedChunks],
+      contribution: { properties: source.bindings, sharedChunks },
+    }],
+  });
+
+  const group = tree.nodes.find((n) => n.kind === "imports")?.children[0];
+  // Shown directly: the shared block's function and the note's non-object property.
+  assert.deepEqual(group?.entries.map((e) => e.name), ["nb_g", "scale2"]);
+
+  // The object is a sub-tree, one row per leaf — not the two generations under a duplicate name.
+  assert.deepEqual(group?.children.map((c) => c.label), ["costs"]);
+  assert.deepEqual(group?.children[0].entries.map((e) => e.name), ["costs.materials", "costs.total"]);
+  assert.equal(group?.children[0].id, "import:lib/Constants.md:costs");
+
+  // Nothing is superseded, so nothing renders struck through.
+  assert.deepEqual(tree.imports[0].entries.filter((e) => e.shadowed), []);
 });
 
 test("blocks carry the shared/local distinction and their line ranges", () => {
@@ -523,4 +565,66 @@ test("findDefinition: an imported binding names its source note", () => {
   const match = findDefinition(defTree(), "g", "g", 8);
   assert.deepEqual(match?.defsite, { notePath: "lib/Constants.md", line: null, ch: 0 });
   assert.equal(match?.where, "imported");
+});
+
+test("findDefinition: an imported object resolves by its own name, not just its leaves", () => {
+  // An imported object contributes one entry per leaf (`rates.vat`), so the object's own name binds
+  // no entry anywhere — its group is the only thing that knows where it came from.
+  const source = derivePreamble({ rates: { base: 100, vat: "rates.base * 0.2" } }, {
+    isNumbatTyped: (key) => key === "rates.vat",
+    isReserved: () => false,
+    plain: PLAIN_NONE,
+    plainNested: PLAIN_ALL,
+  });
+
+  const tree = buildScopeTree({
+    file: "Defs.md",
+    lines: DEF_LINES,
+    config,
+    preamble: EMPTY_PREAMBLE,
+    importGroups: [{
+      notePath: "lib/Constants.md",
+      chunks: source.bindings.flatMap((b) => [...b.defs, b.code]),
+      contribution: { properties: source.bindings, sharedChunks: [] },
+    }],
+  });
+
+  const object = findDefinition(tree, "rates", "rates", 8);
+  assert.deepEqual(object?.defsite, { notePath: "lib/Constants.md", line: null, ch: 0 });
+  assert.equal(object?.where, "imported");
+  assert.equal(object?.entry, null);
+
+  // The leaf still resolves through its own entry, as any imported binding does.
+  assert.equal(findDefinition(tree, "rates.vat", "rates", 8)?.entry?.name, "rates.vat");
+});
+
+test("findDefinition: the note's own object outranks an import of the same name", () => {
+  const tree = buildScopeTree({
+    file: "Defs.md",
+    lines: DEF_LINES,
+    config,
+    preamble: derivePreamble({ costs: { materials: 500 } }, {
+      isNumbatTyped: () => false,
+      isReserved: () => false,
+      plain: PLAIN_ALL,
+    }),
+    importGroups: [{
+      notePath: "lib/Constants.md",
+      chunks: ["let costs = 1"],
+      contribution: {
+        properties: [{
+          key: "costs.other",
+          path: ["costs", "other"],
+          name: "costs.other",
+          expr: "1",
+          defs: [],
+          code: "let costs = 1",
+          kind: "number",
+        }],
+        sharedChunks: [],
+      },
+    }],
+  });
+
+  assert.deepEqual(findDefinition(tree, "costs", "costs", 8)?.defsite, { notePath: null, line: 2, ch: 0 });
 });

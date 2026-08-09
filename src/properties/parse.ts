@@ -294,6 +294,32 @@ export interface PreambleRules {
   plain: PlainBindings;
 
   /**
+   * Which untyped values ride along *below the top level* — inside an object property, or inside an
+   * array's items. Defaults to {@link plain}, so a caller that does not set it sees one rule at
+   * every depth.
+   *
+   * It exists because the two levels are not the same question. At the top level a plain value is
+   * its own binding, and keeping it out keeps a name out of the namespace. Below it, a plain value
+   * is a *field of a value that is being bound anyway* — and its typed siblings may refer to it by
+   * its dotted name (`costs.total = costs.materials * 1.2`). Dropping it there does not withhold a
+   * name, it hands back a different object than the one that was written, and breaks every sibling
+   * that reads the missing field.
+   *
+   * Both callers set it to {@link PLAIN_ALL}, differing only in the *top-level* rule they pair it
+   * with: a note reads its own properties under the reader's settings, and exports them under
+   * {@link PLAIN_NONE} so incidental metadata stays private. Either way an object that binds at all
+   * binds whole. See `properties/note.ts`'s `preambleFromRecord` and `importedPropsChunks`.
+   *
+   * Setting it also turns on the gate that keeps the nested rule from binding everything: an object
+   * binds only if at least one leaf under it would have bound *at the top level* — typed, or of a
+   * plain kind {@link plain} allows (see {@link hasBindableLeaf}). So an object of nothing but text
+   * still stays out of a namespace that binds no text, and off the export path, where nothing
+   * untyped binds at the top level, that reduces to "something under it is numbat-typed". Without a
+   * nested rule there is no gate, and an object binds whatever its leaves bind, as always.
+   */
+  plainNested?: PlainBindings;
+
+  /**
    * The property type assigned to a key, as the registry's own id (`checkbox`, `date`,
    * `better-properties:toggle`, …), or `null` for an untyped property. Optional: without it the two
    * bindings that need to know a property's *declared* kind simply do not happen.
@@ -447,6 +473,25 @@ function dateFromValue(value: Date): string | null {
 }
 
 /**
+ * What an untyped value is read against: the {@link PlainBindings} in force at the depth being
+ * read, and the rules behind them. A {@link Walk} is one — which is how the binding walk passes
+ * itself — and {@link topLevelReading} builds the other, so the gate can ask what *would* have
+ * bound at the top level using the same readings the walk uses.
+ */
+interface Reading {
+  /** Which untyped values bind here. */
+  plain: PlainBindings;
+
+  /** The rules the walk runs under, for the type registry. */
+  rules: PreambleRules;
+}
+
+/** The reading at the top level — where {@link PreambleRules.plain} is the rule, by definition. */
+function topLevelReading(rules: PreambleRules): Reading {
+  return { plain: rules.plain, rules };
+}
+
+/**
  * The Numbat literal an *untyped* value rides along as, or `null` when its kind does not bind —
  * either because the setting for it is off, or because nothing sensible could be written.
  *
@@ -454,9 +499,9 @@ function dateFromValue(value: Date): string | null {
  * (a `null` that means `false`) and a date, which is only ever read as one under a property the
  * type menu says is a date.
  */
-function plainExpression(walk: Walk, key: string, value: unknown): { expr: string; kind: PlainKind; } | null {
-  const { plain } = walk.rules;
-  const declared = () => walk.rules.assignedType?.(key) ?? null;
+function plainExpression(reading: Reading, key: string, value: unknown): { expr: string; kind: PlainKind; } | null {
+  const { plain } = reading;
+  const declared = () => reading.rules.assignedType?.(key) ?? null;
 
   if (typeof value === "number") {
     return plain.numbers && Number.isFinite(value) ? { expr: String(value), kind: "number" } : null;
@@ -491,6 +536,97 @@ function plainExpression(walk: Walk, key: string, value: unknown): { expr: strin
   }
 
   return plain.text ? { expr: stringLiteral(text), kind: "text" } : null;
+}
+
+/** The {@link PlainBindings} in force below the top level — the nested rule when the caller set
+ *  one, and otherwise the same rule as everywhere else. */
+function nestedPlain(rules: PreambleRules): PlainBindings {
+  return rules.plainNested ?? rules.plain;
+}
+
+/**
+ * Whether anything under `value` would have bound *at the top level* — the gate {@link
+ * PreambleRules.plainNested} turns on, so an object binds only when something in it was actually
+ * asked for, rather than riding in whole on the nested rule.
+ *
+ * `reading` is therefore always {@link topLevelReading}: every leaf is put to the reading it would
+ * have got as a property of its own, so the gate follows the reader's settings rather than a rule
+ * of its own. On the export path, where nothing untyped binds at the top level, that reduces to
+ * "some leaf under it is numbat-typed".
+ *
+ * An array counts through its item key (`legs.#`, {@link ARRAY_ITEM}) as well as its own, matching
+ * how {@link leafExpression} reads one. `depth` is the depth the binding walk processes `value` at,
+ * so the two agree on what is in reach: {@link MAX_PROPERTY_DEPTH} stops the *descent* into a
+ * nested container (never a leaf, which the walk binds at any depth), and a cyclic YAML anchor is
+ * guarded the same way {@link walkObject} guards it. Reporting less than the walk can bind would
+ * drop a binding silently, so where the two could differ this errs towards saying yes.
+ */
+function hasBindableLeaf(
+  reading: Reading,
+  value: unknown,
+  path: string[],
+  depth: number,
+  ancestors: Set<object>,
+): boolean {
+  const { rules } = reading;
+
+  if (Array.isArray(value)) {
+    // {@link leafExpression}'s own reading of an array: typed by its key or its item key, and
+    // otherwise riding along exactly where a lone untyped value would.
+    const { numbers, text, dates, booleans } = reading.plain;
+    if (
+      rules.isNumbatTyped(dottedKey(path)) || rules.isNumbatTyped(dottedKey([...path, ARRAY_ITEM]))
+      || numbers || text || dates || booleans
+    ) {
+      return true;
+    }
+
+    return descend(reading, value.map((item) => [ARRAY_ITEM, item] as const), path, depth, ancestors);
+  }
+
+  if (isPlainObject(value)) {
+    return descend(reading, Object.entries(value), path, depth, ancestors);
+  }
+
+  const key = dottedKey(path);
+  if (rules.isNumbatTyped(key)) {
+    return true;
+  }
+
+  // An empty property binds only where the type menu names its kind; a filled one wherever its own
+  // kind is switched on. Both are the readings {@link leafExpression} makes of the same value.
+  return isAbsent(reading, key, value, false)
+    ? declaredKind(reading, key) !== null
+    : plainExpression(reading, key, value) !== null;
+}
+
+/** The shared recursion of {@link hasBindableLeaf}: each child at its own path, with the walk's own
+ *  two guards — the depth limit and a cyclic YAML anchor — applied where the walk applies them,
+ *  which is to a nested container and never to a leaf. */
+function descend(
+  reading: Reading,
+  children: readonly (readonly [string, unknown])[],
+  path: string[],
+  depth: number,
+  ancestors: Set<object>,
+): boolean {
+  return children.some(([key, child]) => {
+    const here = [...path, key];
+    if (!Array.isArray(child) && !isPlainObject(child)) {
+      return hasBindableLeaf(reading, child, here, depth + 1, ancestors);
+    }
+
+    if (depth >= MAX_PROPERTY_DEPTH || ancestors.has(child)) {
+      return false;
+    }
+
+    ancestors.add(child);
+    try {
+      return hasBindableLeaf(reading, child, here, depth + 1, ancestors);
+    } finally {
+      ancestors.delete(child);
+    }
+  });
 }
 
 /** One bound field of an object under construction: a leaf (`children === null`) or a nested
@@ -536,6 +672,12 @@ interface ObjectState {
 interface Walk {
   /** What the walk is allowed to bind — reserved names, the type registry. */
   rules: PreambleRules;
+
+  /** The {@link PlainBindings} in force *here*: `rules.plain` at the top level, and
+   *  `rules.plainNested` below it. Swapped by the two places that descend (an object property, and
+   *  an array's items) and restored on the way out, so every reading of an untyped value asks about
+   *  the depth it is actually at. */
+  plain: PlainBindings;
 
   /** Bindings accumulated so far, in frontmatter order. */
   bindings: PropertyBinding[];
@@ -908,12 +1050,12 @@ function listItems(
  *  - A value of a **shape Numbat cannot hold** under a typed key — a boolean, an object — is still
  *    `unsupported`: the reader wrote something, and it is worth telling them it did not land.
  */
-function isAbsent(walk: Walk, key: string, value: unknown, typed: boolean): boolean {
+function isAbsent(reading: Reading, key: string, value: unknown, typed: boolean): boolean {
   if (typed) {
     return value === null || expressionText(value) === "";
   }
 
-  return value === null && !CHECKBOX_TYPES.has(walk.rules.assignedType?.(key) ?? "");
+  return value === null && !CHECKBOX_TYPES.has(reading.rules.assignedType?.(key) ?? "");
 }
 
 /** One element (or one field of one), built at its own path. `typed` is that path's reading, as
@@ -1242,9 +1384,14 @@ function arrayExpression(
     expressions: false,
   };
 
+  // The items sit below the top level even when the array itself is a top-level property, so they
+  // read untyped values under the nested rule (see PreambleRules.plainNested).
+  const outerPlain = walk.plain;
+  walk.plain = nestedPlain(walk.rules);
   const built = depth >= MAX_PROPERTY_DEPTH
     ? null
     : listItems(walk, state, path, value, typed, depth, new Set<object>([value]));
+  walk.plain = outerPlain;
 
   // An element left with no fields at all — every item wrote every one of them empty — cannot be a
   // Numbat struct, so the array binds nothing, as one holding nothing bindable already does.
@@ -1297,13 +1444,17 @@ function arrayExpression(
  * ever wanted here. Checkbox is deliberately not here — an unset one is `false`, a value rather
  * than the lack of one (see {@link plainExpression}).
  */
-function declaredKind(walk: Walk, key: string): PlainKind | null {
-  const declared = walk.rules.assignedType?.(key) ?? null;
+function declaredKind(reading: Reading, key: string): PlainKind | null {
+  const declared = reading.rules.assignedType?.(key) ?? null;
   if (declared === null) {
     return null;
   }
 
-  const { plain } = walk.rules;
+  // The reading in force *here*, not the top-level one: an empty property inside an object is a
+  // *field* of a value being bound anyway, and reads at the depth it sits at exactly as a filled
+  // one does (see plainExpression and PreambleRules.plainNested). Withholding it would hand back an
+  // object with the field missing, which is the one thing the nested rule exists to prevent.
+  const { plain } = reading;
   if (DATE_TYPES.has(declared)) {
     return plain.dates ? "date" : null;
   }
@@ -1336,8 +1487,16 @@ function leafExpression(
     // reader who binds no plain value at all binds no list either — including the empty one, which
     // has no item to say so on its behalf.
     const items = typed || walk.rules.isNumbatTyped(dottedKey([...path, ARRAY_ITEM]));
-    const { numbers, text, dates, booleans } = walk.rules.plain;
-    if (!items && !(numbers || text || dates || booleans)) {
+    const { numbers, text, dates, booleans } = walk.plain;
+
+    // On export an array rides in on a typed leaf anywhere inside it, the same gate an object
+    // passes — otherwise a list of objects whose *fields* carry the type (`legs.#.distance`, where
+    // Better Properties keeps it) would reach no importer at all, since the top-level rule binds no
+    // untyped value to let it in. Off the export path there is no nested rule and nothing changes.
+    const gated = walk.rules.plainNested !== undefined
+      && hasBindableLeaf(topLevelReading(walk.rules), value, path, depth, new Set<object>([value]));
+
+    if (!items && !gated && !(numbers || text || dates || booleans)) {
       return null;
     }
 
@@ -1719,7 +1878,7 @@ function walkObject(
  * type error on the property says it better than a guess here could.
  */
 export function derivePreamble(frontmatter: Record<string, unknown>, rules: PreambleRules): NotePreamble {
-  const walk: Walk = { rules, bindings: [], skips: [], taken: new Set<string>() };
+  const walk: Walk = { rules, plain: rules.plain, bindings: [], skips: [], taken: new Set<string>() };
   for (const [key, value] of Object.entries(frontmatter)) {
     // Vault machinery, not note data — unless it is explicitly Numbat-typed, on its own key or (for
     // the three that are lists) on its items'. See UNBOUND_KEYS.
@@ -1731,6 +1890,16 @@ export function derivePreamble(frontmatter: Record<string, unknown>, rules: Prea
     }
 
     if (isPlainObject(value)) {
+      // The gate that keeps `plainNested` from turning every object into an export: with a nested
+      // rule set, an object rides in only when something under it was actually asked for. Without
+      // one there is nothing to gate — the leaves bind under the same rule they always did.
+      if (
+        rules.plainNested !== undefined
+        && !hasBindableLeaf(topLevelReading(rules), value, [key], 1, new Set<object>([value]))
+      ) {
+        continue;
+      }
+
       const state: ObjectState = {
         rootKey: key,
         rootName: "",
@@ -1741,7 +1910,13 @@ export function derivePreamble(frontmatter: Record<string, unknown>, rules: Prea
         failed: false,
       };
 
+      // Everything under an object property is below the top level, so its untyped values read
+      // under the nested rule: an object that binds at all binds the shape that was written, and a
+      // typed leaf can still reach a plain sibling by its dotted name.
+      const outerPlain = walk.plain;
+      walk.plain = nestedPlain(rules);
       walkObject(walk, state, value, [key], new Set<object>([value]), 1);
+      walk.plain = outerPlain;
       continue;
     }
 

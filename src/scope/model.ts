@@ -15,7 +15,13 @@ import { FRONTMATTER_CLOSE, FRONTMATTER_OPEN } from "../document/frontmatter";
 import { blankStrings, groupStatements, stripLineComment } from "../evaluation/inlay-parse";
 import { type InlineEvalConfig, noteSignature, scanNote } from "../evaluation/inline-parse";
 import { escapeHtml } from "../interpreter/markup";
-import { EMPTY_PREAMBLE, frontmatterKeySites, type NotePreamble, type PropertySkip } from "../properties/parse";
+import {
+  EMPTY_PREAMBLE,
+  frontmatterKeySites,
+  type NotePreamble,
+  type PropertyBinding,
+  type PropertySkip,
+} from "../properties/parse";
 
 // DECLARATIONS
 // ================================================================================================
@@ -195,6 +201,12 @@ export interface ScopeNode {
 
   /** Nested groups — import notes, frontmatter objects, prelude files. */
   children: ScopeNode[];
+
+  /** For a `frontmatter-object` node, the object property the group *is* — its dotted key and where
+   *  it is written. An object binds no entry of its own (its leaves do), so this is the only thing
+   *  that can answer "where is `costs` defined?" as opposed to `costs.total`. See {@link
+   *  findDefinition}; absent on every other kind of node. */
+  owner?: { key: string; defsite: DefSite; sourceKind: ScopeSourceKind; };
 }
 
 /** A `numbat` / `numbat-shared` block's scope, for evaluation: its statements (each a run-step,
@@ -224,11 +236,46 @@ export interface ImportScope {
   /** Vault path of the note the bindings were imported from. */
   notePath: string;
 
-  /** That note's `numbat-shared` bodies, replayed verbatim to define the bindings. */
+  /** That note's contributed code, replayed verbatim to define the bindings — its typed-property
+   *  chunks then its `numbat-shared` bodies. */
   chunks: string[];
 
-  /** The display entries parsed out of those chunks. */
+  /** Every display entry, flat: the evaluator probes these and {@link markShadows} orders them. */
   entries: ScopeEntry[];
+
+  /** The entries shown directly under the source note — its shared-block declarations and its
+   *  non-object properties. */
+  rootEntries: ScopeEntry[];
+
+  /** Imported object properties as sub-trees, mirroring how the note's own frontmatter objects
+   *  render. The same entry objects as {@link entries}, by reference. */
+  objectNodes: ScopeNode[];
+}
+
+/**
+ * One source note's imports as the bridge gathers them (properties/note.ts's `importGroups`), the
+ * input {@link buildImports} reads.
+ *
+ * `contribution` is how {@link chunks} splits, and is all-or-nothing on purpose: a caller that
+ * knows the property bindings knows the shared blocks too, and supplying one without the other
+ * would silently drop every row of the other kind. A caller that knows neither (the `.nbt` document
+ * tree, a test) omits it, and every chunk is read back as text as it always was.
+ */
+export interface ImportGroup {
+  /** Vault path of the note the bindings come from. */
+  notePath: string;
+
+  /** Everything that note contributes, in replay order — typed properties then shared blocks. */
+  chunks: string[];
+
+  /** The same code, split by where it came from. */
+  contribution?: {
+    /** The note's typed-property bindings, with the metadata their display rows need. */
+    properties: readonly PropertyBinding[];
+
+    /** The note's `numbat-shared` bodies, one chunk each. */
+    sharedChunks: readonly string[];
+  };
 }
 
 /** One user-prelude `.nbt` file's declarations. The prelude is loaded into every context, so its
@@ -359,13 +406,55 @@ function frontmatterRange(lines: string[]): { fromLine: number; toLine: number; 
   return null; // an opener that never closed
 }
 
-/** The imported bindings, grouped by source note, from the per-note chunks the bridge gathered
- *  (importGroups). Each chunk (a typed-property `let` or a shared block body) is split into
- *  statements; every declaration becomes a display entry. */
-function buildImports(groups: { notePath: string; chunks: string[]; }[]): ImportScope[] {
+/**
+ * The imported bindings, grouped by source note, from what the bridge gathered (importGroups).
+ *
+ * The two kinds of contribution are read differently, because only one of them can be:
+ *
+ *  - A **typed property** arrives with its binding metadata, so it becomes one entry per property
+ *    exactly as the note's own frontmatter does — an object contributing one row per *leaf*, under
+ *    a sub-tree named for the object. This matters beyond tidiness: an object property is emitted
+ *    as one `let` **per leaf**, each superseding the last (see properties/parse.ts's
+ *    `generationCode`), so reading the chunk text back would show a four-leaf object as four
+ *    identically-named rows with three of them struck through — the progressive build, which is an
+ *    implementation detail and not something to show a reader.
+ *  - A **shared block** is just code, so its declarations are still parsed out of the text.
+ */
+function buildImports(groups: readonly ImportGroup[]): ImportScope[] {
   return groups.map((group) => {
+    const rootEntries: ScopeEntry[] = [];
+    const objectNodes: ScopeNode[] = [];
     const entries: ScopeEntry[] = [];
-    for (const chunk of group.chunks) {
+
+    for (const binding of group.contribution?.properties ?? []) {
+      const entry: ScopeEntry = {
+        sourceKind: "import",
+        declKind: "let",
+        name: binding.name,
+        label: binding.key === binding.name ? binding.name : binding.key,
+        path: binding.path,
+        expr: binding.expr,
+        code: binding.code,
+        defs: binding.defs,
+        // Already defined by the chunk replay, so the value comes from probing the bound name —
+        // which for an object leaf is its dotted field path, and reads the finished object.
+        probe: "definition",
+        defsite: { notePath: group.notePath, line: null, ch: 0 },
+        shadowed: false,
+      };
+
+      entries.push(entry);
+      if (binding.path.length <= 1) {
+        rootEntries.push(entry);
+        continue;
+      }
+
+      importObjectNode(group.notePath, binding.path.slice(0, -1), objectNodes).entries.push(entry);
+    }
+
+    // Without the split (a group built by a caller that has no binding metadata — tests, and the
+    // `.nbt` document tree) every chunk is read as text, exactly as before.
+    for (const chunk of group.contribution?.sharedChunks ?? group.chunks) {
       const lines = chunk.split("\n");
       for (const statement of groupStatements(lines)) {
         // `codeLine`, as everywhere else: the declaration is read off the statement proper, never
@@ -374,13 +463,43 @@ function buildImports(groups: { notePath: string; chunks: string[]; }[]): Import
         const decl = scopeDeclaration(lines[statement.codeLine]);
 
         if (decl !== null) {
-          entries.push(declEntry("import", statement.text, decl, { notePath: group.notePath, line: null, ch: 0 }));
+          const entry = declEntry("import", statement.text, decl, { notePath: group.notePath, line: null, ch: 0 });
+          entries.push(entry);
+          rootEntries.push(entry);
         }
       }
     }
 
-    return { notePath: group.notePath, chunks: group.chunks, entries };
+    return { notePath: group.notePath, chunks: group.chunks, entries, rootEntries, objectNodes };
   });
+}
+
+/** The sub-tree node an imported object property's leaf belongs under, created on first use. Ids
+ *  carry the source note, so two imported notes with an object of the same name stay distinct. */
+function importObjectNode(notePath: string, path: string[], roots: ScopeNode[]): ScopeNode {
+  const parent = path.length === 1 ? { children: roots } : importObjectNode(notePath, path.slice(0, -1), roots);
+  const id = `import:${notePath}:${path.join(".")}`;
+  const known = parent.children.find((child) => child.id === id);
+  if (known !== undefined) {
+    return known;
+  }
+
+  const node: ScopeNode = {
+    id,
+    kind: "frontmatter-object",
+    label: path[path.length - 1],
+    badge: null,
+    range: null, // another note's frontmatter — no line in this document to map the caret to
+    entries: [],
+    skips: [],
+    children: [],
+    // The source note, with no line: the object's key sits in *its* frontmatter, which this tree
+    // never read. Enough for a definition jump to land on the note.
+    owner: { key: path.join("."), defsite: { notePath, line: null, ch: 0 }, sourceKind: "import" },
+  };
+
+  parent.children.push(node);
+  return node;
 }
 
 /**
@@ -439,6 +558,7 @@ function buildProperties(preamble: NotePreamble, lines: string[]): {
       entries: [],
       skips: [],
       children: [],
+      owner: { key, defsite: { notePath: null, line: site?.line ?? null, ch: site?.ch ?? 0 }, sourceKind: "property" },
     };
 
     byPath.set(key, node);
@@ -627,9 +747,9 @@ function buildNodes(
         label: importLabel(group.notePath),
         badge: null,
         range: null,
-        entries: group.entries,
+        entries: group.rootEntries,
         skips: [],
-        children: [],
+        children: group.objectNodes,
       })),
     });
   }
@@ -715,7 +835,7 @@ export function buildScopeTree(input: {
   lines: string[];
   config: InlineEvalConfig;
   preamble: NotePreamble;
-  importGroups: { notePath: string; chunks: string[]; }[];
+  importGroups: readonly ImportGroup[];
   preludeFiles?: PreludeFileLines[];
   /** `interpreterGeneration()`, folded into the tree's signature so a prelude edit or a change to
    *  the exchange rates invalidates cached values. Defaults to 0 for trees built in isolation
@@ -957,9 +1077,9 @@ export function findDefinition(
     return { defsite: entry.defsite, entry, where: SOURCE_LABEL[entry.sourceKind] };
   }
 
-  const node = findObjectNode(tree.nodes, `property:${probe}`) ?? findObjectNode(tree.nodes, `property:${name}`);
-  if (node !== null && node.range !== null) {
-    return { defsite: { notePath: null, line: node.range.fromLine, ch: 0 }, entry: null, where: "frontmatter" };
+  const owner = findObjectOwner(tree.nodes, probe) ?? findObjectOwner(tree.nodes, name);
+  if (owner !== null) {
+    return { defsite: owner.defsite, entry: null, where: SOURCE_LABEL[owner.sourceKind] };
   }
 
   return null;
@@ -986,19 +1106,29 @@ function pickBinding(candidates: readonly ScopeEntry[], line: number | null): Sc
   return from[from.length - 1];
 }
 
-/** The `frontmatter-object` node with `id`, searched depth-first (objects nest). */
-function findObjectNode(nodes: readonly ScopeNode[], id: string): ScopeNode | null {
-  for (const node of nodes) {
-    if (node.id === id && node.kind === "frontmatter-object") {
-      return node;
-    }
+/**
+ * The object property named `key` (dotted) — the note's own and an imported one alike, since an
+ * object binds no entry either way and only its group knows where it lives. The note's own wins
+ * over an import of the same name, matching the scope order every other lookup here follows.
+ *
+ * A site that could not be located at all (flow-style YAML in this note) is no answer, and is
+ * passed over so a same-named object elsewhere still can be.
+ */
+function findObjectOwner(nodes: readonly ScopeNode[], key: string): NonNullable<ScopeNode["owner"]> | null {
+  const found = collectObjectOwners(nodes, key);
+  return found.find((owner) => owner.sourceKind !== "import") ?? found[0] ?? null;
+}
 
-    const child = findObjectNode(node.children, id);
-    if (child !== null) {
-      return child;
-    }
-  }
-  return null;
+/** Every locatable object-property group named `key`, depth-first (objects nest). */
+function collectObjectOwners(nodes: readonly ScopeNode[], key: string): NonNullable<ScopeNode["owner"]>[] {
+  return nodes.flatMap((node) => {
+    const { owner } = node;
+    const here = owner !== undefined && owner.key === key
+        && (owner.defsite.notePath !== null || owner.defsite.line !== null)
+      ? [owner]
+      : [];
+    return [...here, ...collectObjectOwners(node.children, key)];
+  });
 }
 
 // RENDERING HELPERS

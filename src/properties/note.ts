@@ -15,14 +15,17 @@ import {
   type Numbat,
 } from "../interpreter/numbat";
 import type SymbatPlugin from "../main";
+import type { ImportGroup } from "../scope/model";
 import {
   bindingKey,
   derivePreamble,
   EMPTY_PREAMBLE,
   frontmatterBody,
   type NotePreamble,
+  PLAIN_ALL,
   PLAIN_NONE,
   type PlainBindings,
+  type PropertyBinding,
 } from "./parse";
 
 export { bindingKey, EMPTY_PREAMBLE, frontmatterBody, type NotePreamble };
@@ -127,9 +130,19 @@ function isReservedName(name: string): boolean {
  *  position). */
 const NON_PROPERTY_KEYS = new Set(["position"]);
 
-/** {@link derivePreamble} over an already-parsed frontmatter record. `sourcePath` namespaces the
- *  struct types an object property generates, so a note and the notes it imports never define the
- *  same struct name twice. */
+/**
+ * {@link derivePreamble} over an already-parsed frontmatter record. `sourcePath` namespaces the
+ * struct types an object property generates, so a note and the notes it imports never define the
+ * same struct name twice.
+ *
+ * The plain sub-toggles are about *top-level* properties — how much of the frontmatter lands in the
+ * note's namespace — so they gate whether an object binds at all, and not which of its fields come
+ * with it (`plainNested: PLAIN_ALL`). A field is part of a value that is being bound anyway, and a
+ * typed leaf may read a plain sibling by its dotted name (`costs.total = costs.materials * 1.2`);
+ * dropping it withholds no name, it hands back a different object than the one that was written and
+ * breaks the sibling. This is the same reading a note's exports get — see {@link
+ * importedPropsChunks}, which pairs the identical nested rule with a top-level {@link PLAIN_NONE}.
+ */
 function preambleFromRecord(
   plugin: SymbatPlugin,
   record: Record<string, unknown>,
@@ -143,6 +156,7 @@ function preambleFromRecord(
     isNumbatTyped: (key) => isNumbatTypedKey(plugin.app, key),
     isReserved: isReservedName,
     plain: plainBindings(plugin),
+    plainNested: PLAIN_ALL,
     assignedType: (key) => assignedPropertyType(plugin.app, key),
     namespace: sourcePath ?? "",
   });
@@ -167,11 +181,18 @@ const SCOPE_SEPARATOR = String.fromCharCode(0);
 // contributed chunks (typed properties first, then shared blocks), shared by the flattened {@link
 // importChunksFor} and the per-note {@link importGroups}. The moduleGraph is captured optionally so
 // a re-resolve of an already-emitted note stays a no-throw even if the graph is gone.
-function buildImportResolver(plugin: SymbatPlugin): ImportResolver {
+function buildImportResolver(plugin: SymbatPlugin): {
+  resolver: ImportResolver;
+  /** Each visited note's contribution, kept as it is built so {@link importGroups} needs no second
+   *  pass — `collectImports` calls `node` exactly once per note it emits, and deriving a preamble
+   *  is the expensive half of that. Populated as `node` is called. */
+  contributions: Map<string, ImportGroup>;
+} {
   const { app } = plugin;
   const graph = plugin.moduleGraph;
+  const contributions = new Map<string, ImportGroup>();
 
-  return {
+  const resolver: ImportResolver = {
     resolve: (linkpath, fromId) => app.metadataCache.getFirstLinkpathDest(linkpath, fromId)?.path ?? null,
     node: (id) => {
       const frontmatter = app.metadataCache.getCache(id)?.frontmatter;
@@ -179,11 +200,21 @@ function buildImportResolver(plugin: SymbatPlugin): ImportResolver {
 
       // A target exports its typed properties (never its untyped numbers) and its shared blocks —
       // properties first, matching a note's own replay order.
-      const propsChunks = frontmatter === undefined ? [] : importedPropsChunks(plugin, frontmatter, id);
-      const chunks = [...propsChunks, ...(graph?.sharedBlocks(id) ?? [])];
+      const props = frontmatter === undefined
+        ? { chunks: [], bindings: [] }
+        : importedPropsChunks(plugin, frontmatter, id);
+      const sharedChunks = graph?.sharedBlocks(id) ?? [];
+      const chunks = [...props.chunks, ...sharedChunks];
+      contributions.set(id, {
+        notePath: id,
+        chunks,
+        contribution: { properties: props.bindings, sharedChunks },
+      });
       return { uses, chunks };
     },
   };
+
+  return { resolver, contributions };
 }
 
 /**
@@ -202,7 +233,7 @@ function importChunksFor(plugin: SymbatPlugin, sourcePath: string, record: Recor
     return [];
   }
 
-  return collectImports(rootUses, sourcePath, buildImportResolver(plugin)).chunks;
+  return collectImports(rootUses, sourcePath, buildImportResolver(plugin).resolver).chunks;
 }
 
 /** The note's cross-note imports grouped by source note, in the same dependency order {@link
@@ -214,7 +245,7 @@ export function importGroups(
   plugin: SymbatPlugin,
   sourcePath: string,
   record: Record<string, unknown>,
-): { notePath: string; chunks: string[]; }[] {
+): ImportGroup[] {
   const graph = plugin.moduleGraph;
   if (!plugin.settings.noteImports || graph === undefined) {
     return [];
@@ -225,24 +256,33 @@ export function importGroups(
     return [];
   }
 
-  const resolver = buildImportResolver(plugin);
+  const { resolver, contributions } = buildImportResolver(plugin);
 
   // `order` visits each imported note once, deepest dependency first (matching the flattened chunk
-  // order); re-resolving each yields that note's own chunks.
-  return collectImports(rootUses, sourcePath, resolver).order.map((notePath) => ({
-    notePath,
-    chunks: resolver.node(notePath)?.chunks ?? [],
-  }));
+  // order), and the walk already recorded what each one contributed — a note in `order` is one
+  // `node` returned for, so the lookup always hits.
+  return collectImports(rootUses, sourcePath, resolver).order
+    .map((notePath) => contributions.get(notePath))
+    .filter((group): group is ImportGroup => group !== undefined);
 }
 
-/** The `let` statements for a target note's numbat-*typed* properties (only — `bindNumbers: false`,
- *  so incidental numeric metadata never leaks into an importer), each its own chunk, skipping
- *  reserved/duplicate/unusable names as everywhere else. */
+/**
+ * The `let` statements for a target note's numbat-*typed* properties (only — `PLAIN_NONE`, so
+ * incidental numeric metadata never leaks into an importer), each its own chunk, skipping
+ * reserved/duplicate/unusable names as everywhere else.
+ *
+ * `PLAIN_NONE` applies to the *top level* only. An object property that exports exports whole
+ * (`plainNested: PLAIN_ALL`), because its fields are not separate bindings that could be withheld
+ * one by one: a typed leaf may read a plain sibling by its dotted name (`costs.total =
+ * costs.materials * 1.2`), and handing the importer an object with that field missing breaks the
+ * sibling rather than keeping a name private. An object with no typed leaf at all is still
+ * private — that is the gate `plainNested` turns on.
+ */
 function importedPropsChunks(
   plugin: SymbatPlugin,
   frontmatter: Record<string, unknown>,
   notePath: string,
-): string[] {
+): { chunks: string[]; bindings: PropertyBinding[]; } {
   const record = Object.fromEntries(
     Object.entries(frontmatter).filter(([key]) => !NON_PROPERTY_KEYS.has(key)),
   );
@@ -251,11 +291,18 @@ function importedPropsChunks(
     isNumbatTyped: (key) => isNumbatTypedKey(plugin.app, key),
     isReserved: isReservedName,
     plain: PLAIN_NONE,
+    plainNested: PLAIN_ALL,
     assignedType: (key) => assignedPropertyType(plugin.app, key),
     namespace: notePath,
   });
 
-  return preamble.bindings.flatMap((binding) => [...binding.defs, binding.code]);
+  return {
+    chunks: preamble.bindings.flatMap((binding) => [...binding.defs, binding.code]),
+    // Kept beside the chunks so the scope inspector can show an imported object the way a local one
+    // reads — one row per leaf — instead of re-parsing the chunk text and finding one anonymous
+    // `let` per generation of the object's progressive build. See scope/model.ts's buildImports.
+    bindings: preamble.bindings,
+  };
 }
 
 /** Attach the note's cross-note imports to its preamble (folding the import chunks into {@link

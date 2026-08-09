@@ -162,13 +162,23 @@ function functionSignature(run: LineInterpret, name: string): ScopeValue {
   return typeOnly(signature === null ? null : `${COLON_SPAN} ${signature}`);
 }
 
-/** The value of an already-defined binding (an import chunk replayed, or a prelude loaded into the
- *  context): probe the bound name. A `fn` carries its signature instead of a value; a `dimension`
- *  is neither (probing one errors), so it shows by name alone. No type fragment for the rest
- *  (re-running the `let` to read the echo would clash with the already-defined name). */
-function probeBoundEntry(run: LineInterpret, entry: ScopeEntry): void {
+/**
+ * The value of an already-defined binding (an import chunk replayed, or a prelude loaded into the
+ * context): probe the bound name. A `fn` carries its signature instead of a value; a `dimension` is
+ * neither (probing one errors), so it shows by name alone. No type fragment for the rest
+ * (re-running the `let` to read the echo would clash with the already-defined name).
+ *
+ * `unbound` supplies what to show when the name does not answer at all. That is not the same as
+ * having no value: it means the code meant to define it never ran cleanly, and the reader is owed
+ * the reason. Imports pass the diagnostic from the chunk that failed; a prelude entry passes
+ * nothing, since its file's own editor reports its errors.
+ */
+function probeBoundEntry(run: LineInterpret, entry: ScopeEntry, unbound?: () => ScopeValue): void {
+  const missing = (): ScopeValue => unbound?.() ?? NONE_VALUE;
+
   if (entry.declKind === "fn") {
-    entry.value = functionSignature(run, entry.name);
+    const signature = functionSignature(run, entry.name);
+    entry.value = signature.type === null ? missing() : signature;
     return;
   }
 
@@ -179,12 +189,37 @@ function probeBoundEntry(run: LineInterpret, entry: ScopeEntry): void {
 
   const bound = run(entry.name);
   if (bound.isError) {
-    entry.value = NONE_VALUE;
+    entry.value = missing();
     return;
   }
 
   const result = splitInterpretOutput(bound.output).result;
   entry.value = result !== null ? valueResult(result, null) : NONE_VALUE;
+}
+
+/**
+ * Why an imported binding is not there: the diagnostic from the chunk that was supposed to define
+ * it, or nothing when no chunk failed (a name that simply has no probeable value).
+ *
+ * A property chunk *is* the entry's `code`, so it is found directly. A shared block is one chunk of
+ * many statements, so the entry's statement is looked for inside each failed chunk — Numbat rejects
+ * a whole multi-statement program on any error, so one bad line takes its whole block with it, and
+ * that error is the honest answer for every declaration in it.
+ */
+function unboundImport(errors: Map<string, string>, chunks: readonly string[], entry: ScopeEntry): ScopeValue {
+  const direct = errors.get(entry.code);
+  if (direct !== undefined) {
+    return errorValue(direct);
+  }
+
+  for (const chunk of chunks) {
+    const error = errors.get(chunk);
+    if (error !== undefined && chunk.includes(entry.code)) {
+      return errorValue(error);
+    }
+  }
+
+  return NONE_VALUE;
 }
 
 // EVALUATING THE TREE
@@ -213,13 +248,23 @@ export function evaluateScopeTree(makeContext: ScopeContextFactory, tree: ScopeT
   // Phase A — imports, properties, and the (already-loaded) user prelude.
   const base = makeContext();
   try {
+    // Each chunk's failure is kept, not discarded: a binding whose chunk did not run has no value
+    // to probe, and showing it blank is what makes a broken import unreadable — the row is there,
+    // the name is unknown, and nothing says why.
+    const chunkErrors = new Map<string, string>();
     for (const chunk of importChunks) {
-      base.run(chunk);
+      const out = base.run(chunk);
+      if (out.isError) {
+        const summary = errorSummary(out.output);
+        if (summary !== null) {
+          chunkErrors.set(chunk, summary);
+        }
+      }
     }
 
     for (const group of tree.imports) {
       for (const entry of group.entries) {
-        probeBoundEntry(base.run, entry);
+        probeBoundEntry(base.run, entry, () => unboundImport(chunkErrors, group.chunks, entry));
       }
     }
 

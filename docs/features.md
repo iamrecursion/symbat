@@ -590,7 +590,10 @@ Two guardrails: a property whose (sanitized — spaces and punctuation become `_
 an existing Numbat name, a unit like `m` or `hours`, a function, a dimension, or a variable like
 `pi`, is **skipped with an error** rather than shadowing it, since e.g. binding `m` would quietly
 change what `5 m` means everywhere; and a botched expression simply fails its own binding (shown at
-the property) without breaking the properties after it.
+the property) without breaking the properties after it. The one exception is _within a single
+object_: each of its leaves rebuilds the object from the one before, so a leaf that fails leaves the
+object frozen at the fields bound above it, and the leaves below it cannot be reached through the
+object until it is fixed. Properties outside that object are unaffected.
 
 A `numbat-use` frontmatter property provides **cross-note imports** where naming other notes as
 links (`numbat-use: "[[Constants]]"`, or a list) imports those notes into this one's scope: each
@@ -604,6 +607,19 @@ typed properties export like any other (a used note's `rates.vat` arrives as `ra
 `numbat-use` itself is read at the top level only. Edits to an imported note re-evaluate the notes
 that use it. One broken import is contained, and does not sink the others.
 
+Both rules — the sub-toggles for plain values, and "untyped values stay private" on export — are
+about _top-level_ properties, so an **object binds whole**. Once anything under it is wanted, its
+plain leaves come along as fields, because they are part of the value rather than bindings of their
+own — and a leaf may well read one (`Current Year` is a plain number, `Year Delta` is the Numbat
+expression `(world.Current_Year - …)`). Withholding a field there would withhold no name; it would
+hand back a different object than the one that was written, and break every sibling reading it.
+
+What "wanted" means is whatever the top level would have bound: in the note itself, a leaf that is
+Numbat-typed or of a plain kind you left switched on; on export, a Numbat-typed leaf only. So an
+object of nothing but text still stays out of a namespace that binds no text, ordinary metadata is
+still not exported, and an object that binds at all binds the shape you wrote. The same holds for an
+array — it binds when a wanted leaf sits inside it, item types included (`legs.#.distance`).
+
 All three behaviors live under the **Note properties** settings section: a master toggle, one
 sub-toggle per kind of plain value (numbers, text, dates, checkboxes), and the imports sub-toggle.
 
@@ -615,7 +631,10 @@ inspector** command, that shows, as a collapsible tree, every binding the active
 - The definitions in your own `.nbt` **user prelude** files (one group per file, in the order they
   load), so you can see what your custom units, constants, and functions resolve to. It sits at the
   top: it is the foundation everything below is layered on.
-- The bindings pulled in by **imported** `numbat-use`, grouped under each source note.
+- The bindings pulled in by **imported** `numbat-use`, grouped under each source note — an imported
+  object property nested under its own name, one row per leaf, the way the note's own frontmatter
+  objects read. An imported binding whose code failed to run shows that error, rather than sitting
+  there blank.
 - The note's Numbat-typed and plain-number **frontmatter properties**, plus a **Skipped** group
   listing any property that did not bind and why (a reserved name, a duplicate, …).
 - The declarations in each **`numbat` / `numbat-shared` block**, labeled with the block's line range

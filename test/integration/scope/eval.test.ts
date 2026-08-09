@@ -186,6 +186,56 @@ test("user prelude bindings resolve; fn/dimension show no value", { skip }, asyn
   assert.equal(byNamePrelude.get("Frq")?.value?.type, null);
 });
 
+// An imported binding is probed by name, so a chunk that never ran leaves the name unknown and the
+// probe simply fails. Showing that blank is what makes a broken import unreadable — the row is
+// there, and nothing says why — so the chunk's own diagnostic is kept and shown instead.
+test("an import whose chunk failed shows the chunk's diagnostic, not a blank row", { skip }, async () => {
+  const mod = await loadNumbat();
+  const tree = buildScopeTree({
+    file: "N.md",
+    lines: ["prose"],
+    config,
+    preamble: derivePreamble({}, { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL }),
+    importGroups: [{
+      notePath: "Constants.md",
+      // A property chunk that fails on its own, and a shared block that one bad statement takes
+      // down whole — Numbat rejects a multi-statement program on any error, so `fine` never
+      // defines.
+      chunks: ["let broken = (abs(-5)", "let fine = 2 m\nlet alsoBroken = 3 +"],
+    }],
+  });
+  evaluateScopeTree(makeContextFactory(mod), tree);
+
+  const entries = byName(tree.imports[0].entries);
+  assert.deepEqual([...entries.keys()], ["broken", "fine", "alsoBroken"]);
+
+  // The property chunk *is* the entry's code, so its error is found directly.
+  assert.equal(entries.get("broken")?.value?.kind, "error");
+  assert.equal((entries.get("broken")?.value?.errorText ?? "").length > 0, true);
+
+  // A shared block's statements are looked for inside the failed chunk: the error that sank the
+  // block is the honest answer for every declaration in it, `fine` included.
+  assert.equal(entries.get("fine")?.value?.kind, "error");
+  assert.equal(entries.get("alsoBroken")?.value?.kind, "error");
+});
+
+test("an import that ran shows its value, and an unprobeable one stays blank", { skip }, async () => {
+  const mod = await loadNumbat();
+  const tree = buildScopeTree({
+    file: "N.md",
+    lines: ["prose"],
+    config,
+    preamble: derivePreamble({}, { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL }),
+    importGroups: [{ notePath: "Constants.md", chunks: ["let grav = (9.81 m/s^2)\ndimension Frq = 1 / Time"] }],
+  });
+  evaluateScopeTree(makeContextFactory(mod), tree);
+
+  const entries = byName(tree.imports[0].entries);
+  assert.equal(plain(entries.get("grav")?.value?.valueHtml ?? "").includes("9.81"), true);
+  // No chunk failed, so a name with nothing to probe is "none" rather than an invented error.
+  assert.equal(entries.get("Frq")?.value?.kind, "none");
+});
+
 test("a block's function shows its concrete signature; a broken one shows its error", { skip }, async () => {
   const mod = await loadNumbat();
   const lines = [

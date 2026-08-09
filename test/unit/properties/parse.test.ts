@@ -10,6 +10,7 @@ import {
   MAX_PROPERTY_DEPTH,
   PLAIN_ALL,
   PLAIN_NONE,
+  type PlainBindings,
   type PreambleRules,
   propertyValueAt,
   sanitizeIdentifier,
@@ -522,6 +523,157 @@ test("bindNumbers off suppresses nested numbers too, so no struct is built", () 
   const preamble = derivePreamble({ costs: { materials: 500 } }, rules({ plain: PLAIN_NONE }));
   assert.equal(preamble.bindings.length, 0);
   assert.equal(preamble.source, "");
+});
+
+// --- plainNested (what a note exports to its importers) ------------------------
+
+// `nb_` marks a numbat-typed leaf at whatever depth it sits, so a nested key (`costs.nb_total`)
+// reads the same way the top-level default does.
+const nbLeaf = (key: string) => key.split(".").some((segment) => segment.startsWith("nb_"));
+
+// The export rule: nothing untyped binds on its own, but an object that binds at all binds whole,
+// because its typed leaves may read a plain sibling by its dotted name.
+const exportRules = (over: Partial<PreambleRules> = {}): PreambleRules =>
+  rules({ isNumbatTyped: nbLeaf, plain: PLAIN_NONE, plainNested: PLAIN_ALL, ...over });
+
+test("plainNested keeps a plain leaf inside an object the top-level rule would drop", () => {
+  const preamble = derivePreamble(
+    { weight: 80.5, costs: { materials: 500, nb_total: "costs.materials * 1.2" } },
+    exportRules(),
+  );
+
+  // The lone plain property is still private; the one inside the exported object is not.
+  assert.deepEqual(preamble.bindings.map((b) => b.key), ["costs.materials", "costs.nb_total"]);
+  assert.equal(preamble.bindings[0].kind, "number");
+});
+
+test("plainNested gates on a typed leaf, so an all-plain object stays private", () => {
+  const preamble = derivePreamble(
+    { meta: { author: "ara", revision: 3 }, costs: { nb_total: "5 €" } },
+    exportRules(),
+  );
+
+  assert.deepEqual(preamble.bindings.map((b) => b.key), ["costs.nb_total"]);
+  // Nothing under `meta` was asked for, so nothing about it is reported either.
+  assert.deepEqual(preamble.skips, []);
+});
+
+test("plainNested's gate sees a typed leaf at any depth, and through an array's item key", () => {
+  const deep = derivePreamble({ a: { b: { nb_c: "1 m" } } }, exportRules());
+  assert.deepEqual(deep.bindings.map((b) => b.key), ["a.b.nb_c"]);
+
+  // `legs.#.distance` is where a type menu applied to array items lives; the object holding the
+  // array exports on the strength of it.
+  const arrayed = derivePreamble(
+    { trip: { legs: [{ distance: "5 km" }, { distance: "10 km" }] } },
+    exportRules({ isNumbatTyped: (key) => key === "trip.legs.#.distance" }),
+  );
+  assert.deepEqual(arrayed.bindings.map((b) => b.key), ["trip.legs"]);
+});
+
+test("plainNested reaches an array's items, which sit below the top level too", () => {
+  // The array is typed by its item key, so it binds; its untyped sibling field rides along inside
+  // the element struct rather than being dropped out of it.
+  const preamble = derivePreamble(
+    { legs: [{ nb_distance: "5 km", label: "first" }] },
+    exportRules({ isNumbatTyped: (key) => key === "legs.#.nb_distance" }),
+  );
+
+  assert.deepEqual(preamble.bindings.map((b) => b.key), ["legs"]);
+  assert.equal(preamble.bindings[0].code.includes("\"first\""), true, "the plain field is in the element");
+});
+
+test("plainNested keeps an empty leaf whose type menu names a type", () => {
+  // An empty property carries no value to read a kind off, so only its assigned type says a Numbat
+  // value was wanted there (declaredKind). That reading has to happen at the depth the property
+  // sits at like every other: dropping the hole would export `costs` without a `materials` field,
+  // and the sibling that reads it takes the whole object down with it.
+  const preamble = derivePreamble(
+    { costs: { materials: null, nb_total: "costs.materials * 1.2" } },
+    exportRules({ assignedType: (key) => key === "costs.materials" ? "number" : null }),
+  );
+
+  assert.deepEqual(preamble.bindings.map((b) => b.key), ["costs.materials", "costs.nb_total"]);
+  assert.equal(preamble.bindings[0].kind, "number");
+});
+
+test("plainNested's gate reaches exactly as deep as the binding walk binds", () => {
+  // The gate and the walk must agree about MAX_PROPERTY_DEPTH: a gate that gave up first would drop
+  // an exportable object with no skip to say so. Walk out past the limit from both sides.
+  for (let wrappers = 1; wrappers <= MAX_PROPERTY_DEPTH + 2; wrappers += 1) {
+    let record: Record<string, unknown> = { nb_x: "1 m" };
+    for (let level = wrappers; level >= 1; level -= 1) {
+      record = { [`L${level}`]: record };
+    }
+
+    const gated = derivePreamble(record, exportRules()).bindings.map((b) => b.key);
+    const ungated = derivePreamble(record, rules({ isNumbatTyped: nbLeaf, plain: PLAIN_NONE })).bindings.map((b) =>
+      b.key
+    );
+    assert.deepEqual(gated, ungated, `nesting ${wrappers} deep`);
+  }
+});
+
+test("plainNested's gate terminates on a cyclic YAML anchor", () => {
+  const cyclic: Record<string, unknown> = { nb_x: "1 m" };
+  cyclic.self = cyclic;
+
+  assert.deepEqual(derivePreamble({ root: cyclic }, exportRules()).bindings.map((b) => b.key), ["root.nb_x"]);
+});
+
+// The note's own reading pairs the same nested rule with the reader's settings at the top level, so
+// the gate has to ask what those settings would have bound rather than "is anything typed".
+test("plainNested's gate follows the top-level rule, not just the type menu", () => {
+  const numbersOff = { numbers: false, text: true, dates: true, booleans: true };
+  const textOff = { numbers: true, text: false, dates: true, booleans: true };
+  const keys = (record: Record<string, unknown>, plain: PlainBindings) =>
+    derivePreamble(record, rules({ isNumbatTyped: nbLeaf, plain, plainNested: PLAIN_ALL })).bindings.map((b) => b.key);
+
+  // Nothing under `meta` is typed, but a text leaf is enough where text binds — and not where it
+  // does not, which is what keeps the sub-toggles meaningful.
+  assert.deepEqual(keys({ meta: { author: "ara" } }, numbersOff), ["meta.author"]);
+  assert.deepEqual(keys({ meta: { author: "ara" } }, textOff), []);
+
+  // Once it binds, it binds whole: the kind toggles gate the object, never its fields.
+  assert.deepEqual(keys({ meta: { revision: 3, author: "ara" } }, textOff), ["meta.revision", "meta.author"]);
+
+  // The sub-toggles still apply in full to a top-level property.
+  assert.deepEqual(keys({ weight: 80.5, note: "hi" }, numbersOff), ["note"]);
+  assert.deepEqual(keys({ weight: 80.5, note: "hi" }, textOff), ["weight"]);
+});
+
+test("plainNested keeps a typed leaf's plain sibling even with that kind switched off", () => {
+  // The bug this pairing exists to prevent, in the note itself: `costs.total` reads a number the
+  // reader asked not to have bound *as a property*, and without the field the object breaks.
+  const preamble = derivePreamble(
+    { costs: { materials: 500, nb_total: "costs.materials * 1.2" } },
+    rules({
+      isNumbatTyped: nbLeaf,
+      plain: { numbers: false, text: false, dates: false, booleans: false },
+      plainNested: PLAIN_ALL,
+    }),
+  );
+
+  assert.deepEqual(preamble.bindings.map((b) => b.key), ["costs.materials", "costs.nb_total"]);
+});
+
+test("without plainNested one rule applies at every depth, as it always did", () => {
+  const record = { costs: { materials: 500, nb_total: "costs.materials * 1.2" } };
+
+  // No nested rule set: PLAIN_NONE drops the plain leaf wherever it sits, and there is no gate.
+  assert.deepEqual(
+    derivePreamble(record, rules({ isNumbatTyped: nbLeaf, plain: PLAIN_NONE })).bindings.map((b) => b.key),
+    ["costs.nb_total"],
+  );
+  assert.deepEqual(
+    derivePreamble(record, rules({ isNumbatTyped: nbLeaf, plain: PLAIN_ALL })).bindings.map((b) => b.key),
+    ["costs.materials", "costs.nb_total"],
+  );
+  // …and an all-plain object still binds, which is what the gate exists to prevent on export.
+  assert.deepEqual(
+    derivePreamble({ meta: { author: "ara" } }, rules({ plain: PLAIN_ALL })).bindings.map((b) => b.key),
+    ["meta.author"],
+  );
 });
 
 test("nulls, empty objects and unusable shapes contribute nothing and do not throw", () => {

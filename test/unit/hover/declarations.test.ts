@@ -78,6 +78,43 @@ test("nothing is declared outside a declaration, however near", () => {
   assert.equal(declared(10, "total"), null);
 });
 
+test("a `where` local is declared by the function whose body binds it", () => {
+  // A local exists only inside its function, so no context has heard of it either — and after the
+  // grouper learned to keep the clause with its definition, this is a name the completer offers.
+  const local = [
+    "let r = 9",
+    "fn price_level(local_price: Money, bench_price: Money) -> Scalar = r",
+    "  where r: Scalar = local_price / bench_price",
+    "  and half = r / 2",
+  ];
+  assert.deepEqual(declaredSymbolAt(local, 2, "r"), {
+    kind: "local",
+    name: "r",
+    type: "Scalar",
+    owner: "price_level",
+  });
+  assert.deepEqual(declaredSymbolAt(local, 3, "half"), {
+    kind: "local",
+    name: "half",
+    type: null,
+    owner: "price_level",
+  });
+  // The parameters are still parameters, and the outer `r` on its own line is untouched.
+  assert.equal(declaredSymbolAt(local, 2, "local_price")?.kind, "parameter");
+  assert.equal(declaredSymbolAt(local, 0, "r"), null);
+});
+
+test("a name bound in a `then`/`else` body is still inside its declaration", () => {
+  // `then` and `else` open a continuation line of their own, as `where` does.
+  const branching = ["fn sign(a: Scalar) =", "  if a > 0", "  then a", "  else -a"];
+  assert.deepEqual(declaredSymbolAt(branching, 3, "a"), {
+    kind: "parameter",
+    name: "a",
+    type: "Scalar",
+    owner: "sign",
+  });
+});
+
 test("a decorator on the declaration's own line is stepped over, parens in its text and all", () => {
   // Without this, a decorated `fn` is not recognized as the enclosing declaration, and a parameter
   // hover falls through to whatever outer binding happens to share the name.

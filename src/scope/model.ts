@@ -310,9 +310,14 @@ export interface ScopeTree {
 // ================================================================================================
 
 /** The right-hand side of a `let` statement, for display — the text past the first `=`, trimmed.
- *  Falls back to the whole statement when there is no `=`. */
+ * Falls back to the whole statement when there is no `=`.
+ *
+ * A statement is not always one line: it carries any decorators written above the declaration, so
+ * the `=` is sought in code rather than in a string a decorator's own text may hold
+ * (`@description("x = 5")`). Blanking preserves length, so the index is still an index of
+ * `statement`. */
 function letRhs(statement: string): string {
-  const eq = statement.indexOf("=");
+  const eq = blankStrings(statement).indexOf("=");
   return eq === -1 ? statement.trim() : statement.slice(eq + 1).trim();
 }
 

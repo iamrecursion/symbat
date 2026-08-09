@@ -130,6 +130,38 @@ export function decoratorInfo(name: string, description: string): CompletionInfo
   };
 }
 
+/** The label each kind of declared name is carded under, spelled as the card shows it. */
+const DECLARED_LABEL = {
+  parameter: "Parameter",
+  field: "Field",
+  local: "Local",
+  "type parameter": "Type parameter",
+} as const;
+
+/**
+ * A card for a name its own declaration introduces — a parameter, a `where`/`and` local, a struct's
+ * field, a type parameter. Like {@link decoratorInfo}, the text comes from the source rather than
+ * from the interpreter: no context has heard of these, and an outer binding that happens to share
+ * the name would answer in their place. The declared type is passed separately, as {@link
+ * declaredTypeHtml}, so it lands in the `Type:` field {@link formatDocBody} splices in.
+ *
+ * Shared by the hover card (hover/content.ts) and the completion popover, which describe the same
+ * thing and should say it the same way.
+ */
+export function declaredInfo(
+  kind: keyof typeof DECLARED_LABEL,
+  name: string,
+  owner: string | null,
+): CompletionInfo {
+  return describedInfo(DECLARED_LABEL[kind], name, null, owner);
+}
+
+/** A declared type as it is written, rendered as a type identifier so it colors like one (it is
+ *  source text, not formatter output). */
+export function declaredTypeHtml(type: string): string {
+  return `<span class="numbat-type-identifier">${escapeHtml(type)}</span>`;
+}
+
 /**
  * Format a parsed `print_info` body for the documentation popup:
  *

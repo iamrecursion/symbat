@@ -251,6 +251,23 @@ test("a decorated declaration is listed, and its defsite is the declaration line
   assert.match(block?.entries[0].code ?? "", /^@description/);
 });
 
+test("a decorated let's expression is the binding's, not one written inside a decorator", () => {
+  // The entry's `expr` is what the inspector evaluates to show the binding's value, and the
+  // statement now carries the decorators above it — so an `=` inside a decorator's own text must
+  // not be taken for the binding's, or the value shown is an error.
+  const lines = [
+    "```numbat-shared",
+    "@description(\"about 5 = five\")",
+    "let x = 5 m",
+    "@name(\"Widget\")",
+    "unit widget = 3 m",
+    "```",
+  ];
+  const tree = buildScopeTree({ file: "N.md", lines, config, preamble: EMPTY_PREAMBLE, importGroups: [] });
+  const block = tree.nodes.find((n) => n.kind === "block");
+  assert.deepEqual(block?.entries.map((e) => [e.name, e.expr]), [["x", "5 m"], ["widget", "3 m"]]);
+});
+
 test("scopeDeclaration steps over decorators on the declaration's own line", () => {
   assert.deepEqual(scopeDeclaration("@metric_prefixes unit foo = 5 m"), { keyword: "unit", name: "foo" });
   // A paren inside the decorator's own text does not end the prefix early — `@example` carries code

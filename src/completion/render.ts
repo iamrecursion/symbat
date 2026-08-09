@@ -22,6 +22,8 @@ const CATEGORY_LABEL: Record<ExprCategory, string> = {
   type: "type",
   keyword: "keyword",
   field: "field",
+  parameter: "parameter",
+  local: "local",
   decorator: "decorator",
 };
 
@@ -36,6 +38,8 @@ const CATEGORY_CLASS: Record<ExprCategory, string> = {
   type: "numbat-type-identifier",
   keyword: "numbat-keyword",
   field: "numbat-identifier",
+  parameter: "numbat-identifier",
+  local: "numbat-identifier",
   decorator: "numbat-decorator",
 };
 

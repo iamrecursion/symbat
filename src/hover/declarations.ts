@@ -1,5 +1,5 @@
-// Names the *source* declares but the interpreter cannot be asked about: a function's parameters, a
-// struct's fields, a declaration's type parameters.
+// Names the *source* declares but the interpreter cannot be asked about: a function's parameters
+// and its `where`/`and` locals, a struct's fields, a declaration's type parameters.
 //
 // `print_info` and `type()` answer for things that exist in a context — bindings, units,
 // dimensions. A parameter exists only inside its function's body, a field only inside its struct's
@@ -7,16 +7,22 @@
 // is right there in the text: the declaration that introduced it, a few lines up at most. This
 // module reads it back out.
 //
-// Pure (no Obsidian, CodeMirror, or wasm imports), like completion/expressions.ts, whose
-// `typeVariablesInScopeAt` does the same job for type parameters and is reused here.
+// The reading itself is the completer's (completion/expressions.ts, whose `enclosingDeclarationAt`,
+// `declaredNamesIn` and `typeParametersOf` answer the same three questions for the completion
+// popover) — so a name the completer offers inside a declaration is one the hover can describe, and
+// the two cannot disagree about how far the declaration reaches.
 
-import { declarationStillOpen, typeVariablesInScopeAt } from "../completion/expressions";
-import { blankStrings } from "../evaluation/inlay-parse";
+import {
+  type DeclaredName,
+  declaredNamesIn,
+  enclosingDeclarationAt,
+  typeParametersOf,
+} from "../completion/expressions";
 
 /** What a declaration says about one of the names it introduces. */
 export interface DeclaredSymbol {
   /** What the declaration introduces it as — shown verbatim as the card's label. */
-  kind: "parameter" | "field" | "type parameter";
+  kind: DeclaredName["kind"] | "type parameter";
 
   /** The name as written in the declaration. */
   name: string;
@@ -25,98 +31,40 @@ export interface DeclaredSymbol {
    *  gives none. */
   type: string | null;
 
-  /** The `fn` / `struct` that declares it, when it has a name. */
-  owner: string | null;
+  /** The `fn` / `struct` that declares it. */
+  owner: string;
 }
-
-/** A declaration opener, with the keyword and the declared name, past any decorators written on the
- *  same line (`@description("…") fn f(x) = …`). */
-const DECLARATION = /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(fn|struct)\s+([\p{L}_][\p{L}\p{N}_]*)/u;
-
-/** How far back a declaration's header can reasonably sit from the line using one of its names — a
- *  long multi-line signature and body, but not the whole note. */
-const MAX_LOOKBACK = 60;
 
 /**
  * What `name`, used on 0-indexed `line` of `lines`, is declared as — or `null` when no enclosing
  * `fn`/`struct` declares it.
  *
  * The enclosing declaration is the nearest `fn`/`struct` at or above the line whose body has not
- * closed before it. Only the declaration's *header* is searched (its parameter list, or a struct's
- * field list), so a local name that merely appears in a body is not mistaken for a parameter.
+ * closed before it. Only the names that declaration *introduces* are answered for — its parameter
+ * list, its `where`/`and` bindings, or a struct's field list — so an ordinary local use is not
+ * mistaken for one of them.
  */
 export function declaredSymbolAt(
   lines: readonly string[],
   line: number,
   name: string,
 ): DeclaredSymbol | null {
-  const opener = enclosingDeclaration(lines, line);
-  if (opener === null) {
+  const before = lines.slice(0, line + 1).join("\n");
+  const declaration = enclosingDeclarationAt(before);
+  if (declaration === null) {
     return null;
   }
 
-  const { keyword, owner, startLine } = opener;
-  const header = lines.slice(startLine, line + 1).join("\n");
+  const { owner } = declaration;
 
-  // Type parameters first: `<D: Dim>` binds before the value parameters that use it.
-  for (const parameter of typeVariablesInScopeAt(header)) {
+  // Type parameters first: `<D: Dim>` binds before the value parameters that use it. Asked of the
+  // declaration already in hand, rather than scanning for it a second time.
+  for (const parameter of typeParametersOf(declaration)) {
     if (parameter.name === name) {
       return { kind: "type parameter", name, type: parameter.dimBound ? "Dim" : null, owner };
     }
   }
 
-  const declaredType = annotatedType(header, name);
-  if (declaredType === undefined) {
-    return null;
-  }
-
-  return { kind: keyword === "struct" ? "field" : "parameter", name, type: declaredType, owner };
-}
-
-/** The nearest `fn`/`struct` declaration at or above `line` that still encloses it, or `null`.
- *  "Still encloses" is judged by bracket balance, which is what tells a declaration's body from the
- *  code after it. */
-function enclosingDeclaration(
-  lines: readonly string[],
-  line: number,
-): { keyword: string; owner: string; startLine: number; } | null {
-  const first = Math.max(0, line - MAX_LOOKBACK);
-  for (let n = line; n >= first; n -= 1) {
-    // Blanked before matching so a paren inside a decorator's own argument (`@example("f()") fn
-    // g(x) = x`) does not end the decorator prefix early; the keyword and name lie outside any
-    // string, so the captures are the source's own.
-    const match = DECLARATION.exec(blankStrings(lines[n] ?? ""));
-    if (match === null) {
-      continue;
-    }
-
-    // Whether the declaration still covers this line is the same question the completer asks of its
-    // type parameters, and it is not simple bracket balance — a `fn … =` body continues onto the
-    // next line with everything closed. One rule for both (declarationStillOpen), so the two cannot
-    // disagree about where a declaration ends.
-    if (n === line || declarationStillOpen(lines.slice(n, line + 1).join("\n"))) {
-      return { keyword: match[1], owner: match[2], startLine: n };
-    }
-
-    return null; // the nearest declaration closed above this line
-  }
-  return null;
-}
-
-/**
- * The type annotated on `name` in a declaration header — `x: Scalar` → `Scalar` — or `null` when
- * the name is declared with no type, or `undefined` when the header does not declare it at all. The
- * type runs to the next `,`, closing bracket, or line end, whichever comes first, so a generic type
- * (`List<D>`) survives intact.
- */
-function annotatedType(header: string, name: string): string | null | undefined {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const annotated = new RegExp(`[(,{]\\s*${escaped}\\s*:\\s*([^,)}\\n]+)`, "u").exec(header);
-  if (annotated !== null) {
-    return annotated[1].trim();
-  }
-
-  // Declared, but with no type of its own (an inferred parameter).
-  const bare = new RegExp(`[(,{]\\s*${escaped}\\s*[,)}]`, "u").exec(header);
-  return bare === null ? undefined : null;
+  const declared = declaredNamesIn(declaration).find((entry) => entry.name === name);
+  return declared === undefined ? null : { kind: declared.kind, name, type: declared.type, owner };
 }

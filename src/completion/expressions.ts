@@ -15,6 +15,7 @@
 // `list functions|units|variables| dimensions` output, plus the two static sets below.
 
 import { blankStrings, stripLineComment } from "../evaluation/inlay-parse";
+import { NULLABLE_STRUCT, NULLABLE_STRUCT_DOC } from "../interpreter/nullable";
 import { continuesAfter, continuesBefore } from "../syntax/statements";
 
 /**
@@ -160,6 +161,22 @@ export const BUILTIN_TYPE_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The type names the *plugin* adds, which Numbat's own completer therefore does not offer.
+ *
+ * Because Numbat lists the built-ins above among its keywords, `List` and `Bool` come back from
+ * `get_completions_for` unasked and only need classifying. A `struct` name comes back never — not
+ * the generated ones, and not `Opt` — so the one type a reader is actually told to write was the
+ * one type that would not complete. {@link pluginTypeCandidates} supplies it.
+ *
+ * Kept apart from {@link BUILTIN_TYPE_NAMES} rather than folded into it, because that set means
+ * something else as well: it is the list of words Numbat's *grammar* reserves, which
+ * properties/parse.ts reads to know what cannot be a struct field. `Opt` is an ordinary name there
+ * — `let Opt = 5` parses, where `let List = 5` does not — and adding it would skip a frontmatter
+ * property called `opt` for no reason at all.
+ */
+const PLUGIN_TYPE_NAMES: ReadonlySet<string> = new Set([NULLABLE_STRUCT]);
+
+/**
  * The long metric prefixes Numbat's completer synthesizes onto prefixable units (matching its
  * `COMMON_METRIC_PREFIXES`). Used to recognize a completion like `kilometer` as a (prefixed) unit
  * even though only `meter` is in the vocabulary.
@@ -211,6 +228,14 @@ export function classifyCompletion(name: string, vocab: CompletionVocabulary): E
   }
   if (vocab.units.has(name) || isMetricPrefixedUnit(name, vocab.units)) {
     return "unit";
+  }
+
+  // Last, unlike the built-in type names above: those are words the grammar reserves, so nothing
+  // can ever be bound to one, while `Opt` is an ordinary name a reader may take for themselves. If
+  // they have, the vocabulary above has already answered and this is not reached — their own
+  // binding is what the row means, exactly as it is what its card describes.
+  if (PLUGIN_TYPE_NAMES.has(name)) {
+    return "type";
   }
 
   return null;
@@ -1023,6 +1048,51 @@ const DECORATORS: readonly DecoratorDef[] = [
  *  completer shows. */
 export function decoratorDoc(name: string): string | null {
   return DECORATORS.find((decorator) => decorator.name === name)?.doc ?? null;
+}
+
+// TYPE DOCUMENTATION
+// ================================================================================================
+
+/**
+ * What each type name means, for the card a hover or a completion opens on one.
+ *
+ * Numbat documents no type at all: `print_info` answers `Not found` for `List` and `Bool` as
+ * readily as for a name it has never heard, and a `struct` cannot even carry the `@description`
+ * that would fix it. So a type was the one thing in the language that hovered to nothing, and the
+ * text has to come from here — the arrangement {@link DECORATORS} is under, for the same reason.
+ *
+ * Wording stays to what the type *is*, not to how the current implementation happens to behave, so
+ * that a Numbat bump cannot quietly make these wrong. `Opt` is the plugin's own (see
+ * interpreter/nullable.ts); the rest are Numbat's, and the set is deliberately the same one {@link
+ * BUILTIN_TYPE_NAMES} lists — that set is *not* reused as the key, because it doubles as the
+ * grammar's field-name blocklist (properties/parse.ts), which `Opt` has no business joining.
+ */
+const TYPE_DOCS: ReadonlyMap<string, string> = new Map([
+  ["Bool", "A truth value: `true` or `false`."],
+  ["DateTime", "A moment in time, with a date, a time of day, and a time zone."],
+  ["Fn", "A function, written `Fn[(A) -> B]` for one taking an `A` and returning a `B`."],
+  ["List", "An ordered sequence of values that all share one type, written `List<T>`."],
+  ["String", "Text."],
+  [NULLABLE_STRUCT, NULLABLE_STRUCT_DOC],
+]);
+
+/** The one-line description of the type `name`, or `null` when it is not one the plugin documents.
+ *  Consulted only after the interpreter has been asked and had nothing to say, so a binding of the
+ *  reader's own that happens to share the name is never spoken over. */
+export function typeDoc(name: string): string | null {
+  return TYPE_DOCS.get(name) ?? null;
+}
+
+/**
+ * The plugin's own type names matching `query`, to stand beside the engine's candidates.
+ *
+ * Matched **case-sensitively**, as Numbat matches: `Bool` completes from `Bo` and not from `bo`,
+ * and a name offered alongside it should not behave differently. An empty query offers them,
+ * which is what a type position wants — after `List<` or a `:` annotation the completer opens with
+ * nothing typed, and that is exactly where `Opt` is worth suggesting.
+ */
+export function pluginTypeCandidates(query: string): string[] {
+  return [...PLUGIN_TYPE_NAMES].filter((name) => name.startsWith(query));
 }
 
 /** The anchor sits directly after an `@` that opens a decorator: at the start of a statement, with

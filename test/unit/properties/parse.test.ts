@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { definedValue, NULLABLE_ABSENT } from "../../../src/interpreter/nullable.ts";
 import {
   bindingKey,
   derivePreamble,
@@ -178,11 +179,45 @@ test("typed properties with unusable values or names report skips", () => {
     { nb_flag: true, nb_blank: "  ", "nb_%%%": "1", nb_when: new Date("2026-07-27") },
     rules({ isNumbatTyped: () => true }),
   );
-  assert.equal(preamble.bindings.length, 1); // nb_%%% sanitizes to nb_
+  // nb_%%% sanitizes to nb_, and nb_blank is empty rather than unusable — it binds undefined.
+  assert.deepEqual(preamble.bindings.map((b) => [b.key, b.expr]), [
+    ["nb_blank", NULLABLE_ABSENT],
+    ["nb_%%%", "1"],
+  ]);
   assert.deepEqual(
     preamble.skips.map((s) => s.reason),
-    ["unsupported", "empty", "unsupported"],
+    ["unsupported", "unsupported"],
   );
+});
+
+test("a numbat-typed property with no value binds undefined rather than reporting a skip", () => {
+  for (const empty of [null, "", "   "]) {
+    const preamble = derivePreamble({ nb_x: empty }, rules({ isNumbatTyped: () => true }));
+    assert.deepEqual(preamble.bindings.map((b) => [b.name, b.expr, b.kind]), [[
+      "nb_x",
+      NULLABLE_ABSENT,
+      "expression",
+    ]]);
+    assert.deepEqual(preamble.skips, []);
+  }
+});
+
+test("an empty untyped property binds undefined only under a type that says a value was wanted", () => {
+  // Nothing declared: as quiet as it has always been, so an empty `summary:` claims no Numbat name.
+  assert.equal(exprFor(null), undefined);
+
+  // Declared, so the type menu is the opt-in the missing value cannot be.
+  assert.equal(exprFor(null, { assignedType: () => "number" }), NULLABLE_ABSENT);
+  assert.equal(exprFor(null, { assignedType: () => "text" }), NULLABLE_ABSENT);
+  assert.equal(exprFor(null, { assignedType: () => "date" }), NULLABLE_ABSENT);
+  assert.deepEqual(
+    derivePreamble({ p: null }, rules({ assignedType: () => "number" })).bindings.map((b) => b.kind),
+    ["number"],
+  );
+
+  // …and the reading is still the setting's to make.
+  assert.equal(exprFor(null, { assignedType: () => "text", plain: { ...PLAIN_ALL, text: false } }), undefined);
+  assert.equal(exprFor(null, { assignedType: () => "date", plain: { ...PLAIN_ALL, dates: false } }), undefined);
 });
 
 test("non-finite untyped numbers are ignored", () => {
@@ -246,17 +281,34 @@ test("a date that arrives as text is read as one only under a date property", ()
   assert.equal(exprFor("2026-07-27", { assignedType: () => "better-properties:datecustom" }), "date(\"2026-07-27\")");
 });
 
-test("an unticked checkbox binds false; every other empty property binds nothing", () => {
+test("an unticked checkbox binds false rather than undefined", () => {
   assert.equal(exprFor(null, { assignedType: () => "checkbox" }), "false");
   assert.equal(exprFor(null, { assignedType: () => "better-properties:toggle" }), "false");
-  // `null` is what *every* empty property parses to, so without the type there is nothing to go on.
-  assert.equal(exprFor(null, { assignedType: () => "text" }), undefined);
+  // `null` is what *every* empty property parses to; under a checkbox it is the unticked box, which
+  // is a value rather than the lack of one, so it never reads as undefined.
   assert.equal(exprFor(null), undefined);
   // And the reading is the booleans setting's to make.
   assert.equal(
     exprFor(null, { assignedType: () => "checkbox", plain: { ...PLAIN_ALL, booleans: false } }),
     undefined,
   );
+});
+
+test("an unticked checkbox inside an object is a value, not a hole", () => {
+  // Worth pinning separately: a hole inside an object is the one that cannot be bound (it would
+  // leave the struct polymorphic and cost every sibling), and a checkbox must never be routed down
+  // that path — an unset box is `false`, which types as `Bool` like any other value.
+  const preamble = derivePreamble(
+    { flags: { on: null, n: 1 } },
+    rules({ assignedType: (key) => key === "flags.on" ? "checkbox" : null }),
+  );
+
+  assert.deepEqual(preamble.bindings.map((b) => [b.name, b.expr, b.kind]), [
+    ["flags.on", "false", "boolean"],
+    ["flags.n", "1", "number"],
+  ]);
+  // No hole machinery anywhere near it: no typed-hole definition, no dropped field.
+  assert.deepEqual(preamble.bindings.flatMap((b) => b.defs), []);
 });
 
 test("plain values ride along inside objects and lists alike", () => {
@@ -307,6 +359,120 @@ test("each leaf rebuilds the object, reading earlier fields back off it", () => 
   );
   // Every generation is a distinct type — redefining a struct is a hard error.
   assert.notEqual(s1, s2);
+});
+
+test("a numbat-typed hole binds nothing inside an object", () => {
+  // The numbat type menu describes the value's *syntax*, not its type, so an empty one says nothing
+  // at all. A field with no type leaves a type variable in the generated struct, and Numbat cannot
+  // solve a `HasField` constraint against a polymorphic struct — so keeping it cost the reader
+  // every field of the object. `costs.materials` failed just as surely as `costs.spare` did.
+  const preamble = derivePreamble(
+    { costs: { materials: 500, spare: null } },
+    rules({ isNumbatTyped: (key) => key === "costs.spare" }),
+  );
+
+  assert.deepEqual(preamble.bindings.map((b) => b.name), ["costs.materials"]);
+  const [only] = preamble.bindings;
+  const [s1] = structNames(only.code);
+  assert.equal(only.code, `struct ${s1}<T0> { materials: T0 }\nlet costs = ${s1} { materials: (500) }`);
+});
+
+test("a hole the type menu gave a type to binds inside an object, carrying that type", () => {
+  // number / text / date / datetime name the type outright, so an empty one of those is a hole of a
+  // known type rather than a hole of no type — and binds wherever a filled one would.
+  for (
+    const [assigned, type] of [["number", "Scalar"], ["text", "String"], ["date", "DateTime"], ["datetime", "DateTime"]]
+  ) {
+    const preamble = derivePreamble(
+      { costs: { spare: null, materials: 500 } },
+      rules({ assignedType: () => assigned }),
+    );
+    assert.deepEqual(preamble.bindings.map((b) => b.name), ["costs.spare", "costs.materials"], assigned);
+
+    // The type rides on the *value*, not on the struct field: Numbat expands a declared field of a
+    // generic type without substituting into it, and then rejects the value that matches.
+    const [hole] = preamble.bindings;
+    assert.deepEqual(hole.defs, [`let _Nb_hole_${type}: Opt<${type}> = ${NULLABLE_ABSENT}`], assigned);
+    assert.equal(hole.expr, `_Nb_hole_${type}`, assigned);
+    assert.match(hole.code, /\{ spare: T0 \}/, assigned);
+  }
+});
+
+test("an object of nothing but numbat-typed holes binds nothing at all", () => {
+  const preamble = derivePreamble({ box: { spare: null } }, rules({ isNumbatTyped: (key) => key === "box.spare" }));
+  assert.deepEqual(preamble.bindings, []);
+});
+
+test("a list of nothing but holes is type-free in the same way, and goes the same way", () => {
+  const preamble = derivePreamble({ box: { xs: [null, null] } }, rules({ isNumbatTyped: (key) => key === "box.xs" }));
+  assert.deepEqual(preamble.bindings, []);
+
+  // At the top level there is no struct to poison, so the very same value binds happily — `let xs =
+  // […]` generalizes, and that is the asymmetry this rule buys.
+  const lone = derivePreamble({ xs: [null, null] }, rules({ isNumbatTyped: (key) => key === "xs" }));
+  assert.deepEqual(lone.bindings.map((b) => b.name), ["xs"]);
+});
+
+test("an empty list is as type-free as a hole, and is dropped from an object the same way", () => {
+  // `[]` types as `forall A. List<A>`, which leaves the same type variable in the generated struct
+  // that a hole does — and costs the same: every *other* field of the object with it.
+  const preamble = derivePreamble({ costs: { materials: 500, spare: [] } }, rules());
+  assert.deepEqual(preamble.bindings.map((b) => b.name), ["costs.materials"]);
+
+  // On its own it still binds, exactly as a lone hole does: no struct, nothing to poison.
+  const lone = derivePreamble({ spare: [] }, rules());
+  assert.deepEqual(lone.bindings.map((b) => [b.name, b.expr]), [["spare", "[]"]]);
+});
+
+test("a type-free field is dropped from an array's element type too, not only from an object", () => {
+  // The array path has its own type: an element is a generated struct like any other, so a field
+  // saying nothing about what it holds leaves *that* type polymorphic and every sibling field of
+  // every item unreadable — `element_at(0, legs).weight` fails as surely as `legs.#.marks` would.
+  for (const marks of [[null, null], [], [[]], [[null]]]) {
+    const preamble = derivePreamble({ legs: [{ weight: 80, marks }] }, rules());
+    const [binding] = preamble.bindings;
+
+    assert.deepEqual(preamble.bindings.map((b) => b.key), ["legs"], JSON.stringify(marks));
+    assert.match(binding.expr, /^\[_Nb_LegsStruct_\w+ \{ weight: \(80\) \}\]$/, JSON.stringify(marks));
+    assert.equal(binding.defs.length, 1, JSON.stringify(marks));
+    assert.ok(binding.defs[0].endsWith("<T0> { weight: T0 }"), binding.defs[0]);
+  }
+});
+
+test("a list one item fills is not type-free, and keeps its holes", () => {
+  // The rule above is about a position that never said what it holds — not about emptiness. One
+  // filled item is all it takes, and the gaps beside it stay as gaps.
+  const preamble = derivePreamble({ legs: [{ weight: 80, marks: [1, null] }] }, rules());
+  const [binding] = preamble.bindings;
+
+  assert.match(binding.expr, /marks: \(\[.+\]\)/);
+  assert.ok(binding.expr.includes(`${definedValue("1")}, ${NULLABLE_ABSENT}`), binding.expr);
+});
+
+test("a numbat-typed leaf dropped for having no type says so, and a plain one stays quiet", () => {
+  // Dropped silently, a property the reader explicitly opted in disappears with no binding, no
+  // inlay and nothing to explain why — leaving `costs.spare` reporting only that it does not exist.
+  const typed = derivePreamble(
+    { costs: { materials: 500, spare: null } },
+    rules({ isNumbatTyped: (key) => key === "costs.spare" }),
+  );
+  assert.deepEqual(typed.skips.map((s) => [s.key, s.reason]), [["costs.spare", "unsupported"]]);
+  assert.match(typed.skips[0].message, /nothing here says what type it holds/);
+
+  // A plain value that rode along was never asked for: a name it cannot have makes it a
+  // non-participant rather than a problem, exactly as claimName's own reporting rule has it.
+  const plain = derivePreamble({ costs: { materials: 500, spare: [] } }, rules());
+  assert.deepEqual(plain.skips, []);
+});
+
+test("a lone hole still binds, and is not narrowed on the way", () => {
+  const preamble = derivePreamble({ budget: null }, rules({ isNumbatTyped: (key) => key === "budget" }));
+  assert.deepEqual(preamble.bindings.map((b) => [b.name, b.expr]), [["budget", NULLABLE_ABSENT]]);
+
+  // A declared-kind hole on its own keeps the bare literal too: nothing needs its type there, and
+  // `forall A. Opt<A>` accepts a fallback of any type where `Opt<Scalar>` would not.
+  const plain = derivePreamble({ budget: null }, rules({ assignedType: () => "number" }));
+  assert.deepEqual(plain.bindings.map((b) => [b.expr, b.defs]), [[NULLABLE_ABSENT, []]]);
 });
 
 test("a sibling reference is written as the dotted name and kept verbatim", () => {
@@ -517,10 +683,12 @@ test("an untyped array binds when its items are one kind, and stays quiet when t
     { words: ["a", "b"], flags: [true, false], part: [1, "a"], deep: [1, [2]], gaps: [1, null] },
     rules(),
   );
-  // A Numbat list holds one type, so only the homogeneous ones bind…
+  // A Numbat list holds one type, so only the homogeneous ones bind — and a *gap* is not a
+  // disagreement: the items that are there agree, and the hole binds as undefined beside them.
   assert.deepEqual(preamble.bindings.map((b) => [b.key, b.expr, b.kind]), [
     ["words", "[\"a\", \"b\"]", "text"],
     ["flags", "[true, false]", "boolean"],
+    ["gaps", `[${definedValue("1")}, ${NULLABLE_ABSENT}]`, "number"],
   ]);
   // …and the mixed ones are as quiet as any other non-participant, rather than binding a list that
   // would report Numbat's type error on a property nobody opted in.
@@ -709,17 +877,43 @@ test("an array of objects inside an object is one field holding the list", () =>
   assert.ok(n.code.includes("legs: trip.legs"), n.code);
 });
 
-test("items must bind the same fields, or the array binds nothing", () => {
+test("a key one item leaves out is undefined there, not a disagreement", () => {
+  // The elements still bind one type — the item that has no `b` writes it as undefined, which is
+  // what it is. The field types themselves must still agree; that is the test below.
   const ragged = { people: [{ a: 1, b: 2 }, { a: 3 }] };
-  const typed = derivePreamble(ragged, rules({ isNumbatTyped: (key) => key.startsWith("people.#") }));
-  assert.deepEqual(typed.bindings, []);
-  assert.deepEqual(typed.skips.map((s) => [s.key, s.reason]), [["people", "unsupported"]]);
-  assert.match(typed.skips[0].message, /item 2 does not have the fields item 1 has/);
+  const preamble = derivePreamble(ragged, rules());
+  const [binding] = preamble.bindings;
+  const [item] = structNames(binding.defs.join("\n"));
 
-  // Untyped, it is as quiet as any other non-participant.
-  const untyped = derivePreamble(ragged, rules());
+  assert.deepEqual(binding.defs, [`struct ${item}<T0, T1> { a: T0, b: T1 }`]);
+  assert.equal(
+    binding.expr,
+    `[${item} { a: (1), b: (${definedValue("2")}) }, ${item} { a: (3), b: (${NULLABLE_ABSENT}) }]`,
+  );
+  assert.deepEqual(preamble.skips, []);
+});
+
+test("a field no item fills is dropped, rather than binding a column of undefined", () => {
+  const preamble = derivePreamble({ people: [{ a: 1, b: null }, { a: 3 }] }, rules());
+  const [binding] = preamble.bindings;
+  const [item] = structNames(binding.defs.join("\n"));
+
+  assert.deepEqual(binding.defs, [`struct ${item}<T0> { a: T0 }`]);
+  assert.equal(binding.expr, `[${item} { a: (1) }, ${item} { a: (3) }]`);
+});
+
+test("an array of objects holding nothing at all still binds nothing", () => {
+  // Every field of every item empty: there is no struct left to write, so the array is as quiet as
+  // one holding nothing bindable.
+  const empty = { people: [{ a: null }, { a: null }] };
+  const untyped = derivePreamble(empty, rules());
   assert.deepEqual(untyped.bindings, []);
   assert.deepEqual(untyped.skips, []);
+
+  const typed = derivePreamble(empty, rules({ isNumbatTyped: (key) => key.startsWith("people.#") }));
+  assert.deepEqual(typed.bindings, []);
+  assert.deepEqual(typed.skips.map((s) => [s.key, s.reason]), [["people", "unsupported"]]);
+  assert.match(typed.skips[0].message, /no item holds anything Numbat can bind/);
 });
 
 test("items may write the same fields in a different order", () => {
@@ -738,6 +932,19 @@ test("an item that binds nothing at all fails the list, naming its position", ()
   );
   assert.deepEqual(preamble.bindings, []);
   assert.match(preamble.skips[0].message, /item 2 holds nothing Numbat can bind/);
+});
+
+test("two items that disagree are reported by the field they disagree under", () => {
+  // A field one item leaves out is a hole rather than a disagreement, so the only way two objects
+  // can fall out is over a key they *both* have — and the message names it rather than claiming,
+  // as it once could, that the field sets differ.
+  const preamble = derivePreamble(
+    { rows: [{ a: "1", b: "2" }, { a: ["1"], b: "3" }] },
+    rules({ isNumbatTyped: (key) => key === "rows" }),
+  );
+
+  assert.deepEqual(preamble.bindings, []);
+  assert.match(preamble.skips[0].message, /item 2 holds something different under 'a' than item 1 does/);
 });
 
 test("a field Numbat cannot name is dropped once for the array, not once per item", () => {

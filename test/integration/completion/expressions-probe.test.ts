@@ -7,13 +7,16 @@ import { test } from "node:test";
 import {
   allowedCategoriesAt,
   boundCompletions,
+  BUILTIN_TYPE_NAMES,
   classifyCompletion,
   type CompletionVocabulary,
   expressionCompletions,
   isTypePosition,
   parseListNames,
+  pluginTypeCandidates,
   typeVariableCompletions,
 } from "../../../src/completion/expressions.ts";
+import { NULLABLE_PRELUDE, NULLABLE_STRUCT } from "../../../src/interpreter/nullable.ts";
 import { loadNumbat, skip } from "../wasm-pkg.ts";
 
 /** Build the vocabulary from the four `list` commands, as interpreter/numbat.ts does. */
@@ -163,6 +166,45 @@ test("block-local definitions complete after being replayed", { skip }, async ()
   assert.ok(vocab.units.has("baz"), "user unit is captured");
   assert.ok(complete("Fo").some((c) => c.name === "Foo" && c.category === "dimension"));
   assert.ok(complete("ba").some((c) => c.name === "baz" && c.category === "unit"));
+
+  nb.free();
+});
+
+test("every type name the plugin documents is offered, Opt included", { skip }, async () => {
+  const { Numbat, FormatType } = await loadNumbat();
+  const nb = Numbat.new(true, true, FormatType.Html);
+  nb.interpret(NULLABLE_PRELUDE).free();
+  const vocab = buildVocab(nb);
+
+  // The candidate list interpreter/numbat.ts assembles: the engine's, then the plugin's own.
+  const complete = (query: string) => {
+    const raw = (nb.get_completions_for(query) as unknown[]).map((v) => String(v));
+    return expressionCompletions([...raw, ...pluginTypeCandidates(query)], vocab, ALL);
+  };
+  const offered = (query: string, name: string) =>
+    complete(query).some((c) => c.name === name && c.category === "type");
+
+  // Numbat's own come back from the engine unasked, tagged as keywords and reclassified here.
+  for (const name of BUILTIN_TYPE_NAMES) {
+    assert.ok(offered(name.slice(0, 2), name), `${name} is not offered as a type`);
+    assert.ok(pluginTypeCandidates(name.slice(0, 2)).length === 0, `${name} is injected as well`);
+  }
+
+  // `Opt` comes back from the engine never — a struct name is not in its vocabulary at all, even
+  // with the prelude loaded — so without the injection it would be the one type that never
+  // completed. That absence is what this pins.
+  assert.deepEqual((nb.get_completions_for("Op") as unknown[]).map((v) => String(v)), []);
+  assert.ok(offered("Op", NULLABLE_STRUCT));
+  assert.ok(offered("", NULLABLE_STRUCT), "a just-opened type position offers it");
+
+  // And at a type position, where the engine's variables and functions are filtered out.
+  const atType = expressionCompletions(
+    [...(nb.get_completions_for("Op") as unknown[]).map((v) => String(v)), ...pluginTypeCandidates("Op")],
+    vocab,
+    ALL,
+    allowedCategoriesAt("let x: "),
+  );
+  assert.deepEqual(atType.map((c) => c.name), [NULLABLE_STRUCT]);
 
   nb.free();
 });

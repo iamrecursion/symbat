@@ -5,6 +5,7 @@
 // completion/render.ts turns the results into DOM.
 
 import { escapeHtml } from "../interpreter/markup";
+import { typeDoc } from "./expressions";
 
 /** The marker Numbat's pretty-printer emits before a result value. `type(x)` echoes the input, then
  *  prints `<dimmed>=</dimmed> <the type>`; the signature is whatever follows this marker. */
@@ -77,10 +78,11 @@ export function parsePrintInfo(html: string): CompletionInfo | null {
 
 /** A field label `print_info` writes at a line's start (`Function:`, `A unit of:`, …), captured
  *  with the alignment padding after its colon. The tail of the list is the plugin's own — `Field`
- *  through `Declared in` from {@link describedInfo}, and `Decorator` from {@link decoratorInfo} —
- *  styled to match the rest. */
+ *  through `Declared in` from {@link describedInfo}, `Decorator` from {@link decoratorInfo} and
+ *  `Type` from {@link typeInfo} — styled to match the rest. `Type parameter` precedes `Type` so the
+ *  longer label wins the one input that could be read as either. */
 const DOC_LABEL =
-  /^(Function|Signature|Description|Unit|Aliases|A unit of|Variable|Dimension|Units|Field|Parameter|Type parameter|Quantity|Declared in|Decorator)(:)[^\S\n]*/;
+  /^(Function|Signature|Description|Unit|Aliases|A unit of|Variable|Dimension|Units|Field|Parameter|Type parameter|Quantity|Declared in|Decorator|Type)(:)[^\S\n]*/;
 
 /**
  * A card for something Numbat's own `print_info` cannot describe, in the shape {@link
@@ -128,6 +130,44 @@ export function decoratorInfo(name: string, description: string): CompletionInfo
     bodyHtml: `Decorator: @${escapeHtml(name)}\nDescription: ${escapeHtml(description)}`,
     referenceUrl: null,
   };
+}
+
+/**
+ * A card for a type name, in the same shape as {@link decoratorInfo}'s and for the same reason:
+ * `print_info` answers `Not found` for every type Numbat has, and a `struct` cannot carry the
+ * `@description` that would change that — so the text comes from the completer's table
+ * (completion/expressions.ts's `typeDoc`).
+ *
+ * No `Type:` line is spliced under it: `type(List)` is an error, and a type's own name above a
+ * description of it would say the same thing twice besides.
+ */
+export function typeInfo(name: string, description: string): CompletionInfo {
+  return {
+    bodyHtml: `Type: ${escapeHtml(name)}\nDescription: ${escapeHtml(description)}`,
+    referenceUrl: null,
+  };
+}
+
+/**
+ * The card for `name` given `printInfoHtml`, what the interpreter said when asked about it (`null`
+ * when it could not be asked at all).
+ *
+ * The interpreter's answer wins wherever there is one, so a reader who writes their own `let List`
+ * is described by their own words. Only when it has nothing — which for *every* type name it has is
+ * always — does {@link typeDoc}'s table answer instead.
+ *
+ * Split out from interpreter/numbat.ts's `completionInfo`, which is the only caller, so that the
+ * choice can be tested against real `print_info` output: that module reaches for `obsidian` and the
+ * wasm binary, and a test can import neither.
+ */
+export function completionCard(printInfoHtml: string | null, name: string): CompletionInfo | null {
+  const described = printInfoHtml === null ? null : parsePrintInfo(printInfoHtml);
+  if (described !== null) {
+    return described;
+  }
+
+  const type = typeDoc(name);
+  return type === null ? null : typeInfo(name, type);
 }
 
 /** The label each kind of declared name is carded under, spelled as the card shows it. */

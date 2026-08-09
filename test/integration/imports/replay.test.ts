@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inlineResultFor } from "../../../src/evaluation/inline-parse.ts";
 import { derivePreamble, PLAIN_NONE } from "../../../src/properties/parse.ts";
-import { loadNumbat, skip } from "../wasm-pkg.ts";
+import { loadNumbat, newContext, skip } from "../wasm-pkg.ts";
 
 function runnerFor(nb: any) {
   return (code: string) => {
@@ -45,7 +45,7 @@ function replayChunks(nb: any, chunks: string[]): void {
 
 test("imported shared blocks and typed properties open the note's scope", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const chunks = importChunks({ nb_g: "9.81 m/s^2", title: "ignored" }, ["fn scale2(x) = 2 * x"]);
     replayChunks(nb, chunks);
@@ -65,14 +65,14 @@ test("imported shared blocks and typed properties open the note's scope", { skip
 
 test("a broken import chunk is isolated — the others still land", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     // Numbat rejects a whole multi-statement program on any error (pinned here), so each import
     // must be its own chunk — then the broken one is contained.
     assert.equal(runnerFor(nb)("let a = 1\nlet b = not_a_thing\nlet c = 3").isError, true);
     assert.equal(inlineResultFor(runnerFor(nb), "a").kind === "error", true, "the atomic program left nothing");
 
-    const fresh = mod.Numbat.new(true, true, mod.FormatType.Html);
+    const fresh = newContext(mod);
     try {
       replayChunks(fresh, ["let a = (1)", "let b = (not_a_thing)", "let c = (3)"]);
       const run = runnerFor(fresh);

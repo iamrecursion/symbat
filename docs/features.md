@@ -72,7 +72,7 @@ Five independent toggles under **Expression completion** each gate one kind:
 - **Complete units** includes units (`meter`, `second`, `newton`, …), including metric-prefixed
   forms such as `kilometer`.
 - **Complete dimensions** includes physical dimensions (`Length`, `Time`, `Mass`, …).
-- **Complete types** includes built-in and structural types (`Bool`, `String`, struct, …).
+- **Complete types** includes built-in and struct types (`Bool`, `String`, `Opt`, struct, …).
 
 Typing `@` at the start of a statement offers Numbat's **decorators** — `@name`, `@description`,
 `@url`, `@example`, `@aliases`, `@metric_prefixes`, `@binary_prefixes` and `@abbreviation` — from
@@ -446,10 +446,13 @@ legs:                        # the property keys `legs.#.distance` and `legs.#.t
 `legs` is then a two-element list: `len(legs)` is 2, `element_at(0, legs).distance` is `5 km`, and a
 `fn` written over the element type maps across the whole of it. Note the difference between the two
 columns above — `legs.#.distance` is what you assign the type to in the properties panel, while
-`element_at(0, legs).distance` is what you write in Numbat to read it. Every item must bind, and
-bind the same fields. An array that cannot manage that binds nothing and says so on the array. Items
-whose fields disagree _dimensionally_ (a `5 km` beside a `10 s`) do bind, and Numbat reports its own
-type error on the property: the same guarantee the rest of the plugin gives.
+`element_at(0, legs).distance` is what you write in Numbat to read it.
+
+The items must agree on what each field _holds_; a field one of them leaves out or writes empty is
+[undefined](#properties-with-no-value) there rather than a disagreement. An array whose items cannot
+be reconciled binds nothing and says so on the array. Items whose fields disagree _dimensionally_ (a
+`5 km` beside a `10 s`) do bind, and Numbat reports its own type error on the property: the same
+guarantee the rest of the plugin gives.
 
 Two things to know about arrays:
 
@@ -494,6 +497,74 @@ Four things to know about nesting:
   but they **cannot be reached through the object** until it is fixed.
 - A YAML **list** inside an object is one field holding the whole list, not a property per item — no
   struct field can name an index. See [above](#note-properties) for how its items are typed.
+
+### Properties with No Value
+
+A property written with nothing after it — a blank item in a list, a field one entry of an array
+leaves out — binds as **`nil`** rather than taking the structure around it down with it. So a list
+of weights with one gap is still a list of weights:
+
+```yaml
+weights: [70, , 72]     # a three-element list, with a hole in the middle
+legs:
+  - distance: 5 km
+    pace: 5 min / 1 km
+  - distance: 10 km     # no pace written: `pace` is nil here, and `legs` still binds
+```
+
+The value shows as `nil`, which is faint since it is the absence of data rather than data, and
+overridable with `--numbat-undefined` if you would rather a hole stood out than receded. Its type is
+`Opt<T>`, so `weights` above is a `List<Opt<Scalar>>` — a type you can write yourself, in a `fn`
+signature or a `let` annotation, exactly as it is shown to you.
+
+Five functions read an `Opt`:
+
+- `get_or(x, fallback)`: The value, or `fallback` when there is none. The one to reach for.
+- `get_or_else(x, f)`: The same, but calling `f` only when there is nothing to return, so an
+  expensive or failing fallback is safe to write. Numbat has no anonymous functions, so `f` is the
+  name of a `fn` that takes no arguments.
+- `is_defined(x)` / `is_undefined(x)`: Whether there is a value.
+- `get(x)`: The value, and a **runtime error** when there is none. Prefer `get_or`.
+
+And two write one, so a hole is something you can hand to your own functions rather than only
+receive: `some(x)` holds a value, and `nil` holds none. `nil` needs no type argument and no
+parentheses. It serves as an absent length in one line and an absent scalar in the next. If you
+would rather say the long word, **`undefined`** is the same value under another name.
+
+Each of these describes itself: hover one, or dwell on it in the completer, for a card saying what
+it does. So does `Opt`, and every other type name (`List`, `Bool`, `String`, `Fn`, `DateTime`),
+which Numbat itself documents nowhere. `Opt` completes like any other type too, including at a type
+position such as `let x:` or `List<`.
+
+`get_or(element_at(1, weights), 0)` and `is_defined(element_at(1, legs).pace)` read like any other
+expression: the hole is a value you can work with rather than a lost binding.
+
+Five limits worth knowing:
+
+- A property with **no type assigned and no value** still binds nothing. An empty property is on a
+  great many notes, and every one of them claiming a Numbat name to say `nil` would be worse than
+  the gap it fills. Assign it the Numbat type, or any type that binds, and it binds.
+- An empty **Numbat-typed** property _inside an object_ binds nothing, where the same property at
+  the top level binds fine. The Numbat type says what a value is written in, not what it is, so an
+  empty one leaves its type unknown — and a field of unknown type makes _every_ field of that object
+  unreadable, not just the empty one. It is left out instead, and says so on the property, the same
+  answer an array gives a field no item fills. Write any value and the field appears. An empty
+  **number**, **text**, **date** or **datetime** property is unaffected wherever it sits: those name
+  the type outright, so the hole keeps its place and reads back as an `Opt` of that type.
+- A field **nothing ever says anything about** is dropped from the object or the array element type
+  rather than binding a column of `nil`. That is a field no entry fills, and equally one every entry
+  writes as an empty list (`[]`) or as a list of nothing but gaps: emptiness does not say what would
+  have been there, and the field would cost its siblings their readability for a hole you can
+  already see in the frontmatter.
+- A genuinely **mixed** list (`[1, "a"]`) is unchanged: a gap is not a disagreement, and a
+  disagreement is still not a Numbat list.
+- A value the plain-value settings above exclude is a **non-participant**, not `nil`; turning it
+  into one would put back exactly what the setting keeps out. An unset **checkbox** is still
+  `false`.
+
+`nil`, `undefined`, `some`, `get`, `get_or`, `get_or_else`, `is_defined` and `is_undefined` are
+Numbat names like any other, so a property named after one is skipped by the collision guard below.
+`Opt` is not: it is a type name, and a property may be called that freely.
 
 Assigning the Numbat type to a nested property, or to an array's items, needs the
 [Better Properties](https://github.com/unxok/better-properties) plugin, which is the only way to

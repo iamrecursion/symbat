@@ -130,6 +130,23 @@ test("resultValueHtml: leaves a fragment with no dimension unchanged", () => {
   assert.equal(resultValueHtml(frag), frag);
 });
 
+test("resultValueHtml: an undefined inside the value is not mistaken for the annotation", () => {
+  // An undefined frontmatter property renders as its own faint span, and it must not be the class
+  // this cut looks for — see interpreter/nullable-display.ts, which is where that is enforced.
+  // Wearing `numbat-dimmed` it ended the value early: `[70, nil]` came back as `[70,`, and the
+  // inline-eval widget committed that truncation into the note.
+  const list = `<span class="numbat-operator">[</span><span class="numbat-value">70</span>`
+    + `<span class="numbat-operator">,</span> <span class="numbat-undefined">nil</span>`
+    + `<span class="numbat-operator">]</span>`;
+  const value = resultValueHtml(resultFragment(list, "List"));
+
+  assert.match(value, /numbat-undefined">nil</);
+  assert.match(value, /numbat-operator">\]</, "the value was cut short");
+  // The annotation itself still goes.
+  assert.doesNotMatch(value, /numbat-dimmed/);
+  assert.doesNotMatch(value, /List/);
+});
+
 // A `= value [Dim]` result fragment, as splitInterpretOutput yields for a name.
 function resultFragment(valueSpans: string, dim: string): string {
   return `<span class="numbat-operator">=</span> ${valueSpans}`

@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { NULLABLE_PRELUDE } from "../../src/interpreter/nullable.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = resolve(here, "../../src/wasm/pkg");
@@ -41,6 +42,21 @@ export async function loadNumbat(): Promise<any> {
   await mod.default({ module_or_path: readFileSync(pkgWasm) });
   mod.setup_panic_hook();
   return mod;
+}
+
+/**
+ * A prelude-loaded context with the nullable vocabulary applied — what `createContext`
+ * (interpreter/numbat.ts) builds, for the tests that need a context rather than a bare instance.
+ *
+ * Without this a test would hand-roll `Numbat.new` and get a context the plugin never creates: one
+ * where the bindings a note's frontmatter emits do not type, because nothing has defined the struct
+ * they are written with. The tests that deliberately want a bare instance (exchange rates, crash
+ * recovery) call `Numbat.new` themselves.
+ */
+export function newContext(mod: any): any {
+  const context = mod.Numbat.new(true, true, mod.FormatType.Html);
+  context.interpret(NULLABLE_PRELUDE).free();
+  return context;
 }
 
 /**

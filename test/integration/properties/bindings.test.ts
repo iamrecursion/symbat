@@ -18,9 +18,11 @@ import { signatureFromTypeOutput } from "../../../src/completion/docs.ts";
 import { parseListNames, structFieldNames } from "../../../src/completion/expressions.ts";
 import { plainText } from "../../../src/evaluation/inlay-parse.ts";
 import { inlineResultFor } from "../../../src/evaluation/inline-parse.ts";
+import { readableNullables } from "../../../src/interpreter/nullable-display.ts";
+import { NULLABLE_NAMES, NULLABLE_STRUCT } from "../../../src/interpreter/nullable.ts";
 import { frontmatterHints } from "../../../src/properties/frontmatter-inlay.ts";
 import { derivePreamble, type NotePreamble, PLAIN_ALL } from "../../../src/properties/parse.ts";
-import { loadNumbat, skip } from "../wasm-pkg.ts";
+import { loadNumbat, newContext, skip } from "../wasm-pkg.ts";
 
 // The LineInterpret shape over a live wasm context.
 function runnerFor(nb: any) {
@@ -62,7 +64,7 @@ const structNamesIn = (code: string): string[] => [...code.matchAll(/struct (\w+
 
 test("property bindings: reserved names are skipped and the rest chain in order", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const reserved = reservedSet(nb);
     // The two shadowing hazards the skip exists for: unit names (Numbat rejects the let itself — an
@@ -89,7 +91,7 @@ test("property bindings: reserved names are skipped and the rest chain in order"
     assert.deepEqual(preamble.bindings.map((b) => b.name), ["rate", "n_hours", "cost"]);
 
     // Replay into a fresh context (the shadowing probe above polluted this one with its own `pi`).
-    const fresh = mod.Numbat.new(true, true, mod.FormatType.Html);
+    const fresh = newContext(mod);
     try {
       replay(fresh, preamble);
       const run = runnerFor(fresh);
@@ -112,7 +114,7 @@ test("property bindings: reserved names are skipped and the rest chain in order"
 
 test("frontmatter inlays: results chain, plain numbers are suppressed, holes/errors surface", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       {
@@ -152,7 +154,7 @@ test("frontmatter inlays: results chain, plain numbers are suppressed, holes/err
 
 test("property bindings: a botched binding is absorbed and later ones still land", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       { broken: "let x = 5", after: "2 + 2" },
@@ -175,7 +177,7 @@ test("property bindings: a botched binding is absorbed and later ones still land
 
 test("plain values: text, dates and booleans bind as the Numbat types they are", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       {
@@ -212,7 +214,7 @@ test("plain values: text, dates and booleans bind as the Numbat types they are",
 
 test("plain values: a brace in prose is escaped, not interpolated", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     // Unescaped, `{rate}` would be evaluated by Numbat's string interpolation — against a name the
     // note may not even have. The property is prose; nothing in it may run.
@@ -242,7 +244,7 @@ test("plain values: a brace in prose is escaped, not interpolated", { skip }, as
 
 test("nested properties: a sibling chain resolves by its dotted name", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       {
@@ -274,7 +276,7 @@ test("nested properties: a sibling chain resolves by its dotted name", { skip },
 
 test("nested properties: a field may shadow a unit name", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const reserved = reservedSet(nb);
     const preamble = derivePreamble(
@@ -294,7 +296,7 @@ test("nested properties: a field may shadow a unit name", { skip }, async () => 
 
 test("nested properties: a broken leaf freezes the object, not its siblings", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       { costs: { materials: "500 EUR", labor: "nope + 1", total: "costs.materials * 2" } },
@@ -316,7 +318,7 @@ test("nested properties: a broken leaf freezes the object, not its siblings", { 
 
 test("nested properties: the struct type reads as a name derived from the key", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       { costs: { materials: 500, labor: 300 } },
@@ -340,7 +342,7 @@ test("nested properties: the struct type reads as a name derived from the key", 
 
 test("nested properties: frontmatter hints are keyed by the dotted path", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       { costs: { materials: 500, total: "costs.materials * 2" } },
@@ -358,7 +360,7 @@ test("nested properties: frontmatter hints are keyed by the dotted path", { skip
 
 test("member completion: a struct's fields come out of the missing-field error", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       { costs: { materials: 500, labor: 300, breakdown: { doubled: 12 } } },
@@ -384,7 +386,7 @@ test("member completion: a struct's fields come out of the missing-field error",
 
 test("arrays: a list binds, survives the rebuild, and carries its dimension", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const typed = new Set(["rates", "costs.total"]);
     const preamble = derivePreamble(
@@ -415,7 +417,7 @@ test("arrays: a list binds, survives the rebuild, and carries its dimension", { 
 
 test("arrays of objects: one element type, and Numbat's list vocabulary over it", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       {
@@ -464,7 +466,7 @@ test("arrays of objects: one element type, and Numbat's list vocabulary over it"
 
 test("arrays of objects: items that disagree dimensionally are Numbat's error", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     // Same fields, incompatible dimensions — the derivation binds it and the type system is what
     // reports the problem, on the property, which is exactly the guarantee an Array makes.
@@ -482,7 +484,7 @@ test("arrays of objects: items that disagree dimensionally are Numbat's error", 
 
 test("untyped arrays: what binds type-checks, and what would not stays out", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     // The untyped promise is that a property nobody opted in never volunteers an error — which is a
     // claim about Numbat's type system, so the real interpreter is the only place to test it. Each
@@ -516,7 +518,7 @@ test("untyped arrays: what binds type-checks, and what would not stays out", { s
 
 test("arrays of objects: the inlay evaluates the list without redeclaring its type", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     // frontmatterHints runs each binding's defs, evaluates `expr`, then runs `code`. That order is
     // why the definitions are kept out of `code`: declaring a struct twice is a hard error, so a
@@ -542,7 +544,7 @@ test("arrays of objects: the inlay evaluates the list without redeclaring its ty
 
 test("arrays: a mixed typed list fails as a Numbat type error, not a crash", { skip }, async () => {
   const mod = await loadNumbat();
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const preamble = derivePreamble(
       { mixed: [1, "2 m"] },
@@ -552,6 +554,264 @@ test("arrays: a mixed typed list fails as a Numbat type error, not a crash", { s
     assert.deepEqual(preamble.bindings.map((b) => b.expr), ["[(1), (2 m)]"]);
     const result = inlineResultFor(runnerFor(nb), preamble.bindings[0].expr);
     assert.equal(result.kind, "error");
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: a list with a hole in it binds, types and reads back", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    // The case the whole feature exists for: without the hole the array bound nothing at all, and
+    // one blank item cost the reader the other nine.
+    const preamble = derivePreamble(
+      { weights: [70, null, 72] },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL },
+    );
+    const [binding] = preamble.bindings;
+    assert.deepEqual(preamble.skips, []);
+
+    const run = runnerFor(nb);
+    assert.equal(run(binding.code).isError, false, binding.code);
+
+    assert.equal(inlineResultFor(run, "len(weights)").plain, "3");
+    assert.equal(inlineResultFor(run, "get(element_at(0, weights))").plain, "70");
+    assert.equal(inlineResultFor(run, "is_undefined(element_at(1, weights))").plain, "true");
+    assert.equal(inlineResultFor(run, "get_or(element_at(1, weights), 0)").plain, "0");
+
+    // The type Numbat infers is one element type with a nullable in it, which is what makes the
+    // list hold a hole at all.
+    assert.match(plain(run("weights").output), new RegExp(`List&lt;${NULLABLE_STRUCT}&lt;Scalar&gt;&gt;`));
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: an array of objects binds around an empty field and a missing key", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    const preamble = derivePreamble(
+      // `pace` is written empty in the second item and left out of the third: the same thing to a
+      // reader, and now the same thing to the derivation.
+      { legs: [{ distance: "5 km", pace: "5 min / 1 km" }, { distance: "10 km", pace: null }, { distance: "2 km" }] },
+      { isNumbatTyped: (key) => key.startsWith("legs.#"), isReserved: () => false, plain: PLAIN_ALL },
+    );
+    const [binding] = preamble.bindings;
+    assert.deepEqual(preamble.skips, []);
+
+    const run = runnerFor(nb);
+    for (const def of binding.defs) {
+      assert.equal(run(def).isError, false, def);
+    }
+    assert.equal(run(binding.code).isError, false, binding.code);
+
+    assert.equal(inlineResultFor(run, "len(legs)").plain, "3");
+    assert.equal(plain(inlineResultFor(run, "element_at(1, legs).distance").valueHtml ?? ""), "10 km");
+    assert.equal(inlineResultFor(run, "is_defined(element_at(0, legs).pace)").plain, "true");
+    assert.equal(inlineResultFor(run, "is_undefined(element_at(1, legs).pace)").plain, "true");
+    assert.equal(inlineResultFor(run, "is_undefined(element_at(2, legs).pace)").plain, "true");
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: a hole nested inside a list still binds one element type", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    // The decision to write a position as a nullable is made once every sibling *at that depth* has
+    // been seen, so `2` and `3` are nullable because a hole appeared beside `1`.
+    const preamble = derivePreamble(
+      { grid: [[1, null], [2, 3]] },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL },
+    );
+    const run = runnerFor(nb);
+    assert.equal(run(preamble.bindings[0].code).isError, false, preamble.bindings[0].code);
+
+    assert.equal(inlineResultFor(run, "get(element_at(0, element_at(1, grid)))").plain, "2");
+    assert.equal(inlineResultFor(run, "is_undefined(element_at(1, element_at(0, grid)))").plain, "true");
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: a typed property left empty binds undefined instead of a skip", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    const preamble = derivePreamble(
+      { budget: "", spent: "20 EUR" },
+      { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_ALL },
+    );
+    assert.deepEqual(preamble.skips, []);
+
+    const run = runnerFor(nb);
+    replay(nb, preamble);
+    assert.equal(inlineResultFor(run, "is_undefined(budget)").plain, "true");
+    assert.equal(plain(inlineResultFor(run, "get_or(budget, spent)").valueHtml ?? ""), "20 €");
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: the utilities are reserved names, like any other prelude name", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    // The cost of putting `get` and friends into every context: a property that wants one of those
+    // names is skipped, exactly as one named `pi` is. Pinned rather than assumed, since the names
+    // are the roadmap's and the skip is what a reader would see.
+    const reserved = reservedSet(nb);
+    for (const name of NULLABLE_NAMES) {
+      assert.ok(reserved.has(name), `expected '${name}' in the reserved set`);
+    }
+
+    // The type name is *not* one of them: the set is built from functions, units, variables and
+    // dimensions, so a property called `Opt` costs the reader nothing.
+    assert.equal(reserved.has(NULLABLE_STRUCT), false);
+
+    const preamble = derivePreamble({ get: "5" }, {
+      isNumbatTyped: () => true,
+      isReserved: (name) => reserved.has(name),
+      plain: PLAIN_ALL,
+    });
+    assert.deepEqual(preamble.bindings, []);
+    assert.deepEqual(preamble.skips.map((s) => [s.key, s.reason]), [["get", "reserved"]]);
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: what the reader sees is `nil` and `Opt<T>`", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    // The display rewrite over *real* formatter output rather than a hand-written fixture — the one
+    // place the span matching meets what Numbat actually emits.
+    const preamble = derivePreamble(
+      { weights: [70, null] },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL },
+    );
+    const run = runnerFor(nb);
+    assert.equal(run(preamble.bindings[0].code).isError, false);
+
+    const shown = plain(readableNullables(run("weights").output));
+    assert.match(shown, /\[70, nil\]/);
+
+    // The type survives the rewrite untouched, because it is the one the reader would write.
+    assert.match(shown, new RegExp(`List&lt;${NULLABLE_STRUCT}&lt;Scalar&gt;&gt;`));
+    assert.equal(shown.includes("value"), false, shown);
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: one empty field does not cost the object its other fields", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    // The reported failure: an object with a Numbat-typed property left empty. The hole had nothing
+    // to say what it held, so the generated struct stayed polymorphic — and Numbat cannot solve
+    // `HasField` against a polymorphic struct, so *every* field of `Test` became unreadable, not
+    // just the empty one. `Test.Date` reported a constraint failure naming a type nobody wrote.
+    const preamble = derivePreamble(
+      { Test: { Cond: true, Str: "hi", Date: new Date("2022-02-02T00:00:00Z"), Foo: null } },
+      { isNumbatTyped: (key) => key === "Test.Foo", isReserved: () => false, plain: PLAIN_ALL },
+    );
+
+    // The hole is dropped rather than typed on a guess: nothing anywhere says what it holds.
+    assert.deepEqual(preamble.bindings.map((b) => b.name), ["Test.Cond", "Test.Str", "Test.Date"]);
+
+    const run = runnerFor(nb);
+    replay(nb, preamble);
+
+    // Every sibling reads back, which is the whole point.
+    assert.equal(inlineResultFor(run, "Test.Cond").plain, "true");
+    assert.equal(inlineResultFor(run, "Test.Str").plain, "\"hi\"");
+    assert.equal(inlineResultFor(run, "Test.Date").kind, "value");
+
+    // The empty one is simply not there — the same answer an array gives a field no item fills.
+    assert.equal(inlineResultFor(run, "Test.Foo").kind, "error");
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: a field that says nothing does not cost an array element its others", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    // The same failure as the test above, one level along: an array element is a generated struct
+    // too, so a field holding nothing but emptiness leaves *its* type polymorphic and takes every
+    // other field of every item with it — `element_at(0, legs).weight` failed on a property that
+    // looked perfectly bound, and `legs` itself still printed, so nothing said why.
+    //
+    // Three ways for a field to say nothing, all dropped alike: a list of holes, an empty list, and
+    // a key every item leaves empty.
+    const preamble = derivePreamble(
+      { legs: [{ weight: "80 kg", marks: [null, null], splits: [], note: null }] },
+      { isNumbatTyped: (key) => key.startsWith("legs.#"), isReserved: () => false, plain: PLAIN_ALL },
+    );
+    const [binding] = preamble.bindings;
+    assert.equal(binding.defs.length, 1, binding.defs.join("\n"));
+    assert.ok(binding.defs[0].endsWith("<T0> { weight: T0 }"), binding.defs[0]);
+
+    const run = runnerFor(nb);
+    replay(nb, preamble);
+
+    // The point: the filled field reads back.
+    assert.equal(plain(inlineResultFor(run, "element_at(0, legs).weight").valueHtml ?? ""), "80 kg");
+    for (const gone of ["marks", "splits", "note"]) {
+      assert.equal(inlineResultFor(run, `element_at(0, legs).${gone}`).kind, "error", gone);
+    }
+
+    // One filled item is all it takes for the position to have something to say, and then the gaps
+    // beside it stay as gaps rather than costing the field its place. Under its own key, since a
+    // second `legs` would redeclare that element type — which Numbat refuses.
+    const filled = derivePreamble(
+      { hikes: [{ weight: "80 kg", marks: [1, null] }] },
+      { isNumbatTyped: (key) => key.startsWith("hikes.#"), isReserved: () => false, plain: PLAIN_ALL },
+    );
+    replay(nb, filled);
+    assert.equal(inlineResultFor(run, "get_or(element_at(0, element_at(0, hikes).marks), 9)").plain, "1");
+    assert.equal(inlineResultFor(run, "get_or(element_at(1, element_at(0, hikes).marks), 9)").plain, "9");
+  } finally {
+    nb.free();
+  }
+});
+
+test("undefined values: an empty date or number property still binds inside an object", { skip }, async () => {
+  const mod = await loadNumbat();
+  const nb = newContext(mod);
+  try {
+    // The distinction the drop above turns on: a *numbat*-typed menu says nothing about the value's
+    // type, but number/text/date/datetime name it outright — so an empty one of those is a hole
+    // of a known type and keeps its place. Pinned against the real interpreter because the type
+    // has to ride on the value: Numbat expands a declared struct field of a generic type without
+    // substituting into it, and rejects the very value that matches it.
+    const preamble = derivePreamble(
+      { Trip: { leaves: null, cost: null, note: null, n: 2 } },
+      {
+        isNumbatTyped: () => false,
+        isReserved: () => false,
+        assignedType: (key) =>
+          key === "Trip.leaves" ? "datetime" : key === "Trip.cost" ? "number" : key === "Trip.note" ? "text" : null,
+        plain: PLAIN_ALL,
+      },
+    );
+    assert.deepEqual(preamble.bindings.map((b) => b.name), ["Trip.leaves", "Trip.cost", "Trip.note", "Trip.n"]);
+
+    const run = runnerFor(nb);
+    replay(nb, preamble);
+
+    // Every field reads, holes and siblings alike, and each hole is a hole of its declared type.
+    assert.equal(inlineResultFor(run, "Trip.n").plain, "2");
+    assert.equal(inlineResultFor(run, "is_undefined(Trip.leaves)").plain, "true");
+    assert.equal(inlineResultFor(run, "get_or(Trip.cost, 5)").plain, "5");
+    assert.equal(inlineResultFor(run, "get_or(Trip.note, \"n/a\")").plain, "\"n/a\"");
+    assert.match(plain(run("type(get_or(Trip.leaves, now()))").output), /DateTime/);
   } finally {
     nb.free();
   }

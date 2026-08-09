@@ -76,6 +76,18 @@
   color: var(--text-faint);
 }
 
+/* An undefined frontmatter property, shown as `nil` (interpreter/nullable-display.ts). Faint by
+ * default — it is the absence of data rather than data — but a class of its own rather than
+ * `.numbat-dimmed`, whose look it borrows, because that class also marks where a result's trailing
+ * `[Dimension]` annotation begins and a value must never be mistaken for the start of one. Having
+ * its own class is what lets it have its own override: a hole is worth picking out, where a
+ * dimension suffix is not.
+ *
+ * Override with `--numbat-undefined`. */
+.numbat-undefined {
+  color: var(--numbat-undefined, var(--text-faint));
+}
+
 .numbat-emphasized {
   font-weight: 600;
 }
@@ -94,9 +106,9 @@
 
 /* --- Inlay hints (editor) ----------------------------------------------- */
 
-/* Inline results and type hints painted into numbat code blocks in Source mode / Live Preview
- * (see evaluation/inlay.ts). The container dims its contents — so the reused `numbat-*` token
- * spans inside keep their hue but read as muted annotations, never as editable code — and is
+/* Inline results and type hints painted into numbat code blocks in Source mode / Live Preview (see
+ * evaluation/inlay.ts). The container dims its contents — so the reused `numbat-*` token spans
+ * inside keep their hue but read as muted annotations, never as editable code — and is
  * non-selectable so it stays out of copies and the cursor. */
 .numbat-inlay {
   opacity: 0.6;

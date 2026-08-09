@@ -12,7 +12,7 @@ import { frontmatterHints } from "../../../src/properties/frontmatter-inlay.ts";
 import { derivePreamble, PLAIN_ALL } from "../../../src/properties/parse.ts";
 import { evaluateScopeTree } from "../../../src/scope/eval.ts";
 import { buildScopeTree, type ScopeEntry } from "../../../src/scope/model.ts";
-import { loadNumbat, skip } from "../wasm-pkg.ts";
+import { loadNumbat, newContext, skip } from "../wasm-pkg.ts";
 
 // A LineInterpret over a live wasm context.
 function runnerFor(nb: any) {
@@ -27,7 +27,7 @@ function runnerFor(nb: any) {
 // The ScopeContextFactory the inspector bridge builds over the real wasm.
 function makeContextFactory(mod: any) {
   return () => {
-    const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+    const nb = newContext(mod);
     return { run: runnerFor(nb), free: () => nb.free() };
   };
 }
@@ -108,7 +108,7 @@ test("a value that restates its source is shown (unlike the inlays)", { skip }, 
   assert.equal(weight?.value?.plain, "80.5");
 
   // …where the frontmatter inlay suppresses it entirely.
-  const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+  const nb = newContext(mod);
   try {
     const hints = frontmatterHints(runnerFor(nb), tree.preamble);
     assert.equal(hints.some((hint) => hint.key === "weight"), false);
@@ -154,7 +154,7 @@ test("user prelude bindings resolve; fn/dimension show no value", { skip }, asyn
   const preludeSrc = ["let answer = 42", "unit widget = 3 m", "fn thrice(x) = 3 x", "dimension Frq = 1 / Time"];
   // A context factory that loads the prelude on creation, as createContext does.
   const makeContext = () => {
-    const nb = mod.Numbat.new(true, true, mod.FormatType.Html);
+    const nb = newContext(mod);
     for (const line of preludeSrc) {
       nb.interpret(line).free();
     }

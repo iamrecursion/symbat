@@ -21,6 +21,7 @@
 
 import { BUILTIN_TYPE_NAMES, KEYWORDS } from "../completion/expressions";
 import { FRONTMATTER_CLOSE, FRONTMATTER_OPEN } from "../document/frontmatter";
+import { definedValue, NULLABLE_ABSENT, NULLABLE_STRUCT } from "../interpreter/nullable";
 import { WORD_CHAR } from "../syntax/identifier";
 
 // THE MODEL
@@ -64,7 +65,7 @@ export interface PropertyBinding {
 
 /** Why a property contributed no binding. `reserved` and `unsupported` are surfaced as errors on
  *  numbat-typed properties; the rest are quiet. */
-export type PropertySkipReason = "reserved" | "invalid-name" | "duplicate" | "empty" | "unsupported";
+export type PropertySkipReason = "reserved" | "invalid-name" | "duplicate" | "unsupported";
 
 /** A property that contributed no binding, and why — for the property widget (and, later, the
  *  note-scope inspector) to surface. */
@@ -558,12 +559,25 @@ interface Walk {
  * Every item of a *typed* array is an `expression`, so the agreement check is vacuous there and the
  * type error stays Numbat's to report.
  */
-type ItemKind =
+interface ItemKind {
+  /** What is held here, or `null` when nothing concrete has been seen yet: the element of an empty
+   *  list, which has no element type to disagree with and so fits beside any list. */
+  shape: ItemShape | null;
+
+  /** Whether anything at this position was *absent*, so every item must write it as a nullable —
+   *  see {@link renderNode}. This is what separates an absence (`shape: null, nullable: true`) from
+   *  an empty list's element (`shape: null, nullable: false`), which are otherwise alike and must
+   *  not merge: the first makes its neighbours nullable, the second must never make `[[], [1],
+   *  ["a"]]` bind. */
+  nullable: boolean;
+}
+
+/** What one item holds, to the depth Numbat's list types care about. */
+type ItemShape =
   /** A scalar: the plain kind it rode along as, or an expression whose type only Numbat knows. */
   | { of: PlainKind | "expression"; }
-  /** A list, and the kind of its own elements — `null` for an empty one, which has no element type
-   *  to disagree with and so fits beside any list. */
-  | { of: "list"; element: ItemKind | null; }
+  /** A list, and the kind of its own elements. */
+  | { of: "list"; element: ItemKind; }
   /** An object, and the fields it bound. */
   | { of: "struct"; fields: ItemField[]; };
 
@@ -577,15 +591,43 @@ interface ItemField {
   kind: ItemKind;
 }
 
-/** One built array element: the Numbat literal to write into the list, and what its siblings are
- *  held to. */
+/**
+ * One position of an array element as the walk found it, rendered to Numbat source afterwards.
+ *
+ * Deliberately free of type information: whether a position has to be written as a nullable is only
+ * known once *every* sibling has been seen — a field written empty in item 1 and as a number in
+ * item 3 has to be nullable in both — so the walk records what is there and {@link renderNode}
+ * decides how it is written.
+ */
+type ItemNode =
+  /** An explicit absence: an empty property at this position. */
+  | { of: "absent"; }
+  /** A leaf, as the Numbat literal or expression it rode along as. */
+  | { of: "scalar"; expr: string; }
+  /** A nested list. */
+  | { of: "list"; items: ItemNode[]; }
+  /** An object, at the dotted item path its struct type is minted under. */
+  | { of: "struct"; path: string; fields: { name: string; node: ItemNode; }[]; };
+
+/** One built array element: what was found, and what its siblings are held to. */
 interface ItemValue {
-  /** The element as Numbat source. */
-  expr: string;
+  /** The element as found, awaiting rendering. */
+  node: ItemNode;
 
   /** The kind every sibling must match, so an untyped `[1, "a"]` — or `[{a: 1}, {a: "x"}]`, which
    *  differs only under its field names — stays out rather than binding a list Numbat rejects. */
   kind: ItemKind;
+}
+
+/** An element position nothing concrete has reached: an empty list's element. */
+const OPEN_KIND: ItemKind = { shape: null, nullable: false };
+
+/** A position that held an absence. */
+const ABSENT_KIND: ItemKind = { shape: null, nullable: true };
+
+/** The kind of a position holding exactly `shape`, with nothing absent in it. */
+function kindOf(shape: ItemShape): ItemKind {
+  return { shape, nullable: false };
 }
 
 /** One array binding under construction. */
@@ -633,23 +675,54 @@ interface ListState {
  * never volunteer an error.
  */
 function sameKind(a: ItemKind, b: ItemKind): boolean {
+  // A position nothing concrete has reached — an empty list's element — agrees with anything, and
+  // Numbat gives it whatever its neighbours have.
+  if (a.shape === null || b.shape === null) {
+    return true;
+  }
+
+  return sameShape(a.shape, b.shape);
+}
+
+/** Whether two concrete shapes agree — {@link sameKind} once both sides are known. */
+function sameShape(a: ItemShape, b: ItemShape): boolean {
   if (a.of === "list") {
-    // An empty list has no element type of its own; Numbat gives it whatever its neighbours have.
-    return b.of === "list" && (a.element === null || b.element === null || sameKind(a.element, b.element));
+    return b.of === "list" && sameKind(a.element, b.element);
   }
 
   if (a.of === "struct") {
-    if (b.of !== "struct" || a.fields.length !== b.fields.length) {
+    if (b.of !== "struct") {
       return false;
     }
 
+    // A field only one side has is *absent* on the other, which is a hole like any other: an item
+    // that leaves a key out binds alike, with that field undefined. Only a shared name whose
+    // contents disagree is a real disagreement.
     return a.fields.every((field) => {
       const other = b.fields.find((candidate) => candidate.name === field.name);
-      return other !== undefined && sameKind(field.kind, other.kind);
+      return other === undefined || sameKind(field.kind, other.kind);
     });
   }
 
   return a.of === b.of;
+}
+
+/** The name of the first field two struct shapes both have and disagree under, quoted for a
+ *  message, or `null` when they do not disagree that way. Only for naming the culprit in
+ *  {@link listItems}' error — the check itself is {@link sameShape}'s. */
+function disagreeingField(a: ItemShape, b: ItemShape): string | null {
+  if (a.of !== "struct" || b.of !== "struct") {
+    return null;
+  }
+
+  for (const field of a.fields) {
+    const other = b.fields.find((candidate) => candidate.name === field.name);
+    if (other !== undefined && !sameKind(field.kind, other.kind)) {
+      return `'${field.name}'`;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -662,18 +735,33 @@ function sameKind(a: ItemKind, b: ItemKind): boolean {
  * element type that never became concrete, and bind a list Numbat rejects.
  */
 function refine(a: ItemKind, b: ItemKind): ItemKind {
+  return { shape: mergeShape(a.shape, b.shape), nullable: a.nullable || b.nullable };
+}
+
+/** The more informative of two shapes, either of which may still be unknown. */
+function mergeShape(a: ItemShape | null, b: ItemShape | null): ItemShape | null {
+  if (a === null || b === null) {
+    return a ?? b;
+  }
+
   if (a.of === "list" && b.of === "list") {
-    const element = a.element === null || b.element === null
-      ? a.element ?? b.element
-      : refine(a.element, b.element);
-    return { of: "list", element };
+    return { of: "list", element: refine(a.element, b.element) };
   }
 
   if (a.of === "struct" && b.of === "struct") {
+    // The union of both sides' fields, in `a`'s order — a field one side lacks held an absence
+    // there, so it survives into the joined type as a nullable one.
     const fields = a.fields.map((field) => {
       const other = b.fields.find((candidate) => candidate.name === field.name);
-      return other === undefined ? field : { name: field.name, kind: refine(field.kind, other.kind) };
+      return { name: field.name, kind: refine(field.kind, other?.kind ?? ABSENT_KIND) };
     });
+
+    for (const field of b.fields) {
+      if (!a.fields.some((candidate) => candidate.name === field.name)) {
+        fields.push({ name: field.name, kind: refine(field.kind, ABSENT_KIND) });
+      }
+    }
+
     return { of: "struct", fields };
   }
 
@@ -681,20 +769,66 @@ function refine(a: ItemKind, b: ItemKind): ItemKind {
 }
 
 /**
+ * The joined kind with every struct field that carries no type removed, or `null` when nothing is
+ * left to write at all.
+ *
+ * Three things need this. A field every item leaves empty has nothing to say, and would put a
+ * column of `undefined` into the element type for no reason. It is what keeps the reader's
+ * {@link PlainBindings} settings out of the shape: with text off, `[{w: 80, note: "am"}, {w: 81,
+ * note: null}]` drops `note` from the first item as a non-participant and holds it as an absence in
+ * the second, so without this the array would grow the `note` the setting exists to keep out. And —
+ * the reason the test is {@link isTypeFree} rather than "was anything ever here" — a field that is
+ * *typeless* rather than merely empty leaves the whole generated element type polymorphic, which
+ * costs every **other** field of that element as well: `[{w: 80, marks: [,]}]` would bind a
+ * `marks: List<Opt<A>>` for free `A`, and `element_at(0, legs).w` would then fail to typecheck.
+ * That is the same failure {@link bindNested} refuses a type-free leaf to avoid.
+ *
+ * Only struct *fields* are dropped. A list element that was never filled is still an element —
+ * `[null, null]` binds two undefined values, and no struct is involved for it to poison — and an
+ * object left with no fields at all cannot be written as a Numbat struct, so it collapses to `null`
+ * and takes its array with it, exactly as an element holding nothing bindable already does.
+ */
+function normalize(kind: ItemKind): ItemKind | null {
+  const { shape } = kind;
+  if (shape === null || shape.of !== "struct" && shape.of !== "list") {
+    return kind;
+  }
+
+  if (shape.of === "list") {
+    const element = normalize(shape.element);
+    return element === null ? null : { shape: { of: "list", element }, nullable: kind.nullable };
+  }
+
+  const fields: ItemField[] = [];
+  for (const field of shape.fields) {
+    // A type-free field is one every item left empty (`shape === null`) or filled only with
+    // emptiness (`[]`, `[,]`) — neither says what it holds, and a field that does not say cannot
+    // be written here at all. See above.
+    const kept = isTypeFree(field.kind) ? null : normalize(field.kind);
+    if (kept !== null) {
+      fields.push({ name: field.name, kind: kept });
+    }
+  }
+
+  return fields.length === 0 ? null : { shape: { of: "struct", fields }, nullable: kind.nullable };
+}
+
+/**
  * The plain kind an untyped array's own binding reports — the scalar its items ultimately hold,
  * seen through any nesting — or `null` when there is nothing scalar in it to go on (an empty array,
  * or one of objects).
  */
-function scalarKind(kind: ItemKind | null): PlainKind | null {
-  if (kind === null) {
+function scalarKind(kind: ItemKind): PlainKind | null {
+  const { shape } = kind;
+  if (shape === null) {
     return null;
   }
 
-  if (kind.of === "list") {
-    return scalarKind(kind.element);
+  if (shape.of === "list") {
+    return scalarKind(shape.element);
   }
 
-  return kind.of === "struct" || kind.of === "expression" ? null : kind.of;
+  return shape.of === "struct" || shape.of === "expression" ? null : shape.of;
 }
 
 /**
@@ -714,7 +848,7 @@ function scalarKind(kind: ItemKind | null): PlainKind | null {
  * The element kind comes back with the literal, so a list nested inside another carries what it
  * holds into its own agreement check.
  */
-function listExpression(
+function listItems(
   walk: Walk,
   state: ListState,
   path: string[],
@@ -722,9 +856,9 @@ function listExpression(
   typed: boolean,
   depth: number,
   ancestors: Set<object>,
-): { expr: string; element: ItemKind | null; } | null {
+): { items: ItemNode[]; element: ItemKind; } | null {
   const itemPath = [...path, ARRAY_ITEM];
-  const parts: string[] = [];
+  const nodes: ItemNode[] = [];
 
   // What the items seen so far collectively hold, which the next one is held to.
   let first: ItemKind | undefined;
@@ -739,20 +873,47 @@ function listExpression(
     if (first === undefined) {
       first = built.kind;
     } else if (!sameKind(first, built.kind)) {
-      state.error ??= first.of === "struct" && built.kind.of === "struct"
-        ? `item ${index + 1} does not have the fields item 1 has — every item of an array binds alike`
+      // A *missing* field is no longer a disagreement (it binds as undefined, see sameShape), so
+      // two objects can only fall out here over a field they both have.
+      state.error ??= first.shape?.of === "struct" && built.kind.shape?.of === "struct"
+        ? `item ${index + 1} holds something different under ${
+          disagreeingField(first.shape, built.kind.shape) ?? "one of its keys"
+        } than item 1 does — every item of an array binds alike`
         : `item ${index + 1} is not the same kind of value as item 1 — a Numbat list holds one type`;
       return null;
     } else {
       // Each item is held to the first, so what the first is missing (the element type of an empty
-      // list) has to be folded back in, or a third item could disagree with the second unchecked.
+      // list, or a field only a later item fills) has to be folded back in, or a third item could
+      // disagree with the second unchecked.
       first = refine(first, built.kind);
     }
 
-    parts.push(built.expr);
+    nodes.push(built.node);
   }
 
-  return { expr: `[${parts.join(", ")}]`, element: first ?? null };
+  return { items: nodes, element: first ?? OPEN_KIND };
+}
+
+/**
+ * Whether this position is *undefined* — the `null` an empty property parses to, or an empty
+ * expression under a numbat-typed key — so it binds a hole rather than nothing at all.
+ *
+ * Three things that look like an absence are not one, and the distinctions are the whole of this
+ * function:
+ *
+ *  - A value the reader's {@link PlainBindings} settings do not bind is a **non-participant**, not
+ *    a hole. Binding it as `undefined` would put back exactly what the setting exists to keep out.
+ *  - An **unset checkbox** is `false` (see {@link plainExpression}), which is what Obsidian's
+ *    tri-state Checkbox means by an empty value, and it is a value rather than the lack of one.
+ *  - A value of a **shape Numbat cannot hold** under a typed key — a boolean, an object — is still
+ *    `unsupported`: the reader wrote something, and it is worth telling them it did not land.
+ */
+function isAbsent(walk: Walk, key: string, value: unknown, typed: boolean): boolean {
+  if (typed) {
+    return value === null || expressionText(value) === "";
+  }
+
+  return value === null && !CHECKBOX_TYPES.has(walk.rules.assignedType?.(key) ?? "");
 }
 
 /** One element (or one field of one), built at its own path. `typed` is that path's reading, as
@@ -776,7 +937,7 @@ function itemValue(
     ancestors.add(value);
     try {
       if (Array.isArray(value)) {
-        const nested = listExpression(
+        const nested = listItems(
           walk,
           state,
           path,
@@ -785,7 +946,10 @@ function itemValue(
           depth,
           ancestors,
         );
-        return nested === null ? null : { expr: nested.expr, kind: { of: "list", element: nested.element } };
+        return nested === null ? null : {
+          node: { of: "list", items: nested.items },
+          kind: kindOf({ of: "list", element: nested.element }),
+        };
       }
 
       return structValue(walk, state, path, value, typed, depth, ancestors);
@@ -794,14 +958,18 @@ function itemValue(
     }
   }
 
+  if (isAbsent(walk, dottedKey(path), value, typed)) {
+    return { node: { of: "absent" }, kind: ABSENT_KIND };
+  }
+
   if (typed) {
     const text = expressionText(value);
-    if (text === null || text === "") {
+    if (text === null) {
       return null;
     }
 
     state.expressions = true;
-    return { expr: `(${text})`, kind: { of: "expression" } };
+    return { node: { of: "scalar", expr: `(${text})` }, kind: kindOf({ of: "expression" }) };
   }
 
   const plain = plainExpression(walk, dottedKey(path), value);
@@ -809,7 +977,7 @@ function itemValue(
     return null;
   }
 
-  return { expr: plain.expr, kind: { of: plain.kind } };
+  return { node: { of: "scalar", expr: plain.expr }, kind: kindOf({ of: plain.kind }) };
 }
 
 /**
@@ -831,7 +999,7 @@ function structValue(
   depth: number,
   ancestors: Set<object>,
 ): ItemValue | null {
-  const fields: string[] = [];
+  const fields: { name: string; node: ItemNode; }[] = [];
   const bound: ItemField[] = [];
 
   for (const [key, value] of Object.entries(record)) {
@@ -855,7 +1023,7 @@ function structValue(
       continue;
     }
 
-    fields.push(`${name}: (${built.expr})`);
+    fields.push({ name, node: built.node });
     bound.push({ name, kind: built.kind });
   }
 
@@ -863,20 +1031,165 @@ function structValue(
     return null; // an element with nothing bindable in it
   }
 
-  const dotted = dottedKey(path);
-  let name = state.structs.get(dotted);
+  return {
+    node: { of: "struct", path: dottedKey(path), fields },
+    kind: kindOf({ of: "struct", fields: bound }),
+  };
+}
+
+// RENDERING WHAT THE WALK FOUND
+// ================================================================================================
+
+/** The items of one list as a Numbat list literal, every item written to the *joined* element kind
+ *  — which is what makes a position that was absent anywhere nullable everywhere. */
+function renderList(state: ListState, items: readonly ItemNode[], element: ItemKind): string {
+  return `[${items.map((item) => renderNode(state, item, element)).join(", ")}]`;
+}
+
+/** One position as Numbat source, wrapped as a nullable when anything at this position, in any
+ *  item, was absent. */
+function renderNode(state: ListState, node: ItemNode, kind: ItemKind): string {
+  if (!kind.nullable) {
+    return renderShape(state, node, kind.shape);
+  }
+
+  return node.of === "absent" ? NULLABLE_ABSENT : definedValue(renderShape(state, node, kind.shape));
+}
+
+/**
+ * The value itself, with the nullability already decided by {@link renderNode}.
+ *
+ * The two fallbacks for a shape that does not match the node are unreachable, like the `absent`
+ * case below: a node is only ever rendered against the kind its own position joined to, and a
+ * position holding a list or a struct has that shape. They are written as the emptiest thing of
+ * the right kind rather than thrown — but nothing here is a tested path, and the struct one in
+ * particular would mint `struct X<> { }`, which Numbat does not parse. Reaching either means the
+ * walk and the joined kind have come apart, which is a bug in this file.
+ */
+function renderShape(state: ListState, node: ItemNode, shape: ItemShape | null): string {
+  switch (node.of) {
+    case "absent":
+      // Unreachable: refine marks every position an absence reached as nullable, and renderNode
+      // takes an absence down its own branch. Written out rather than thrown, since a hole is
+      // always the right answer for an absence.
+      return NULLABLE_ABSENT;
+    case "scalar":
+      return node.expr;
+    case "list":
+      return renderList(state, node.items, shape?.of === "list" ? shape.element : OPEN_KIND);
+    case "struct":
+      return renderStruct(state, node, shape?.of === "struct" ? shape.fields : []);
+  }
+}
+
+/**
+ * One object as a Numbat struct literal, minting the element type for its position on the way.
+ *
+ * The type is minted once per *position* — the property keys `people.#`, `people.#.address` — and
+ * reused by every element, which is what makes the list homogeneous. Its fields come from the
+ * **joined** kind rather than from this element, so every element writes the same type even when
+ * one of them left a field out; the fields are written in this element's own order, since Numbat
+ * constructs a struct by naming its fields and takes them in any order.
+ */
+function renderStruct(
+  state: ListState,
+  node: Extract<ItemNode, { of: "struct"; }>,
+  fields: readonly ItemField[],
+): string {
+  const parts: string[] = [];
+  for (const field of node.fields) {
+    // A field the joined type does not have is one no item ever filled (see normalize) — dropped
+    // for every element alike, so the elements still agree.
+    const joined = fields.find((candidate) => candidate.name === field.name);
+    if (joined !== undefined) {
+      parts.push(`${field.name}: (${renderNode(state, field.node, joined.kind)})`);
+    }
+  }
+
+  // A field this element does not have at all, which some other one did: absent here.
+  for (const field of fields) {
+    if (!node.fields.some((candidate) => candidate.name === field.name)) {
+      parts.push(`${field.name}: (${NULLABLE_ABSENT})`);
+    }
+  }
+
+  // Minted after the fields are rendered, so a nested type is still declared before the type that
+  // holds it (a Numbat `struct` must be declared before it is named).
+  let name = state.structs.get(node.path);
   if (name === undefined) {
     // The generation slot is a constant `0`: unlike an object property, whose `let` is rebuilt (and
     // retyped) once per leaf, an array's element type is declared once.
-    name = `_Nb_${structLabel(dotted)}_${state.hash}_0_${state.structs.size}`;
-    state.structs.set(dotted, name);
+    name = `_Nb_${structLabel(node.path)}_${state.hash}_0_${state.structs.size}`;
+    state.structs.set(node.path, name);
 
-    const params = bound.map((_, index) => `T${index}`);
-    const decls = bound.map((field, index) => `${field.name}: T${index}`);
+    const params = fields.map((_, index) => `T${index}`);
+    const decls = fields.map((field, index) => `${field.name}: T${index}`);
     state.defs.push(`struct ${name}<${params.join(", ")}> { ${decls.join(", ")} }`);
   }
 
-  return { expr: `${name} { ${fields.join(", ")} }`, kind: { of: "struct", fields: bound } };
+  return `${name} { ${parts.join(", ")} }`;
+}
+
+/**
+ * Whether a value of this kind carries no type at all — a hole nothing ever said anything about.
+ *
+ * Such a value leaves a type *variable* behind, which is harmless on its own (`let x = nil`
+ * generalizes to `forall A. Opt<A>`, `let x = []` to `forall A. List<A>`, and both read back
+ * happily) and fatal in one place: inside a generated `struct`. Numbat cannot solve a `HasField`
+ * constraint against a type that is still polymorphic, so one of these costs the reader **every**
+ * field of the object holding it, not just the empty one — see {@link bindNested} and
+ * {@link normalize}, which are what act on this.
+ *
+ * Both ways a position can fail to say what it holds count, and they are otherwise distinguished
+ * everywhere else in this file: an **absence** (`[,]`, `nullable`) and an **empty list**'s element
+ * (`[]`, which is not nullable — it is not a hole, it is nothing at all). They part company in
+ * {@link sameKind}, which lets an empty list stand beside any list, and meet again here, where the
+ * question is only whether Numbat will be left with a type variable.
+ *
+ * A list is followed into, because a list of nothing but holes is type-free in the same way
+ * (`List<Opt<A>>`) and just as fatal in a field. A list anything at all filled is not, and neither
+ * is a struct — {@link normalize} has already dropped the fields that would have made one so.
+ */
+function isTypeFree(kind: ItemKind): boolean {
+  if (kind.shape === null) {
+    return true;
+  }
+
+  return kind.shape.of === "list" && isTypeFree(kind.shape.element);
+}
+
+/**
+ * The Numbat type each plain kind binds as — which an *empty* property of that kind can be declared
+ * at, since the type menu said what it would hold whether or not anything was written.
+ *
+ * `boolean` is here for completeness rather than use: an unticked checkbox is `false`, a value like
+ * any other, so a boolean property is never empty and never reaches the hole path.
+ */
+const PLAIN_TYPE: Record<PlainKind, string> = {
+  number: "Scalar",
+  text: "String",
+  date: "DateTime",
+  boolean: "Bool",
+};
+
+/**
+ * A hole of a known type, as a definition to replay and the name to write in its place.
+ *
+ * The type cannot be put where it belongs — on the struct field — because Numbat expands a declared
+ * field of a generic type without substituting into it (it expects
+ * `Opt<DateTime> {value: List<T>}`) and then rejects the very value that matches. So the field is
+ * left generic, as every other field is, and the *value* carries the type instead: an annotated
+ * `let` types cleanly, and the field infers from it.
+ *
+ * The definition rides in the binding's `defs`, which the scope inspector does not list (it reads
+ * binding names, not context bindings — see scope/model.ts), so this stays out of the reader's way
+ * exactly as the generated `struct` definitions beside it do. One name per type, redefined as often
+ * as it is needed, which Numbat allows for a `let`.
+ */
+function typedHole(kind: PlainKind): { def: string; name: string; } {
+  const type = PLAIN_TYPE[kind];
+  const name = `_Nb_hole_${type}`;
+  return { def: `let ${name}: ${NULLABLE_STRUCT}<${type}> = ${NULLABLE_ABSENT}`, name };
 }
 
 /** The Numbat field name for a key inside an array element, or `null` — with the skip that says why
@@ -914,7 +1227,7 @@ function arrayExpression(
   value: readonly unknown[],
   typed: boolean,
   depth: number,
-): { expr: string; defs: string[]; expressions: boolean; plainKind: PlainKind; } | null {
+): { expr: string; defs: string[]; expressions: boolean; plainKind: PlainKind; typeFree: boolean; } | null {
   const key = dottedKey(path);
   const state: ListState = {
     defs: [],
@@ -929,11 +1242,17 @@ function arrayExpression(
     expressions: false,
   };
 
-  const list = depth >= MAX_PROPERTY_DEPTH
+  const built = depth >= MAX_PROPERTY_DEPTH
     ? null
-    : listExpression(walk, state, path, value, typed, depth, new Set<object>([value]));
+    : listItems(walk, state, path, value, typed, depth, new Set<object>([value]));
 
-  if (list === null) {
+  // An element left with no fields at all — every item wrote every one of them empty — cannot be a
+  // Numbat struct, so the array binds nothing, as one holding nothing bindable already does.
+  const element = built === null ? null : normalize(built.element);
+  if (built === null || element === null) {
+    if (built !== null) {
+      state.error ??= "no item holds anything Numbat can bind";
+    }
     if (typed) {
       walk.skips.push({
         key,
@@ -951,17 +1270,52 @@ function arrayExpression(
     walk.skips.push(...state.skips);
   }
 
+  // The struct definitions are minted here rather than during the walk, so a failed array leaves
+  // none behind, and every element writes the joined element type rather than its own.
+  const expr = renderList(state, built.items, element);
+
   return {
-    expr: list.expr,
+    expr,
     defs: state.defs,
     expressions: state.expressions,
     // `number` for a list with nothing scalar in it to go on — an empty array, or one of objects.
-    plainKind: scalarKind(list.element) ?? "number",
+    plainKind: scalarKind(element) ?? "number",
+    // True only for a list of nothing but holes, which carries no type just as a lone hole does.
+    typeFree: isTypeFree({ shape: { of: "list", element }, nullable: false }),
   };
 }
 
 // DERIVING ONE BINDING
 // ================================================================================================
+
+/**
+ * The kind an *empty* untyped property binds as, from the type its type menu declares, or `null`
+ * when it declares none that binds (or the reader has that kind switched off).
+ *
+ * This is the opt-in that makes a lone undefined property a binding at all: with no value there is
+ * nothing to read the kind off, so the declared type is the only thing that says a Numbat value was
+ * ever wanted here. Checkbox is deliberately not here — an unset one is `false`, a value rather
+ * than the lack of one (see {@link plainExpression}).
+ */
+function declaredKind(walk: Walk, key: string): PlainKind | null {
+  const declared = walk.rules.assignedType?.(key) ?? null;
+  if (declared === null) {
+    return null;
+  }
+
+  const { plain } = walk.rules;
+  if (DATE_TYPES.has(declared)) {
+    return plain.dates ? "date" : null;
+  }
+  if (declared === "number") {
+    return plain.numbers ? "number" : null;
+  }
+  if (declared === "text") {
+    return plain.text ? "text" : null;
+  }
+
+  return null;
+}
 
 /** The expression a property contributes, or `null` when it contributes nothing — either quietly
  *  (the common case: an untyped non-number) or as a pushed skip. */
@@ -970,7 +1324,8 @@ function leafExpression(
   path: string[],
   value: unknown,
   depth: number,
-): { expr: string; defs: string[]; kind: "expression" | PlainKind; } | null {
+  inObject: boolean,
+): { expr: string; defs: string[]; kind: "expression" | PlainKind; typeFree?: true; } | null {
   const key = dottedKey(path);
   const typed = walk.rules.isNumbatTyped(key);
 
@@ -995,7 +1350,39 @@ function leafExpression(
       expr: list.expr,
       defs: list.defs,
       kind: items || list.expressions ? "expression" : list.plainKind,
+      ...list.typeFree ? { typeFree: true as const } : {},
     };
+  }
+
+  // A property with no value is undefined rather than absent from the scope — but only where it was
+  // opted into. An empty property is on a great many notes, and binding every one of them would put
+  // a `summary` and a `description` into nearly every note's namespace (and claim those names
+  // against the properties below them) to say nothing but `undefined`. Inside an array a sibling
+  // gives the position its meaning; here only the type menu does.
+  if (isAbsent(walk, key, value, typed)) {
+    // The two kinds of empty property differ in exactly what this file needs. The **numbat** type
+    // menu describes the value's *syntax*, not its type, so an empty one says nothing at all —
+    // `typeFree`, and inside an object it cannot be bound. A **number**, **text** or **date** menu
+    // names the type outright, so an empty one of those is a hole of a known type and binds
+    // wherever a filled one would.
+    if (typed) {
+      return { expr: NULLABLE_ABSENT, defs: [], kind: "expression", typeFree: true };
+    }
+
+    const declared = declaredKind(walk, key);
+    if (declared === null) {
+      return null;
+    }
+
+    // Inside an object the hole has to carry its type, or the struct it lands in stays polymorphic
+    // and none of its fields can be read. On its own it needs no such help: `let x = nil`
+    // generalizes and reads back, so the plain literal is left alone rather than narrowed.
+    if (!inObject) {
+      return { expr: NULLABLE_ABSENT, defs: [], kind: declared };
+    }
+
+    const hole = typedHole(declared);
+    return { expr: hole.name, defs: [hole.def], kind: declared };
   }
 
   if (typed) {
@@ -1007,11 +1394,6 @@ function leafExpression(
         reason: "unsupported",
         message: `property '${key}': a Numbat property holds an expression as text`,
       });
-      return null;
-    }
-
-    if (expr === "") {
-      walk.skips.push({ key, path, reason: "empty", message: `property '${key}' is empty` });
       return null;
     }
 
@@ -1120,7 +1502,8 @@ function structLabel(access: string): string {
  * depth.
  *
  * The struct types are generic, so Numbat infers each field's type at the construction site and
- * nothing here has to know a dimension.
+ * nothing here has to know a dimension. That every field *can* be inferred is what {@link
+ * bindNested} guarantees by refusing the type-free ones.
  */
 function generationCode(state: ObjectState, segments: readonly string[], expr: string): string {
   const defs: string[] = [];
@@ -1162,15 +1545,39 @@ function bindNested(walk: Walk, state: ObjectState, path: string[], value: unkno
     return;
   }
 
-  const leaf = leafExpression(walk, path, value, depth);
+  const leaf = leafExpression(walk, path, value, depth, true);
   if (leaf === null) {
     return;
   }
 
-  // Only a numbat-typed leaf is owed the reason a name could not be had; see claimName.
+  // Only a numbat-typed leaf is owed the reason it did not reach the scope; see claimName.
   const report = leaf.kind === "expression";
-
   const key = dottedKey(path);
+
+  // A value nothing said anything about (see isTypeFree) binds nothing *here*, where a lone one of
+  // the same kind binds happily. The difference is the struct: a field with no type leaves the
+  // whole generated type polymorphic, and Numbat cannot read *any* field of a polymorphic struct —
+  // so keeping this one would cost the reader every sibling it sits beside, to say only that a
+  // property they can already see is empty is empty. Dropping it is the same answer an array
+  // already gives a field no item ever fills.
+  //
+  // Said out loud, though, unlike the array's silent drop: this one is a property the reader
+  // *opted in*, and it would otherwise disappear with no binding, no inlay and no row to explain
+  // why — leaving `costs.foo` reporting only that the field does not exist. A plain value that
+  // rode along was never asked for and stays quiet, exactly as claimName's does.
+  if (leaf.typeFree) {
+    if (report) {
+      walk.skips.push({
+        key,
+        path,
+        reason: "unsupported",
+        message: `property '${key}': nothing here says what type it holds, so it cannot be a field`
+          + " — write a value, or use the number, text or date type instead",
+      });
+    }
+    return;
+  }
+
   if (!state.claimed) {
     const rootPath = [state.rootKey];
     const rootName = claimName(walk, state.rootKey, rootPath, report);
@@ -1339,7 +1746,7 @@ export function derivePreamble(frontmatter: Record<string, unknown>, rules: Prea
     }
 
     const path = [key];
-    const leaf = leafExpression(walk, path, value, 1);
+    const leaf = leafExpression(walk, path, value, 1, false);
     if (leaf === null) {
       continue;
     }

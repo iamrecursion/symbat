@@ -5,8 +5,13 @@
 // nothing else needs to be shipped.
 
 import { requestUrl } from "obsidian";
-import { type CompletionInfo, parsePrintInfo, signatureFromTypeOutput } from "../completion/docs";
-import { type CompletionVocabulary, parseListNames, structFieldNames } from "../completion/expressions";
+import { completionCard, type CompletionInfo, signatureFromTypeOutput } from "../completion/docs";
+import {
+  type CompletionVocabulary,
+  parseListNames,
+  pluginTypeCandidates,
+  structFieldNames,
+} from "../completion/expressions";
 import { plainText } from "../evaluation/inlay-parse";
 import { type PreludePart, preludeSourceBefore } from "../settings/util";
 import { forgetSemanticNames, recordSemanticNames } from "../syntax/type-names";
@@ -14,6 +19,8 @@ import { buildUnicodeCodeList, codesMatching, type UnicodeCode, unicodePrefixAt 
 import init, { __numbat_reset, FormatType, Numbat, setup_panic_hook } from "../wasm/pkg/numbat_wasm.js";
 import wasmBinary from "../wasm/pkg/numbat_wasm_bg.wasm";
 import { escapeHtml } from "./markup";
+import { NULLABLE_PRELUDE } from "./nullable";
+import { readableNullables } from "./nullable-display";
 
 export { FormatType, Numbat };
 export type { PreludePart, UnicodeCode };
@@ -390,7 +397,30 @@ function applyUserPrelude(context: Numbat, source: string): void {
 }
 
 /**
+ * Apply the nullable vocabulary (see interpreter/nullable.ts) to a fresh context.
+ *
+ * Unlike the user prelude, a failure here is a plugin bug rather than something the reader wrote,
+ * so it is logged and never routed to {@link getLastPreludeError} — which the REPL and the `.nbt`
+ * editor show as *the user's* prelude error.
+ */
+function applyNullablePrelude(context: Numbat): void {
+  try {
+    const result = context.interpret(NULLABLE_PRELUDE);
+    if (result.is_error) {
+      console.error("Symbat: the nullable vocabulary failed to load:\n" + result.output.replace(/<[^>]+>/g, ""));
+    }
+    result.free();
+  } catch (error) {
+    console.error("Symbat: the nullable vocabulary crashed the interpreter", error);
+    restartNumbat();
+  }
+}
+
+/**
  * Create a fresh interpreter context with the prelude loaded, rendering to HTML.
+ *
+ * Every context gets the nullable vocabulary (see interpreter/nullable.ts) first, so the bindings
+ * an undefined frontmatter property emits type, and `get_or` and friends are callable everywhere.
  *
  * When `applyRates` is set and rates are cached, they are made available for currency conversions.
  * Because Numbat's rate store is a set-once global, the rates are applied via `set_exchange_rates`
@@ -407,6 +437,11 @@ function applyUserPrelude(context: Numbat, source: string): void {
 export function createContext(applyRates: boolean, options: { preludeBefore?: string; } = {}): Numbat {
   const context = Numbat.new(true, true, FormatType.Html);
   lastPreludeError = null;
+
+  // Before both of the below: a user prelude that defines its own `get` should *shadow* ours
+  // (Numbat lets a later `fn` replace an earlier one), not be replaced by it.
+  applyNullablePrelude(context);
+
   if (applyRates && exchangeRatesXml !== null) {
     try {
       if (exchangeRatesApplied) {
@@ -454,6 +489,15 @@ export function readableStructNames(output: string): string {
 }
 
 /**
+ * Every rewrite formatter output gets before the reader sees it: readable struct names, then
+ * nullable values (`Opt { value: [] }` → `nil`, `Opt { value: [70] }` → `70`). The one door for
+ * anything that reaches the DOM.
+ */
+export function readableOutput(output: string): string {
+  return readableNullables(readableStructNames(output));
+}
+
+/**
  * Run `code` in `context` and return its rendered result. The single funnel every evaluating
  * surface goes through, so all of them get the same three guarantees: the wasm-side result object
  * is freed rather than leaked, generated struct names are made readable, and a Rust panic becomes
@@ -465,7 +509,7 @@ export function readableStructNames(output: string): string {
 export function interpret(context: Numbat, code: string): NumbatResult {
   try {
     const output = context.interpret(code);
-    const result: NumbatResult = { output: readableStructNames(output.output), isError: output.is_error };
+    const result: NumbatResult = { output: readableOutput(output.output), isError: output.is_error };
     output.free();
     return result;
   } catch (error) {
@@ -746,9 +790,16 @@ export function structFields(context: Numbat, base: string): string[] {
 
 /**
  * The full documentation for `name` for the dwell popup — parsed from `print_info(<name>)` into its
- * body HTML and reference URL — or `null` when Numbat has nothing to show (an unknown name or
- * keyword yields `Not found`). Not cached: it is only called when a completion has been
- * hovered/selected for a moment.
+ * body HTML and reference URL — or `null` when there is nothing to show. Not cached: it is only
+ * called when a completion has been hovered/selected for a moment.
+ *
+ * A **type** falls through to the plugin's own table (completion/expressions.ts): `print_info`
+ * answers `Not found` for `List` and `Bool` as readily as for a word it has never heard, so without
+ * this a type name is the one thing in the language that hovers to nothing. The interpreter is
+ * asked first and kept if it answers, so a reader's own `let List = 5` still describes itself.
+ *
+ * Every surface that opens a card goes through here — the hover popup, the editor completer, the
+ * REPL and property-field completer — so all four learn about types at once.
  */
 export function completionInfo(context: Numbat, name: string): CompletionInfo | null {
   try {
@@ -756,7 +807,7 @@ export function completionInfo(context: Numbat, name: string): CompletionInfo | 
 
     // `print_info` bypasses `interpret`, so it needs the same rewrite: a nested property's docs
     // would otherwise show the raw generated type name.
-    return typeof raw === "string" ? parsePrintInfo(readableStructNames(raw)) : null;
+    return completionCard(typeof raw === "string" ? readableOutput(raw) : null, name);
   } catch (error) {
     console.error("Symbat: print_info crashed", error);
     restartNumbat();
@@ -885,6 +936,13 @@ export function ensureBlockCompletion(
  * dimensions and units (categorized by {@link
  * import("../completion/expressions").expressionCompletions}). Empty when the wasm is not ready; a
  * crash drops the context and schedules a restart.
+ *
+ * The plugin's own type names are appended, since the engine does not know them (see {@link
+ * import("../completion/expressions").pluginTypeCandidates}). After the engine's own, so a name it
+ * offers keeps the position its sorting gave it; a duplicate is dropped downstream.
+ *
+ * The one funnel all four completing surfaces draw from — the editor, the REPL, the `.nbt` view and
+ * the property field — so they offer the same names without four copies of this.
  */
 export function expressionCompletionCandidates(context: Numbat, query: string): string[] {
   if (!wasmReady) {
@@ -892,7 +950,8 @@ export function expressionCompletionCandidates(context: Numbat, query: string): 
   }
 
   try {
-    return context.get_completions_for(query).map((value) => String(value));
+    const engine = context.get_completions_for(query).map((value) => String(value));
+    return [...engine, ...pluginTypeCandidates(query)];
   } catch (error) {
     console.error("Symbat: expression completion crashed", error);
     invalidateExpressionCompletion();

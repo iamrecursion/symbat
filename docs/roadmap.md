@@ -8,8 +8,6 @@ items have a design note of their own.
 
 The following are near-term goals that are relatively small.
 
-- **Community Plugin Registry:** Symbat installs by hand today. Submitting it means meeting
-  Obsidian's review checklist and, more consequentially, committing to a public support surface.
 - **Real-Vault Coverage of the Settings Tab:** The settings path is exercised by type-checking and a
   golden descriptor test, not by anything that renders it. Every settings change needs a manual pass
   until that is no longer true.
@@ -29,23 +27,6 @@ with Numbat harder than it needs to be:
 
 The simplest fix to this is monkey-patch the metadata widgets for each with the ability to specify a
 timezone, as well as monkey patch the widget updates to restore the source propertly.
-
-## Better Handling of Undefined Frontmatter Properties
-
-Currently an undefined frontmatter property is dropped entirely from the structure it is nested
-inside (or the top level). This is particularly annoying with uni-typed lists/arrays, so we can do
-better here. The proposal is as follows:
-
-- We ship a `struct __Nullable<T> { present: bool, value: T }` type that gets injected into every
-  numbat context provided by symbat. This is not an enum because they are not supported by numbat,
-  see [sum types](#sum-types) below), and is not really exposed to the user.
-- Whenever we would display `__Nullable<T>` we instead display as `T?`, and when displaying a value
-  of nullable type we either display `value` if `present == true` or `undefined` otherwise.
-- We provide the following utility functions that users can call on `T?`.
-  - `fn get<T>(n: T?) -> T` results in a runtime error if called where `!present`.
-  - `fn get_or<T>(n: T?, T) -> T`
-  - `fn is_defined<T>(n: T?) -> bool`
-  - `fn is_undefined<T>(n: T?) -> bool`
 
 ## Better Numbers
 
@@ -113,6 +94,13 @@ one cause, which is that the WASM boundary hands over less than the interpreter 
   say whether an offset was written, so the first binds local `08:30` while the second keeps the
   offset as written — the two surfaces disagree by the offset. A date, or a time with no offset,
   reads the same either way.
+- **An Undefined Value is a One-Element List:** The `Opt` an empty property binds is
+  `struct Opt<T> { value: List<T> }`, empty for `nil`, because Numbat evaluates eagerly and has no
+  polymorphic bottom — there is no value to put in a `value: T` field when there is no value.
+  Reading `x.value` rather than `get_or(x, …)` therefore shows a list. It is not `__Nullable` as
+  once planned because Numbat reserves double-underscored type names; the short, writable name it
+  has instead means a prelude of your own that declares `struct Opt<T> { value: List<T> }` would be
+  read as this one.
 - **The Bundled Prelude is Unstructured:** The WASM exposes the standard library as a flat list of
   names with no module structure or per-item origin. The sources _exist in the bundle_ but are not
   accessible.

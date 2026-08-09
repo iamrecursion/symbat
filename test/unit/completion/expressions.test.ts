@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   allowedCategoriesAt,
   boundCompletions,
+  BUILTIN_TYPE_NAMES,
   classifyCompletion,
   type CompletionVocabulary,
   declaredNameCompletions,
@@ -18,10 +19,13 @@ import {
   isTypePosition,
   memberBaseAt,
   parseListNames,
+  pluginTypeCandidates,
   structFieldNames,
+  typeDoc,
   typeVariableCompletions,
   typeVariablesInScopeAt,
 } from "../../../src/completion/expressions.ts";
+import { NULLABLE_STRUCT, NULLABLE_STRUCT_DOC } from "../../../src/interpreter/nullable.ts";
 
 /** Build a vocabulary from plain name lists (the shape interpreter/numbat.ts assembles from the
  *  `list functions|units|variables|dimensions` commands). */
@@ -575,6 +579,76 @@ test("decoratorDoc answers for Numbat's decorators and nothing else", () => {
   assert.match(decoratorDoc("description") ?? "", /describing/);
   assert.equal(decoratorDoc("nonexistent"), null);
   assert.equal(decoratorDoc("name "), null);
+});
+
+test("typeDoc answers for every type name the completer offers, plus Opt", () => {
+  // The built-ins are documented because Numbat documents none of them — so if the completer offers
+  // a type name, hovering it has something to say.
+  for (const name of BUILTIN_TYPE_NAMES) {
+    assert.match(typeDoc(name) ?? "", /\S/, `${name} has no description`);
+  }
+  assert.equal(typeDoc(NULLABLE_STRUCT), NULLABLE_STRUCT_DOC);
+
+  assert.equal(typeDoc("Length"), null, "a dimension is not a type the plugin describes");
+  assert.equal(typeDoc("nonexistent"), null);
+  assert.equal(typeDoc("list"), null, "the lookup is exact, and Numbat's type names are capitalized");
+});
+
+test("pluginTypeCandidates offers Opt the way Numbat offers its own type names", () => {
+  // Case-sensitive, as the engine is: `Bool` completes from `Bo` and not from `bo`, and a name
+  // standing beside it in the same list should not behave differently.
+  assert.deepEqual(pluginTypeCandidates("Op"), [NULLABLE_STRUCT]);
+  assert.deepEqual(pluginTypeCandidates("Opt"), [NULLABLE_STRUCT]);
+  assert.deepEqual(pluginTypeCandidates("op"), []);
+  assert.deepEqual(pluginTypeCandidates("Opz"), []);
+
+  // An empty query offers it: that is a just-opened type position (`List<`, or a `:` annotation),
+  // which is exactly where it is worth suggesting.
+  assert.deepEqual(pluginTypeCandidates(""), [NULLABLE_STRUCT]);
+
+  // The built-ins are not repeated here — the engine already returns them.
+  for (const name of BUILTIN_TYPE_NAMES) {
+    assert.deepEqual(pluginTypeCandidates(name), [], `${name} is offered twice`);
+  }
+});
+
+test("an injected type name classifies as a type, and survives to the completer", () => {
+  assert.equal(classifyCompletion(NULLABLE_STRUCT, V), "type");
+
+  // The whole path: the engine's list plus the injected name, categorized and gated as one.
+  const raw = ["Length", ...pluginTypeCandidates("")];
+  assert.deepEqual(expressionCompletions(raw, V, ALL_CATEGORIES), [
+    { name: "Length", category: "dimension" },
+    { name: NULLABLE_STRUCT, category: "type" },
+  ]);
+
+  // Gated by the types toggle, like every other type.
+  const off = { identifiers: false, keywords: false, units: false, dimensions: false, types: false };
+  assert.deepEqual(expressionCompletions(raw, V, off).map((c) => c.name), []);
+  assert.deepEqual(expressionCompletions(raw, V, { ...off, types: true }).map((c) => c.name), [NULLABLE_STRUCT]);
+
+  // And offered at a type position, where a variable or a function would not be.
+  const atType = expressionCompletions(raw, V, ALL_CATEGORIES, new Set<ExprCategory>(["type", "dimension", "unit"]));
+  assert.deepEqual(atType.map((c) => c.name), ["Length", NULLABLE_STRUCT]);
+});
+
+test("a reader's own binding outranks the injected type name", () => {
+  // `Opt` is bindable (unlike `List`), so if the vocabulary has one it is theirs, and the row says
+  // so — the same rule the hover card follows. This is why the plugin's set is checked last.
+  const bound = { ...V, variables: new Set([...V.variables, NULLABLE_STRUCT]) };
+  assert.equal(classifyCompletion(NULLABLE_STRUCT, bound), "variable");
+
+  // Offered once, not twice, when the engine returns it as well.
+  const raw = ["Opt", ...pluginTypeCandidates("Op")];
+  assert.deepEqual(expressionCompletions(raw, bound, ALL_CATEGORIES), [{ name: "Opt", category: "variable" }]);
+});
+
+test("Opt is described but is not one of the grammar's reserved words", () => {
+  // The two sets are deliberately separate: BUILTIN_TYPE_NAMES doubles as the blocklist of words
+  // Numbat's grammar refuses as a struct field (properties/parse.ts), and `Opt` is an ordinary name
+  // there. Putting it in would skip a frontmatter property called `opt` for no reason.
+  assert.equal(BUILTIN_TYPE_NAMES.has(NULLABLE_STRUCT), false);
+  assert.notEqual(typeDoc(NULLABLE_STRUCT), null);
 });
 
 test("exprTriggerAt fires on a decorator's `@` before the two-character minimum", () => {

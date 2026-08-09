@@ -93,7 +93,9 @@ offer and when), `evaluation/inlay-parse.ts` (what a line of interpreter output 
 `evaluation/inline-parse.ts` (finding and reading `` n`…` `` spans), `properties/parse.ts`
 (frontmatter → Numbat bindings), `scope/model.ts` (every source a note's scope draws on),
 `hover/parse.ts`, `imports/parse.ts`, `scope/search.ts`, `syntax/identifier.ts`,
-`interpreter/markup.ts`, `document/frontmatter.ts`, `views/fuzzy.ts`, `settings/defs.ts`.
+`interpreter/markup.ts`, `interpreter/nullable.ts` (the injected nullable vocabulary and the two
+literals written with it), `interpreter/nullable-display.ts` (reading one back out of formatter
+output), `document/frontmatter.ts`, `views/fuzzy.ts`, `settings/defs.ts`.
 
 The rule is not a convention that could quietly rot, but instead is **self-enforcing**. `test/unit/`
 runs under **plain Node** with no access to Obsidian, so a unit test can only load its module if

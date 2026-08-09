@@ -24,7 +24,7 @@ import {
   interpret,
   isNumbatReady,
   type Numbat,
-  readableStructNames,
+  readableOutput,
   restartNumbat,
   structFields,
 } from "../interpreter/numbat";
@@ -613,7 +613,7 @@ export class NumbatReplView extends ItemView {
 
       // `try_run_command` bypasses `interpret`, so it needs the same rewrite: `info costs` on a
       // nested property would otherwise show the raw generated type name.
-      const commandOutput = readableStructNames(command.output);
+      const commandOutput = readableOutput(command.output);
       command.free();
 
       if (isCommand) {
@@ -632,8 +632,11 @@ export class NumbatReplView extends ItemView {
           this.reportPreludeError();
         }
       } else {
+        // Deliberately not `interpret()`: that turns a wasm panic into an error *result*, and the
+        // catch below is what rebuilds this view's context — swallowing the throw would leave the
+        // REPL typing into a dead one. So the rewrites it would have applied are applied here.
         const result = this.context.interpret(input);
-        const output = result.output;
+        const output = readableOutput(result.output);
         const isError = result.is_error;
         result.free();
         this.appendOutput(output, isError);

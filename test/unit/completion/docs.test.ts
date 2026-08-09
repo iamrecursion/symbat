@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatDocBody, parsePrintInfo, signatureFromTypeOutput } from "../../../src/completion/docs.ts";
+import { formatDocBody, parsePrintInfo, signatureFromTypeOutput, typeInfo } from "../../../src/completion/docs.ts";
 
 // --- signatureFromTypeOutput -------------------------------------------------
 
@@ -114,4 +114,29 @@ test("formatDocBody adds the Type: field even beside a unit's `A unit of:`", () 
   assert.ok(formatted.includes(">A unit of:"));
   // With nothing to insert (a function — the caller passes null), no field appears.
   assert.ok(!formatDocBody("  Function: f\n  Signature: fn f", null).includes(">Type:"));
+});
+
+// --- typeInfo (the plugin's own type card) ------------------------------------
+
+test("typeInfo cards a type the way print_info cards everything else", () => {
+  const info = typeInfo("List", "An ordered sequence.");
+  assert.equal(info.bodyHtml, "Type: List\nDescription: An ordered sequence.");
+  assert.equal(info.referenceUrl, null);
+
+  // Both labels are bolded by the shared formatter, so the card matches the interpreter's own.
+  const formatted = formatDocBody(info.bodyHtml);
+  assert.ok(formatted.startsWith("<span class=\"numbat-doc-label\">Type:</span> List"));
+  assert.ok(formatted.includes("<span class=\"numbat-doc-label\">Description:</span> "));
+});
+
+test("typeInfo escapes what it is given", () => {
+  const info = typeInfo("Fn", "Written Fn[(A) -> B] & nothing else.");
+  assert.ok(info.bodyHtml.includes("-&gt; B] &amp; nothing"), info.bodyHtml);
+});
+
+test("a Type parameter label still wins over the new Type one", () => {
+  // `Type parameter` precedes `Type` in the label alternation; without that the longer label would
+  // be cut in half and the rest left as prose.
+  const formatted = formatDocBody("  Type parameter: D\n  Declared in: fn mean");
+  assert.ok(formatted.startsWith("<span class=\"numbat-doc-label\">Type parameter:</span> D"), formatted);
 });

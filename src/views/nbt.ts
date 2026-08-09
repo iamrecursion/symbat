@@ -216,6 +216,11 @@ export class NumbatFileView extends TextFileView {
     }
   }
 
+  /** Reflect the configured Tab indent width. */
+  applyIndentWidth(): void {
+    this.input?.setIndentWidth(this.plugin.settings.nbtIndentWidth);
+  }
+
   /** Reflect Obsidian's own "Show line number" setting. */
   applyLineNumbers(): void {
     const on = this.plugin.lineNumbersEnabled();
@@ -282,6 +287,7 @@ export class NumbatFileView extends TextFileView {
         placeholder: "A Numbat file — let, fn, unit, dimension…",
         document: true,
         lineNumbers: this.plugin.lineNumbersEnabled(),
+        indentWidth: this.plugin.settings.nbtIndentWidth,
       },
     );
     this.input.setDocument(this.data);

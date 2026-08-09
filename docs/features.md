@@ -136,10 +136,12 @@ The `<` trigger recognizes a capitalized name touching its `<` (`List<`), so a s
 (`a < b`) never opens it. The unicode and history leaders take precedence, so typing a `\code` or a
 `?:` history query never triggers expression completion.
 
-Navigate the popover with the arrow keys, emacs-style Ctrl-N / Ctrl-P, or Tab to accept. The first
-completion after the plugin loads shows a brief “Loading Numbat…” placeholder while the interpreter
-initializes. None of this runs, and no code is replayed, unless **Expression completion** is enabled
-and so you can turn the whole feature off with that setting.
+Navigate the popover with the arrow keys, emacs-style Ctrl-N / Ctrl-P, or Tab to accept. In a
+[`.nbt` file](#numbat-file-editor-support-nbt), where Tab is also the indent key, an open popover
+takes precedence, so tab only indents once it has closed. The first completion after the plugin
+loads shows a brief “Loading Numbat…” placeholder while the interpreter initializes. None of this
+runs, and no code is replayed, unless **Expression completion** is enabled and so you can turn the
+whole feature off with that setting.
 
 To avoid keeping a large replayed block context resident in the background, the cached completion
 interpreters are freed after a period without a completion (they rebuild on next use). The delay is
@@ -604,7 +606,18 @@ Obsidian's own **Vim key bindings** and **Show line number** editor settings, so
 and behaves like every other editor in the app (with the exception of supporting custom vimrc
 configurations).
 
-There are no new settings: everything above is governed by the toggles it already had.
+**Tab indents.** In a `.nbt` file — a whole program, not a one-line expression — `Tab` inserts an
+indent rather than moving focus out of the editor. It aligns to the next multiple of the configured
+width, so pressing it at column 3 with a width of 2 lands on column 4, and `Shift-Tab` steps back to
+the previous multiple. With a selection, both apply to every line it spans.
+
+The completer still owns the key: while the completion popup is open, `Tab` accepts the selected
+completion exactly as it does everywhere else, and only indents once the popup has closed. To move
+focus out of the editor with the keyboard, press `Esc` and then `Tab` (or toggle tab-focus mode with
+`Ctrl-M`).
+
+The one new setting is **Editor → Tab indent width** (default 2). Everything else above is governed
+by the toggles it already had.
 
 **Creating one.** Obsidian's "New note" only ever makes Markdown, so use the command **Symbat:
 Create a `.nbt` file**, or **New Numbat file** from a folder's context menu in the file explorer.

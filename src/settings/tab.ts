@@ -129,9 +129,12 @@ export class SymbatSettingTab extends PluginSettingTab {
       // Derived rather than declared per control, so a number setting cannot be added without its
       // message. This only *tells* the user; `normalizeSettings` is what keeps the out-of-range
       // value from reaching the consumers.
-      const { min } = control;
+      const { min, max } = control;
+      const message = max === undefined
+        ? `Enter a number of at least ${min}.`
+        : `Enter a number between ${min} and ${max}.`;
       (control as { validate?: (value: number) => string | undefined; }).validate = (value: number) =>
-        Number.isFinite(value) && value >= min ? undefined : `Enter a number of at least ${min}.`;
+        Number.isFinite(value) && value >= min && (max === undefined || value <= max) ? undefined : message;
     }
 
     const item: SettingGroupItem = {
@@ -192,6 +195,9 @@ export class SymbatSettingTab extends PluginSettingTab {
         break;
       case "refreshHover":
         this.plugin.refreshHover();
+        break;
+      case "refreshIndentWidth":
+        this.plugin.refreshIndentWidth();
         break;
       case "refreshInlayHints":
         this.plugin.refreshInlayHints();

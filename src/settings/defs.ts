@@ -27,6 +27,10 @@
 //   * `effects` are **names**, not functions. Dispatching them is settings/tab.ts's job, which is
 //     what keeps this file free of plugin imports.
 
+// The indent bounds come from views/indent.ts rather than being spelled again here: the floor is
+// not a preference but the point below which CodeMirror's `indentUnit` throws, so the two must
+// agree. It is a constants-only import — still no Obsidian, and still unit-testable.
+import { DEFAULT_INDENT_WIDTH, MAX_INDENT_WIDTH, MIN_INDENT_WIDTH } from "../views/indent";
 import { isValidCssFontSize, type PreludeFile } from "./util";
 
 /** How the REPL input's Vim mode is decided: follow Obsidian's editor "Vim key bindings" setting,
@@ -167,6 +171,9 @@ export interface SymbatSettings {
    *  properties into this note's scope. Gated by {@link noteProperties}. */
   noteImports: boolean;
 
+  /** Spaces one Tab inserts in the `.nbt` file editor, and the stop Shift-Tab dedents back to. */
+  nbtIndentWidth: number;
+
   /** Vim key bindings in the REPL input: follow Obsidian's editor setting, or force on/off. */
   replVimMode: ReplVimMode;
 
@@ -239,6 +246,7 @@ export const DEFAULT_SETTINGS: SymbatSettings = {
   notePropertyDates: true,
   notePropertyBooleans: true,
   noteImports: true,
+  nbtIndentWidth: DEFAULT_INDENT_WIDTH,
   replVimMode: "match",
   liveReplHighlight: true,
   customReplFont: false,
@@ -343,6 +351,8 @@ export type SettingEffect =
   /** Reload the user prelude into every interpreter context. */
   | "markPreludeDirty"
   | "refreshHover"
+  /** Re-apply the Tab indent width to every open `.nbt` file editor. */
+  | "refreshIndentWidth"
   | "refreshInlayHints"
   | "refreshInlineEval"
   | "refreshNoteScope"
@@ -353,7 +363,16 @@ export type SettingEffect =
 /** The control a setting is edited through. */
 export type SettingControl =
   | { type: "toggle"; key: BooleanSettingKey; }
-  | { type: "number"; key: NumberSettingKey; min: number; }
+  | {
+    type: "number";
+    key: NumberSettingKey;
+    min: number;
+
+    /** Optional: most numbers here have no natural ceiling, and inventing one would be a limit the
+     *  user did not ask for. Declared where a large value is actively harmful rather than merely
+     *  odd. */
+    max?: number;
+  }
   | {
     type: "text";
     key: TextSettingKey;
@@ -582,6 +601,15 @@ export const SETTING_BLOCKS: readonly SettingBlock[] = [
         visibleWhen: "inlayHints",
         control: { type: "toggle", key: "inlayTypes" },
         effects: ["refreshInlayHints"],
+      },
+      {
+        name: "Tab indent width",
+        desc: "How many spaces Tab inserts in a `.nbt` file, aligned to the next multiple of this width; Shift-Tab "
+          + "steps back to the previous one, and a selection indents every line it spans. With the completion "
+          + "popup open Tab still accepts the selected completion; to move focus out of the editor instead, press "
+          + "`Esc` and then `Tab`.",
+        control: { type: "number", key: "nbtIndentWidth", min: MIN_INDENT_WIDTH, max: MAX_INDENT_WIDTH },
+        effects: ["refreshIndentWidth"],
       },
       {
         name: "Vim mode",
@@ -857,6 +885,16 @@ export const NUMBER_MINIMUMS: ReadonlyMap<NumberSettingKey, number> = new Map(
     .map((control) => [control.key, control.min] as const),
 );
 
+/** The maximum each number setting declares, where it declares one — sparse, because most have no
+ *  natural ceiling (see `SettingControl`). */
+export const NUMBER_MAXIMUMS: ReadonlyMap<NumberSettingKey, number> = new Map(
+  allDescriptors().flatMap(({ control }) =>
+    control.type === "number" && control.max !== undefined
+      ? [[control.key, control.max] as [NumberSettingKey, number]]
+      : []
+  ),
+);
+
 /** Whether a stored value is one of the options its dropdown offers. */
 function isDropdownOption(control: SettingControl, value: unknown): boolean {
   return control.type === "dropdown" && typeof value === "string"
@@ -876,7 +914,10 @@ function isDropdownOption(control: SettingControl, value: unknown): boolean {
  *     setting, since a non-positive timeout means "no timeout";
  *   * `exchangeRateRefreshHours: 0` requests rates on every interpreter use;
  *   * `replHistoryLimit: 0` drains the history on every submit, killing recall;
- *   * `replMaxLines: 0` trims the log to one entry after every append.
+ *   * `replMaxLines: 0` trims the log to one entry after every append;
+ *   * `nbtIndentWidth: 0` makes CodeMirror's `indentUnit` throw while the `.nbt` editor is being
+ *     constructed, so the file does not open at all — the one setting with a ceiling too, since the
+ *     width becomes that many spaces on every indented line.
  *
  * Out-of-range is not the only way in. A key merely *present* in `data.json` beats the default even
  * when its value is `null` — and `JSON.stringify(NaN)` is `null`, so a number field the user clears
@@ -919,7 +960,8 @@ export function normalizeSettings(loaded: Record<string, unknown> | null): Symba
 
   for (const [key, min] of NUMBER_MINIMUMS) {
     const value = settings[key];
-    target[key] = Number.isFinite(value) ? Math.max(min, value) : DEFAULT_SETTINGS[key];
+    const max = NUMBER_MAXIMUMS.get(key) ?? Number.POSITIVE_INFINITY;
+    target[key] = Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : DEFAULT_SETTINGS[key];
   }
 
   return settings;

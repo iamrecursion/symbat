@@ -71,6 +71,7 @@ import { COMPLETION_DWELL_MS } from "../tuning";
 import { unicodePrefixAt } from "../unicode/codes";
 import { numbatUnicodeInput } from "../unicode/input";
 import { fuzzyFilter } from "./fuzzy";
+import { DEFAULT_INDENT_WIDTH, numbatIndentKeymap, numbatIndentUnit } from "./indent";
 
 /** The `userEvent` tagged on programmatic value changes (recall, clear) so the update listener can
  *  tell them apart from the user's own edits. */
@@ -193,6 +194,11 @@ export interface NumbatInputOptions {
    *  file looks like every other editor in the app; meaningless for a one-expression input, which
    *  never sets it. */
   lineNumbers?: boolean;
+
+  /** Spaces one Tab inserts, in {@link document} mode only. A one-expression input leaves Tab to
+   *  the browser, which is how you move focus out of a panel widget — and leading spaces would
+   *  corrupt a YAML property value besides. */
+  indentWidth?: number;
 }
 
 /** True when the primary caret sits on the document's first line. */
@@ -460,6 +466,9 @@ export class NumbatInput {
   /** Holds the (optional) line-number gutter, so Obsidian's setting applies live. */
   private readonly gutterCompartment = new Compartment();
 
+  /** Holds the document's indent unit, so a changed indent width applies live. */
+  private readonly indentCompartment = new Compartment();
+
   /** The host, for documentation lookups on the dwell popup. */
   private readonly host: NumbatInputHost;
 
@@ -677,8 +686,15 @@ export class NumbatInput {
         Prec.high(completionKeys),
 
         // A document has nothing to submit to, so Enter falls through to the default keymap's
-        // newline; the recall keys go with it (the host offers no history).
-        ...(documentMode ? [] : [submitKeymap]),
+        // newline; the recall keys go with it (the host offers no history). What a document gets
+        // instead is Tab: it holds a whole Numbat program, so Tab indents rather than moving focus
+        // out of the editor. Below `completionKeys`, so an open completer still owns the key.
+        ...(documentMode
+          ? [
+            this.indentCompartment.of(numbatIndentUnit(options.indentWidth ?? DEFAULT_INDENT_WIDTH)),
+            numbatIndentKeymap,
+          ]
+          : [submitKeymap]),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.domEventHandlers({
           blur: () => {
@@ -853,6 +869,14 @@ export class NumbatInput {
   setLineNumbers(on: boolean): void {
     this.view.dispatch({
       effects: this.gutterCompartment.reconfigure(on ? lineNumbers() : []),
+    });
+  }
+
+  /** Apply a new Tab indent width without rebuilding the editor. Document mode only: elsewhere the
+   *  compartment is not in the configuration and reconfiguring it is simply inert. */
+  setIndentWidth(width: number): void {
+    this.view.dispatch({
+      effects: this.indentCompartment.reconfigure(numbatIndentUnit(width)),
     });
   }
 

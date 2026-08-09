@@ -13,6 +13,7 @@ import {
   DEFAULT_SETTINGS,
   EFFECTS_BY_KEY,
   normalizeSettings,
+  NUMBER_MAXIMUMS,
   NUMBER_MINIMUMS,
   SETTING_BLOCKS,
   type SettingDescriptor,
@@ -60,6 +61,7 @@ const EXPECTED_EFFECTS: Record<string, readonly SettingEffect[]> = {
   inlayHints: ["refreshInlayHints"],
   inlayResults: ["refreshInlayHints"],
   inlayTypes: ["refreshInlayHints"],
+  nbtIndentWidth: ["refreshIndentWidth"],
   replVimMode: ["refreshReplVim"],
 
   inlineEval: ["refreshInlineEval"],
@@ -154,6 +156,10 @@ test("every default is a value its own control would accept", () => {
           (value as number) >= control.min,
           `${key} defaults to ${String(value)}, below its own minimum of ${control.min}`,
         );
+        assert.ok(
+          control.max === undefined || (value as number) <= control.max,
+          `${key} defaults to ${String(value)}, above its own maximum of ${String(control.max)}`,
+        );
         break;
       case "text": {
         assert.equal(typeof value, "string", key);
@@ -199,13 +205,27 @@ const EXPECTED_MINIMUMS: Record<string, number> = {
   exchangeRateRefreshHours: 1,
   exchangeRateTimeoutSeconds: 1,
   hoverDelayMs: 0,
+  // Not a preference: CodeMirror's `indentUnit` throws on an empty string, and it does so while the
+  // `.nbt` editor is being constructed — a width of zero is a file that will not open.
+  nbtIndentWidth: 1,
   replHistoryLimit: 1,
   replMaxLines: 1,
   completionIdleSeconds: 0,
 };
 
+/** The maximum each number setting declares. Sparse: only where a large value is actively harmful
+ *  rather than merely odd. */
+const EXPECTED_MAXIMUMS: Record<string, number> = {
+  // Every indented line carries this many spaces.
+  nbtIndentWidth: 8,
+};
+
 test("every number setting declares the minimum its consumers assume", () => {
   assert.deepEqual(Object.fromEntries(NUMBER_MINIMUMS), EXPECTED_MINIMUMS);
+});
+
+test("a number setting declares a maximum exactly where one is load-bearing", () => {
+  assert.deepEqual(Object.fromEntries(NUMBER_MAXIMUMS), EXPECTED_MAXIMUMS);
 });
 
 test("a zero timeout is clamped: a non-positive one means *no* timeout", () => {
@@ -224,6 +244,15 @@ test("out-of-range numbers are clamped to their declared minimum", () => {
   assert.equal(settings.exchangeRateRefreshHours, 1);
   assert.equal(settings.replHistoryLimit, 1);
   assert.equal(settings.replMaxLines, 1);
+});
+
+test("an indent width outside its bounds is clamped at both ends", () => {
+  // Zero makes `indentUnit` throw inside `EditorState.create`, so the `.nbt` view fails to open at
+  // all; an unbounded width puts that many spaces on every indented line.
+  assert.equal(normalizeSettings({ nbtIndentWidth: 0 }).nbtIndentWidth, 1);
+  assert.equal(normalizeSettings({ nbtIndentWidth: -4 }).nbtIndentWidth, 1);
+  assert.equal(normalizeSettings({ nbtIndentWidth: 1000 }).nbtIndentWidth, 8);
+  assert.equal(normalizeSettings({ nbtIndentWidth: 4 }).nbtIndentWidth, 4, "an in-range width survives");
 });
 
 test("a persisted null falls back to the default rather than beating it", () => {

@@ -644,6 +644,12 @@ export default class SymbatPlugin extends Plugin {
     this.forEachFileView((view) => view.applyVim());
   }
 
+  /** Re-apply the configured Tab indent width to every open `.nbt` editor. Nothing to do on load:
+   *  the editor reads the setting as it is built. */
+  refreshIndentWidth(): void {
+    this.forEachFileView((view) => view.applyIndentWidth());
+  }
+
   /**
    * Apply the inlay-hint settings to every open editor: rebuild the registered extension (present
    * only when `inlayHints` is on, and reading the sub-toggles live) and flush the change to all

@@ -40,25 +40,14 @@ import {
   preambleForFile,
   primeReservedNames,
   propertyTypeManager,
+  type PropertyWidgetContext,
   replayScopeAbove,
   scopeChunksAbove,
 } from "./note";
+import { isBareZero } from "./parse";
 
 // REGISTERING THE TYPE
 // ================================================================================================
-
-/** The slice of the (undocumented) render context Obsidian passes a property widget. Every field is
- *  optional and accessed defensively. */
-interface PropertyWidgetContext {
-  /** The frontmatter key this widget is editing. */
-  key?: string;
-
-  /** Report a new value back to Obsidian, which writes it to the note. */
-  onChange?: (value: unknown) => void;
-
-  /** Vault path of the note being edited, needed to resolve its imports. */
-  sourcePath?: string;
-}
 
 /**
  * Register the `Numbat` property type. On an Obsidian without the registry the feature quietly does
@@ -74,7 +63,7 @@ export function registerNumbatPropertyType(plugin: SymbatPlugin): void {
     return;
   }
 
-  widgets[NUMBAT_PROPERTY_TYPE] = {
+  const widget = {
     type: NUMBAT_PROPERTY_TYPE,
     icon: "calculator",
     name: () => "Numbat",
@@ -84,8 +73,16 @@ export function registerNumbatPropertyType(plugin: SymbatPlugin): void {
     render: (el: HTMLElement, value: unknown, ctx: PropertyWidgetContext) => renderWidget(plugin, el, value, ctx),
   };
 
+  widgets[NUMBAT_PROPERTY_TYPE] = widget;
   manager.trigger?.("changed");
   plugin.register(() => {
+    // Removed only if the entry is still this one — see properties/date-type.ts for the rule and
+    // its two other applications. A plugin that wrapped this type keeps its wrapper rather than
+    // being uninstalled by our unload.
+    if (widgets[NUMBAT_PROPERTY_TYPE] !== widget) {
+      return;
+    }
+
     delete widgets[NUMBAT_PROPERTY_TYPE];
     manager.trigger?.("changed");
   });
@@ -351,6 +348,8 @@ function propertyCompletions(plugin: SymbatPlugin, ctx: PropertyWidgetContext): 
 type PropertyDisplay =
   | { kind: "empty"; }
   | { kind: "error"; text: string; }
+  /** The property bound and produced a value, under a reading of it worth declaring. */
+  | { kind: "warning"; text: string; }
   | { kind: "hole"; type: string; }
   /** The `= value` fragment, as Numbat formatter HTML. */
   | { kind: "value" | "binding"; html: string; };
@@ -404,6 +403,14 @@ async function propertyOutcome(
     return { kind: "error", text: skip.message };
   }
 
+  // A derivation advisory (today: a bare `0` read as a `Scalar`), shown only while the live text is
+  // still the value it was raised about — it is value-shaped, so it is judged from the text like
+  // the other value-shaped outcomes rather than from the binding, which is a keystroke behind.
+  const bound = preamble.bindings.find((entry) => entry.key === key);
+  if (bound?.warning !== undefined && isBareZero(text)) {
+    return { kind: "warning", text: bound.warning };
+  }
+
   const context = createContext(plugin.settings.fetchExchangeRates);
   try {
     // Imports, then only the properties written above this one.
@@ -430,11 +437,13 @@ async function propertyOutcome(
 function showOutcome(resultEl: HTMLElement, outcome: PropertyDisplay): void {
   resultEl.empty();
   resultEl.toggleClass("numbat-property-error", outcome.kind === "error");
+  resultEl.toggleClass("numbat-property-warning", outcome.kind === "warning");
 
   switch (outcome.kind) {
     case "empty":
       break;
     case "error":
+    case "warning":
       resultEl.setText(outcome.text);
       break;
     case "hole":

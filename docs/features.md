@@ -384,18 +384,16 @@ Plain values follow a few rules worth knowing:
 
 - **Text is escaped**, so nothing in a note's prose can be read as Numbat. That matters most for `{`
   as Numbat strings interpolate, so an unescaped `cost {rate} each` would _evaluate_ `rate`.
-- **A date needs the Date type**, assigned in the property's type menu. Obsidian shows its date
+- **A date needs a date type**, assigned in the property's type menu — Obsidian's Date or Datetime,
+  or this plugin's [Zoned Date or Zoned Datetime](#time-zones-on-dates). Obsidian shows its date
   picker for anything date-shaped without assigning a type, so the shape alone is not the opt-in it
   looks like — and a version, an ID or a bare year would otherwise read as a moment on the strength
-  of looking like one. Without the type it is text, like any other prose.
-- **A date is local**, so `due: 2026-07-27` binds `date("2026-07-27")`, which Numbat reads as local
-  midnight, and a time written without a UTC offset binds as local wall-clock. So
-  `due - today() -> days` means what you would expect it to. A timestamp written _with_ an offset is
-  the one shape to be careful of: reading the note's YAML has already collapsed it to an instant, at
-  which point `2026-07-27T10:30+02:00` is indistinguishable from a bare `2026-07-27 08:30`, so it
-  binds as local `08:30`. Read from Obsidian's property cache instead — which is what the property
-  widget and the scope inspector do — the offset survives as written, so the two can disagree.
-  Prefer writing a date, or a time with no offset.
+  of looking like one. Without a type it is text, like any other prose.
+- **Every date binds with an explicit time zone.** An offset written in the value is used exactly as
+  written; a value without one is read in the zone set by **Time zone for dates**, which defaults to
+  your own. A date with no time of day is that zone's midnight, so `due - today() -> days` means
+  what you would expect. See [Time Zones on Dates](#time-zones-on-dates) for how to write an offset
+  and what it costs to leave one out.
 - **An unticked checkbox is `false`**, which subtly disagrees with Obsidian's Checkbox type which
   has three states, and the unset one is written as an empty property. This reading applies only to
   a property the type menu says is a checkbox or a toggle.
@@ -730,6 +728,102 @@ declarations with their values alongside the prelude files ahead of it.
 By default the REPL follows the theme's code size. Enable **Custom font size** in the settings to
 set the output ("view") and input font sizes independently; each accepts any CSS size, such as
 `14px`, `0.9em`, or `var(--code-size)`.
+
+## Time Zones on Dates
+
+A frontmatter date means a different instant depending on where it is read, and Obsidian gives you
+no way to say which one you meant. Its Date type holds `2026-07-27` and nothing else, giving you a
+date anchored only to your current timezone. Obsidian's Datetime type _can_ hold an offset, but
+offers no way to set one and discards any you write by hand the moment you touch the widget. Since a
+date binds into Numbat as a `DateTime`, that ambiguity becomes very visible.
+
+Three things address it, and you can use any of them on their own.
+
+**A vault-wide default.** **Time zone for dates** sets the zone a value with no offset of its own is
+read in — an IANA name such as `Europe/Berlin`, a literal offset such as `+02:00`, or blank for your
+own zone. A named zone follows daylight saving, so a date in January and one in July are each read
+at the offset that zone actually had, rather than at one snapshot of it.
+
+The Symbat-provided **Zoned Date and Zoned Datetime** property types provide a fix to this. You can
+assign either from a property's type menu and doing so will allow its values to gain a zone.
+
+```yaml
+due:  2026-07-27                                 # read in the default zone above
+due:  2026-07-27 +02:00                          # pinned: two hours ahead of UTC, forever
+due:  2026-07-27 [Europe/Berlin]                 # floating: whatever Berlin was on that day
+
+when: 2026-07-27T10:30                           # the default zone again
+when: 2026-07-27T10:30Z                          # pinned to UTC, written the short way
+when: 2026-07-27T10:30+02:00                     # pinned to an offset
+when: 2026-07-27T10:30:00+02:00[Europe/Berlin]   # floating, and lexically sortable
+```
+
+A **date** keeps a space in front of its zone, where a datetime does not. `2026-07-27-07:00` reads
+as four dash-separated numbers and you have to count digits to find where the date stops;
+`2026-07-27 -07:00` does not. After a clock there is no such confusion, and no room for a space
+either — that form is real ISO 8601 and other software reads it. A date written the old way still
+reads as itself, and is simply re-spelled the next time the widget writes it.
+
+A few spellings are accepted on the way in and tidied up when the widget next writes: a space
+instead of the `T`, an offset without its colon (`+0200`), and fractional seconds. **`Z` is not one
+of them** — it is kept as written, because rewriting it to `+00:00` would be the widget editing your
+text for no reason. The picker offers `Z (UTC)` and `+00:00` as separate entries for that reason,
+alongside `UTC` itself, which is a zone _name_ and so writes the floating `+00:00[UTC]`.
+
+The difference matters. **An offset pins an instant**: `+02:00` stays `+02:00` even if you later
+move the date into November, when Berlin is on `+01:00`. **A name floats**: move the date and the
+instant moves with it, because the zone is re-read for whichever day the value now names. Pick a
+zone by name from the picker and you get the floating form; pick a bare offset and you get the
+pinned one.
+
+The named form is [RFC 9557](https://www.rfc-editor.org/rfc/rfc9557.html) — the standard for
+attaching a zone to a timestamp, and what JavaScript's `Temporal.ZonedDateTime` round-trips. On a
+datetime it is the full extended form, with the offset in front, so values still **sort lexically**
+and their prefix is a valid RFC 3339 timestamp. On a date there is no time to write and adding one
+would change what the value is, so it is the bare `2026-07-27 [Europe/Berlin]` — which still sorts,
+the date being the prefix.
+
+The widget is Obsidian's own date or datetime picker with a zone field beside it, and a value
+**stays bare** unless you choose a zone — nothing is added to one you have not zoned. Both live
+under types of ours rather than Obsidian's, deliberately: neither spelling is a YAML timestamp, and
+nothing that parses dates today reads RFC 9557, so under Obsidian's own types they would be broken
+dates to Bases, to sorting, and to every other plugin.
+
+The zone field **searches as you type**. Leave it empty and it offers the short list — your own
+zone, `UTC`, and the offsets in real-world use — so the common choices are still one click away.
+Type anything and it searches every zone your platform knows, so `berlin` finds `Europe/Berlin`
+without scrolling a menu of six hundred entries. Nothing is written until you pick something: text
+you type and then abandon leaves the value alone.
+
+A zoned value is also **read back in its own zone**. Numbat shows every moment in the zone of the
+machine it is running on, so a 9am meeting written in Los Angeles would otherwise read back as 6pm
+in Berlin — the same instant, correctly converted, and not the thing the note is about. A value that
+carries a zone is shown at the clock it was written at, and the zone is named beside it.
+
+A value written at a whole-hour offset is named the way the timezone database names those, so
+`-05:00` reads back as `Etc/GMT+5`. **The sign is inverted, and that is not a mistake**: `Etc/GMT+5`
+_is_ UTC−05:00, a rule POSIX set and the database has kept ever since. Offsets that are not whole
+hours — `+05:45`, `-03:30` — have no such name, so those values keep their instant but are shown in
+your own zone. Choosing the zone by name rather than by offset avoids that, and says more besides.
+
+The row **wraps** when it has to: a property row is narrow, and a picker plus a zone name will not
+fit on one line on a phone, so the field drops below rather than squeezing the picker to nothing.
+
+**Obsidian's own date types are left alone.** Symbat adds two types and patches none, so its Date
+and Datetime widgets behave exactly as they do without this plugin installed. A value written under
+one of those still binds — an offset written by hand into a datetime is read and shown in the zone
+it names — but Obsidian's widget will still drop that offset the next time it writes the property,
+which is the whole reason the Zoned types exist.
+
+An earlier version did add a zone field to the built-in Datetime widget, behind a setting. It has
+been **removed**: replacing one of Obsidian's widgets inherits every change Obsidian later makes to
+it, where owning a type of our own does not, and `Zoned Datetime` covers the same ground. A value
+you wrote under that setting is a perfectly ordinary zoned timestamp and keeps working; assign it
+the **Zoned Datetime** type to get the zone field back.
+
+In both types, choosing a zone **reinterprets** the value rather than converting it: the clock stays
+where it is and only what is written beside it changes, because the job is to say what an
+already-written date meant.
 
 ## Unicode Expansion
 

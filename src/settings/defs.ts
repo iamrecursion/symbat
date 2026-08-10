@@ -31,6 +31,11 @@
 // not a preference but the point below which CodeMirror's `indentUnit` throws, so the two must
 // agree. It is a constants-only import — still no Obsidian, and still unit-testable.
 import { DEFAULT_INDENT_WIDTH, MAX_INDENT_WIDTH, MIN_INDENT_WIDTH } from "../views/indent";
+// properties/zone.ts is imported for the same reason, though for two functions rather than for
+// constants: what counts as a time zone is the platform's answer, not a list this file could keep,
+// and asking the same module the bindings ask keeps the two from disagreeing about which zones
+// exist. Its whole transitive closure is pure — `Intl` is a built-in — so this stays unit-testable.
+import { knownZone, normalizeOffset } from "../properties/zone";
 import { isValidCssFontSize, type PreludeFile } from "./util";
 
 /** How the REPL input's Vim mode is decided: follow Obsidian's editor "Vim key bindings" setting,
@@ -198,6 +203,10 @@ export interface SymbatSettings {
   /** Seconds of completion inactivity before the cached interpreters are freed (0 keeps them
    *  loaded). */
   completionIdleSeconds: number;
+
+  /** The time zone a date, or a time written without an offset, is read in — an IANA name
+   *  (`Europe/Berlin`) or a literal offset (`+02:00`). Blank means the reader's own zone. */
+  notePropertyDefaultZone: string;
 }
 
 /** The CSS size the REPL fonts default to: the current theme's code size. */
@@ -255,6 +264,7 @@ export const DEFAULT_SETTINGS: SymbatSettings = {
   replHistoryLimit: 100,
   replMaxLines: 200,
   completionIdleSeconds: 60,
+  notePropertyDefaultZone: "",
 };
 
 /** The settings keys whose value has a given type — derived, so a new setting cannot be left out of
@@ -279,7 +289,8 @@ export type TextSettingKey =
   | "inlineEvalConcretePrefix"
   | "inlineEvalDecimalPlaces"
   | "replViewFontSize"
-  | "replInputFontSize";
+  | "replInputFontSize"
+  | "notePropertyDefaultZone";
 
 // VALIDATORS
 // ================================================================================================
@@ -331,6 +342,16 @@ export function validateDecimalPlaces(value: string): string | undefined {
   }
 
   return undefined;
+}
+
+/** Validate a default time zone: blank (the reader's own), an IANA name the platform knows, or a
+ *  literal UTC offset. */
+export function validateTimeZone(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "" || normalizeOffset(trimmed) !== null || knownZone(trimmed)) {
+    return undefined;
+  }
+  return "Enter a time zone such as Europe/Berlin or UTC, an offset such as +02:00, or leave blank.";
 }
 
 // DESCRIPTORS
@@ -731,13 +752,30 @@ export const SETTING_BLOCKS: readonly SettingBlock[] = [
       },
       {
         name: "Date properties bind as datetimes",
-        desc: "Properties assigned Obsidian's Date type also join the note's scope, as Numbat `DateTime`s, so "
-          + "date arithmetic (`due - today() -> days`) works on them. The type has to be assigned — Obsidian "
-          + "shows its date picker without assigning one, and a date-shaped value that is not a date should not "
-          + "become a moment. A date with no time of day is read as local midnight, and a time written without a "
-          + "UTC offset as local wall-clock.",
+        desc: "Properties assigned Obsidian's Date or Datetime type, or this plugin's Zoned Date and Zoned Datetime "
+          + "types, also join the note's scope, as Numbat `DateTime`s, so date arithmetic "
+          + "(`due - today() -> days`) works on them. The type has to be assigned — Obsidian shows its date picker "
+          + "without assigning one, and a date-shaped value that is not a date should not become a moment. A value "
+          + "naming a zone (`2026-07-27 [Europe/Berlin]`) is read at the offset that zone had on that date; one "
+          + "carrying only a UTC offset is read exactly as written; one with neither is read in the zone below, and "
+          + "a date with no time of day is that zone's midnight.",
         visibleWhen: "noteProperties",
         control: { type: "toggle", key: "notePropertyDates" },
+        effects: ["refreshNoteScope"],
+      },
+      {
+        name: "Time zone for dates",
+        desc: "The zone a date, or a time written without a UTC offset, is read in — an IANA name such as "
+          + "`Europe/Berlin`, or a literal offset such as `+02:00`. Leave blank for your own zone. A named zone "
+          + "follows daylight saving, so a date in January and one in July are each read at the offset that zone "
+          + "actually had.",
+        visibleWhen: "notePropertyDates",
+        control: {
+          type: "text",
+          key: "notePropertyDefaultZone",
+          placeholder: "Local",
+          validate: validateTimeZone,
+        },
         effects: ["refreshNoteScope"],
       },
       {

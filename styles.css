@@ -141,6 +141,14 @@
   color: var(--text-error);
 }
 
+/* An advisory on a line that *worked*: the value is there and correct, and something about how it
+ * was read is worth declaring (a frontmatter `0` taken as a dimensionless Scalar). The theme's
+ * warning color rather than its error one, because the distinction is the whole reason this kind
+ * exists — a note that works must not look like a note that does not. */
+.numbat-inlay-warning {
+  color: var(--text-warning);
+}
+
 /* --- Inline expression evaluation --------------------------------------- */
 
 /* The `n` / `nc` trigger prefix, a span's `{…}` config, and the `⇒` separator of a concrete span
@@ -946,6 +954,78 @@
 
 .numbat-property .numbat-property-error {
   color: var(--text-error);
+}
+
+/* The widget's counterpart to .numbat-inlay-warning, so Live Preview and Source mode say the same
+ * thing in the same color. */
+.numbat-property .numbat-property-warning {
+  color: var(--text-warning);
+}
+
+/* --- Time zones on date properties (see properties/zone-editor.ts) --------- */
+
+/* The zone field sits beside a built-in date or datetime editor, in a row the built-in never
+ * expected to share. Both rows are laid out here rather than in the widgets, so the `Zoned Date`
+ * and `Zoned Datetime` types cannot drift apart visually.
+ *
+ * `flex-wrap` is what makes this work on a phone: a property row is narrow, and a native picker
+ * plus a zone name will not fit on one line, so the field drops below rather than squeezing the
+ * picker to nothing. That holds wherever a property row has a line to spare — the note's own
+ * frontmatter editor, the Properties sidebar view, a hover popover. */
+.numbat-zoned-date,
+.numbat-zoned-datetime {
+  display: flex;
+  align-items: center;
+  align-content: center;
+  gap: var(--size-4-2);
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+}
+
+/* The picker keeps whatever width it asks for and gives up the rest; the field hugs its label so a
+ * long zone name does not push the date off the row.
+ *
+ * `:not(.numbat-property-zone)` is the same distinction `zone-editor.ts`'s `CALENDAR_INPUT` draws,
+ * and for a reason as load-bearing here as it is there: the zone field is an `<input>` in this row
+ * too, so a bare `> input` selects it as well — and at one class plus one type it outranks the
+ * `.numbat-property-zone` rule below whatever the source order, handing the field a `flex-grow` and
+ * an 8em floor that are the opposite of what it asks for. */
+.numbat-zoned-date > input:not(.numbat-property-zone),
+.numbat-zoned-datetime > input:not(.numbat-property-zone) {
+  flex: 1 1 auto;
+  min-width: 8em;
+}
+
+/* Styled as an annotation rather than as a second field: it says what the value beside it means,
+ * and should not compete with it for attention. It is a text box that searches as it is typed
+ * (properties/zone-editor.ts), and its width is set in characters from the zone's own name — hence
+ * `width: auto`, which lets the `size` attribute do the sizing a stylesheet cannot. */
+.numbat-property-zone {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+  padding-inline: var(--size-2-1);
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.numbat-property-zone:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+/* Focused it *is* a field being typed into, so it stops apologising for itself: full contrast, and
+ * the box Obsidian gives every other focused input. */
+.numbat-property-zone:focus {
+  color: var(--text-normal);
+  background: var(--background-modifier-form-field);
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
 }
 
 /* --- Note scope inspector ------------------------------------------------- */

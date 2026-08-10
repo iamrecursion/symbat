@@ -15,19 +15,6 @@ The following are near-term goals that are relatively small.
   interpreter context on every evaluation, and ignores the default-decimal-places setting that
   inline evaluation honors. Both are small, but both are visible.
 
-## Better Handling of Dates and Datetimes
-
-Obsidian's frontmatter Dates are Datetimes have some notable limitations which makes interfacing
-with Numbat harder than it needs to be:
-
-- The datetime format continually overwrites any user-specified timezone, and the timezone widget
-  does not provide a way to specify a timezone.
-- The date format contains only the date, and never a timezone, and so Numbat gets the timezone
-  wrong.
-
-The simplest fix to this is monkey-patch the metadata widgets for each with the ability to specify a
-timezone, as well as monkey patch the widget updates to restore the source propertly.
-
 ## Better Numbers
 
 Enhancing Numbat's numerical backend with a hierarchical number system that encompasses
@@ -88,12 +75,13 @@ one cause, which is that the WASM boundary hands over less than the interpreter 
   but it means no item can carry its own inlay. A block list therefore shows only its errors in
   Source mode, and the whole list's value is read from the scope inspector, which lists the array as
   the one binding it is.
-- **A Zoned Timestamp Reads Two Ways:** A frontmatter value like `2026-07-27T10:30+02:00` reaches
-  the bindings as an instant when the note's own YAML is parsed (Source mode) and as text when it
-  comes from Obsidian's property cache (the widget, the scope inspector, imports). An instant cannot
-  say whether an offset was written, so the first binds local `08:30` while the second keeps the
-  offset as written — the two surfaces disagree by the offset. A date, or a time with no offset,
-  reads the same either way.
+- **A Zoned Timestamp Inside a Flow Collection Still Reads Two Ways:** The quoting pass that
+  protects a zoned timestamp from the YAML parser works one value site at a time, so it sees
+  `dates: [2026-07-27T10:30:00+02:00]` as a single unparsed `[…]` scalar and leaves it alone. Read
+  from the note's own YAML the offset is collapsed to an instant, where Obsidian's property cache
+  keeps it as written — the two surfaces disagree, exactly as every zoned value used to. The block
+  spelling (`- 2026-07-27T10:30:00+02:00`, one item per line) is a value site and is protected;
+  prefer it, or quote the flow item by hand.
 - **An Undefined Value is a One-Element List:** The `Opt` an empty property binds is
   `struct Opt<T> { value: List<T> }`, empty for `nil`, because Numbat evaluates eagerly and has no
   polymorphic bottom — there is no value to put in a `value: T` field when there is no value.

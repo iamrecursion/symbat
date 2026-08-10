@@ -293,6 +293,34 @@ test("errorSummary: a generic header defers to the caret annotation, then a note
   assert.equal(errorSummary("error: while parsing\n"), "while parsing");
 });
 
+test("errorSummary: an unsolved HasField becomes a sentence about what caused it", () => {
+  // The raw form names a generated struct the reader never wrote and dumps its whole type. What
+  // they need to know is nowhere in it: some field of that object has no type of its own.
+  const singular = "error: Could not solve the following constraint: "
+    + "HasField(_Nb_StateDataStruct_1pnpqoo_6_2&lt;Fn[(DateTime) -&gt; DateTime]&gt; "
+    + "{Time_Zone: Fn[(DateTime) -&gt; DateTime]}, \"Time_Zone\", Fn[(DateTime) -&gt; T495])\n"
+    + "  ┌─ <input>:1:1\n";
+  assert.match(errorSummary(singular) ?? "", /^field 'Time_Zone' cannot be read/);
+  assert.match(errorSummary(singular) ?? "", /bare 0/, "and says what to look for");
+
+  // The plural form is the one that mattered most: the constraints sit on the lines *below* the
+  // header, which `errorSummary` drops, so it used to return a sentence with no content at all.
+  const plural = "error: Could not solve the following constraints:\n"
+    + "  HasField(_Nb_S_x_0_0 {Population: T389}, \"Population\", T389)\n"
+    + "  HasField(T389, \"Current\", T392)\n"
+    + "  ┌─ :1:1\n";
+  assert.match(errorSummary(plural) ?? "", /^field 'Population' cannot be read/, "the outermost field, not the last");
+});
+
+test("errorSummary: every other diagnostic is left exactly as it was", () => {
+  // Including an unsolved constraint of some *other* kind, whose own header is the better answer.
+  assert.equal(
+    errorSummary("error: Could not solve the following constraint: Dim(T1)\n  ┌─ art\n"),
+    "Could not solve the following constraint: Dim(T1)",
+  );
+  assert.equal(errorSummary("error: Could not solve the constraint\n  ┌─ art\n"), "Could not solve the constraint");
+});
+
 // --- groupStatements ----------------------------------------------------------
 
 test("groupStatements: balanced lines are single-line statements; blanks are skipped", () => {

@@ -26,7 +26,9 @@ import {
   PLAIN_NONE,
   type PlainBindings,
   type PropertyBinding,
+  quoteZonedTimestamps,
 } from "./parse";
+import { localZoneName, normalizeOffset, offsetForWallClock } from "./zone";
 
 export { bindingKey, EMPTY_PREAMBLE, frontmatterBody, type NotePreamble };
 
@@ -57,6 +59,46 @@ export interface PropertyTypeManager {
   on?: (name: "changed", callback: () => void) => EventRef;
 }
 
+/** The slice of the (undocumented) render context Obsidian passes a property widget. Every field is
+ *  optional and accessed defensively. */
+export interface PropertyWidgetContext {
+  /** The frontmatter key this widget is editing. */
+  key?: string;
+
+  /** Report a new value back to Obsidian, which writes it to the note. */
+  onChange?: (value: unknown) => void;
+
+  /** Vault path of the note being edited, needed to resolve its imports. */
+  sourcePath?: string;
+}
+
+/**
+ * One entry of {@link PropertyTypeManager.registeredTypeWidgets} — what this plugin's own types are
+ * built as, and what Obsidian's built-in ones are read back as.
+ *
+ * Every field is optional for the same reason the manager's are: these are read off objects
+ * Obsidian owns and documents nowhere, and a release that adds, drops or renames one should cost a
+ * feature rather than the plugin. `render` in particular is called through only after a null check,
+ * and never assumed to return anything in particular.
+ */
+export interface PropertyWidget {
+  /** The registry id, repeated inside the entry. */
+  type?: string;
+
+  /** Lucide icon name for the type menu. */
+  icon?: string;
+
+  /** The type's display name. */
+  name?: () => string;
+
+  /** Whether a value is assignable to this type. */
+  validate?: (value: unknown) => boolean;
+
+  /** Draw the editor into `el`. Documented as returning `{ focus }`, but treated as returning
+   *  whatever it returns — see properties/date-type.ts. */
+  render?: (el: HTMLElement, value: unknown, ctx: PropertyWidgetContext) => unknown;
+}
+
 /** The metadata type manager, or `null` on an Obsidian without one. */
 export function propertyTypeManager(app: App): PropertyTypeManager | null {
   const manager = (app as App & { metadataTypeManager?: PropertyTypeManager; }).metadataTypeManager;
@@ -82,6 +124,27 @@ function plainBindings(plugin: SymbatPlugin): PlainBindings {
     dates: plugin.settings.notePropertyDates,
     booleans: plugin.settings.notePropertyBooleans,
   };
+}
+
+/**
+ * The offset to read a date by when its value carries none of its own, per the reader's setting.
+ *
+ * A *named* zone is resolved per value rather than once, because half the world's zones change
+ * offset twice a year: `Europe/Berlin` owes a date in January `+01:00` and one in July `+02:00`,
+ * and a single snapshot would be wrong for half the notes in a vault. A literal offset in the
+ * setting is that offset whatever the date, which is the point of writing one. A blank setting is
+ * the reader's own zone — the same instant a bare `date("…")` used to denote, but stated, so every
+ * surface agrees on it and a vault carried to another zone still reads as it was written.
+ */
+function defaultOffsetFor(plugin: SymbatPlugin): (isoLocal: string) => string | null {
+  const setting = plugin.settings.notePropertyDefaultZone.trim();
+  const fixed = setting === "" ? null : normalizeOffset(setting);
+  if (fixed !== null) {
+    return () => fixed;
+  }
+
+  const zone = setting === "" ? localZoneName() : setting;
+  return (isoLocal) => offsetForWallClock(zone, isoLocal);
 }
 
 // The prelude's name set (units ∪ functions ∪ variables ∪ dimensions, including the user prelude
@@ -158,6 +221,8 @@ function preambleFromRecord(
     plain: plainBindings(plugin),
     plainNested: PLAIN_ALL,
     assignedType: (key) => assignedPropertyType(plugin.app, key),
+    defaultOffset: defaultOffsetFor(plugin),
+    zoneOffset: offsetForWallClock,
     namespace: sourcePath ?? "",
   });
 }
@@ -293,6 +358,8 @@ function importedPropsChunks(
     plain: PLAIN_NONE,
     plainNested: PLAIN_ALL,
     assignedType: (key) => assignedPropertyType(plugin.app, key),
+    defaultOffset: defaultOffsetFor(plugin),
+    zoneOffset: offsetForWallClock,
     namespace: notePath,
   });
 
@@ -346,9 +413,23 @@ export function notePreamble(
 
   let parsed: unknown;
   try {
-    parsed = parseYaml(body.join("\n"));
+    // Zoned timestamps are quoted first, so the parser hands them back as written instead of as
+    // instants that have already lost their offset. Without it this path reads a zoned value
+    // differently from every surface that goes through Obsidian's property cache.
+    parsed = parseYaml(quoteZonedTimestamps(body).join("\n"));
   } catch {
-    return EMPTY_PREAMBLE;
+    try {
+      // The quoting pass rewrites one value site at a time, and a value site is not always the
+      // whole value: the first line of a multi-line plain scalar is one, and quoting it strands the
+      // continuation lines outside the string they belonged to. Re-parsing what the note actually
+      // says turns that into "a zoned timestamp there reads two ways", which is the pre-existing
+      // limitation `docs/roadmap.md` records, rather than "the note has no properties at all" —
+      // which is what an unhandled throw here means, since Obsidian's own cache path still has
+      // them. Any future shape the quoter mishandles lands here too, by construction.
+      parsed = parseYaml(body.join("\n"));
+    } catch {
+      return EMPTY_PREAMBLE; // genuinely malformed, as Obsidian itself shows it
+    }
   }
 
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {

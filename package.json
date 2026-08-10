@@ -42,17 +42,17 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "6.5.0",
     "@codemirror/view": "6.38.6",
-    "@eslint/js": "^9.18.0",
+    "@eslint/js": "^10.0.1",
     "@lezer/highlight": "^1.2.0",
     "@replit/codemirror-vim": "^6.3.0",
     "@types/node": "^22.10.0",
     "esbuild": "^0.25.0",
-    "eslint": "^9.18.0",
+    "eslint": "^10.8.0",
     "eslint-plugin-obsidianmd": "^0.4.1",
-    "globals": "^16.0.0",
+    "globals": "^17.9.0",
     "obsidian": "^1.13.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.20.0"
+    "typescript-eslint": "^8.66.0"
   }
 }

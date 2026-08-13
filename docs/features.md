@@ -707,6 +707,25 @@ focus out of the editor with the keyboard, press `Esc` and then `Tab` (or toggle
 The one new setting is **Editor → Tab indent width** (default 2). Everything else above is governed
 by the toggles it already had.
 
+**On mobile, a key bar** appears at the bottom of the editor whenever the on-screen keyboard is up,
+carrying the keys that keyboard does not have:
+
+| Button |                                                                                                                                                                                                                  |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `⎋`    | **Escape** — leaves insert mode, leaves visual mode, and cancels a half-typed operator or count. Without it, a phone keyboard offers no way out of insert mode at all.                                           |
+| `▦`    | **Visual block** — starts blockwise visual selection, and ends it when pressed again (`Ctrl-V` on a hardware keyboard). It stays lit while that mode is live, so you can always see which way the toggle is set. |
+| `⌄`    | **Hide keyboard** — dismisses the keyboard without having to tap somewhere else in the app.                                                                                                                      |
+
+The first two appear only when Vim key bindings are on; hiding the keyboard is useful either way, so
+the bar still shows for it alone. The whole bar is gone when the keyboard is down — including when
+you pair a hardware keyboard, which has all three keys already.
+
+The buttons float over the file rather than sitting on a toolbar, so the text runs on behind them
+and only the buttons themselves take a tap — tapping between them places the caret on the line
+underneath as it would anywhere else. The document gains their height as extra scrolling room while
+they are up, and the caret keeps clear of them, so the end of the file is never stuck under a
+button.
+
 **Creating one.** Obsidian's "New note" only ever makes Markdown, so use the command **Symbat:
 Create a `.nbt` file**, or **New Numbat file** from a folder's context menu in the file explorer.
 
@@ -854,4 +873,6 @@ In all cases it provides standard Vim — normal/insert/visual modes, motions, o
 commands — but not your personal `vimrc` mappings, which still apply in `numbat` code blocks. The
 `:`/`/` command line opens in place of the input, with the prompt reading `e >`. On mobile, an
 **Esc** button appears to the left of the prompt while the on-screen keyboard is up (which has no
-Esc key), to make it possible to leave insert mode.
+Esc key), to make it possible to leave insert mode. The `.nbt` editor gets a whole key bar for the
+same reason — Escape, a visual-block toggle, and hide-keyboard — described under
+[Numbat File Editor Support](#numbat-file-editor-support-nbt).

@@ -1,9 +1,10 @@
-// Obsidian's mobile soft-keyboard signals.
+// Obsidian's mobile soft-keyboard signals: what its shell dispatches, and how to read a height out
+// of one.
 //
-// The REPL and the scope inspector both dock a control above the keyboard, and both carried their
-// own copy of the event list and the height reader. What they do with the height genuinely differs
-// — the REPL prefers `visualViewport` and dodges the status bar, the inspector does not — so only
-// the leaves are shared here, not the tracking logic.
+// Three surfaces dock a control above the keyboard, and each carried its own copy of this. What
+// they then *do* with the height differs, and the two that agree share `views/soft-keyboard.ts`
+// instead — which needs Obsidian, while this must not: these are leaves, and a leaf that imports
+// `obsidian` can never be unit-tested (see docs/architecture.md).
 //
 // No imports: `Event` is a DOM global.
 

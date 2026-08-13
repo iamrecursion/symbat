@@ -105,10 +105,14 @@ runs under **plain Node** with no access to Obsidian, so a unit test can only lo
 that module's entire transitive import graph is Obsidian-free. Add an
 `import { Notice } from "obsidian"` to a pure module and its test stops loading.
 
-That is why the four helper extractions in `syntax/identifier.ts`, `document/frontmatter.ts`,
-`document/editor-file.ts`, and `views/mobile-keyboard.ts` are split the way they are:
-`document/editor-file.ts` needs Obsidian and `document/editor-scope.ts` must not, so they are two
-files rather than one, and each header says so.
+That is why the helper extractions in `syntax/identifier.ts`, `document/frontmatter.ts`,
+`document/editor-file.ts`, `views/mobile-keyboard.ts`, and `views/vim-mode.ts` are split the way
+they are: `document/editor-file.ts` needs Obsidian and `document/editor-scope.ts` must not, so they
+are two files rather than one, and each header says so. The same line runs between
+`views/mobile-keyboard.ts` (the event names and the height reader — no imports at all) and
+`views/soft-keyboard.ts` (the tracker built on them, which needs `Platform`), and between
+`views/vim-mode.ts` (what mode Vim is in, as a value) and the watcher in `views/input.ts` that
+subscribes for it.
 
 `test/integration/` is the other half: it loads the real wasm and asserts against actual Numbat
 behavior. Modules that need an interpreter but not Obsidian, such as `scope/eval.ts` and
@@ -244,11 +248,14 @@ agreeing. Each is worth knowing about because it is where a change has to go:
 intentional as a per-block cache, a per-note cache, and a per-render cache have no reason to be the
 same size, and naming each for its consumer is what makes the difference reviewable.
 
-The counterexample is just as instructive: the soft-keyboard tracking in `views/repl.ts` and
-`views/scope.ts` is _not_ merged. The two behave genuinely differently (one measures the visual
-viewport and dodges the status bar; the other does no measuring at all, because Obsidian's mobile
-shell already reflows the drawer). Unifying them would mean picking one behavior on the platform
-hardest to test. Only the leaf helpers moved, into `views/mobile-keyboard.ts`.
+The counterexample is just as instructive: the soft-keyboard tracking is merged **only where the
+behavior actually matches**. The REPL and the `.nbt` editor both ask the same question — how far
+does the thing at the bottom of the screen reach into this view — so that is one
+`SoftKeyboardTracker` in `views/soft-keyboard.ts`, driving the REPL's input row and the file
+editor's key bar alike. The scope inspector is left out of it: it pads its own element instead of
+insetting the view and measures no viewport at all, because Obsidian's mobile shell already reflows
+the drawer it lives in. Folding it in would mean picking one behavior on the platform hardest to
+test, so it keeps the leaf helpers in `views/mobile-keyboard.ts` and none of the tracker.
 
 ## Things Obsidian Does not Officially Support
 

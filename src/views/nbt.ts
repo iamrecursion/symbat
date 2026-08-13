@@ -13,7 +13,7 @@
 // rather than a session, and — for a file that is part of the user prelude — saying so when the
 // prelude it builds on is broken.
 
-import { TextFileView, type WorkspaceLeaf } from "obsidian";
+import { Platform, setIcon, TextFileView, type WorkspaceLeaf } from "obsidian";
 import {
   type CompletionVocabulary,
   type ExprCategories,
@@ -44,6 +44,8 @@ import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
 import { scopeDeclaration } from "../scope/model";
 import { NumbatInput } from "./input";
+import { SoftKeyboardTracker } from "./soft-keyboard";
+import type { VimMode } from "./vim-mode";
 
 /** Persisted in the vault's `workspace.json`, so this string is a compatibility contract, not a
  *  name: changing it turns every open `.nbt` pane into a "No view of type…" placeholder. It keeps
@@ -52,6 +54,20 @@ export const VIEW_TYPE_NUMBAT_FILE = "numbat-file";
 
 /** How long after the last edit the prelude banner re-checks the file. */
 const BANNER_DEBOUNCE_MS = 400;
+
+/**
+ * Give `el` Obsidian's `icon`, falling back to the `text` glyph when there is no such icon.
+ *
+ * `setIcon` is silent about a name the bundled Lucide set does not have — it simply leaves the
+ * element empty — and the two names the key bar wants are recent additions, so an older Obsidian
+ * would render blank buttons. Checking for the SVG afterwards is the only way to tell.
+ */
+function setIconOrText(el: HTMLElement, icon: string, text: string): void {
+  setIcon(el, icon);
+  if (el.querySelector("svg") === null) {
+    el.setText(text);
+  }
+}
 
 /**
  * Move the caret in an already-open `.nbt` file, for go-to-definition (see
@@ -85,6 +101,24 @@ export class NumbatFileView extends TextFileView {
   /** The editor itself; absent before {@link onOpen} and after {@link onClose}, and replaced
    *  outright when a different file is loaded into this view. */
   private input?: NumbatInput;
+
+  /** The mobile key bar below the editor, shown only while the soft keyboard is up; null on desktop
+   *  and until the view is built. */
+  private keyBarEl: HTMLElement | null = null;
+
+  /** The key bar's Vim buttons — Escape and the visual-block toggle — shown only while Vim is on.
+   *  The third button (hide the keyboard) needs no reference: with the bar up it is never
+   *  hidden. */
+  private escButtonEl: HTMLButtonElement | null = null;
+  private blockButtonEl: HTMLButtonElement | null = null;
+
+  /** The on-screen keyboard overlapping this view's bottom edge, which is both what the bar is
+   *  lifted clear of and the signal for showing it at all. Built in {@link onOpen}. */
+  private keyboard?: SoftKeyboardTracker;
+
+  /** The editor's current Vim mode, or `null` when Vim is off — reported by the editor, and read to
+   *  light up the visual-block button. */
+  private vimMode: VimMode | null = null;
 
   /** The pending debounced banner evaluation, or `null` when none is scheduled. */
   private bannerTimer: number | null = null;
@@ -121,12 +155,35 @@ export class NumbatFileView extends TextFileView {
     this.bannerEl.hide();
     this.editorEl = root.createDiv({ cls: "numbat-file-editor" });
     this.buildInput();
+    this.buildKeyBar(root);
+
+    // Hold the key bar clear of the on-screen keyboard by insetting the view's bottom (see
+    // styles.css), and show it only while that keyboard is up.
+    this.keyboard = new SoftKeyboardTracker(this, {
+      target: this.contentEl,
+      changed: () => this.applyBottomInset(),
+    });
 
     // Obsidian's editor settings ("Vim key bindings", "Show line number") fire no event of their
     // own, but closing the settings pane lays the workspace out again — so re-reading them there is
     // what makes a change apply without a reload. Both applications are no-ops when the value has
-    // not moved.
-    this.registerEvent(this.app.workspace.on("layout-change", () => this.applyEditorConfig()));
+    // not moved. The same layout change is also the one move of this view's own rectangle that the
+    // keyboard tracker cannot see for itself.
+    this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.applyEditorConfig();
+      this.keyboard?.remeasure();
+    }));
+
+    // Apply the initial inset: opening a file from the quick switcher while the keyboard is already
+    // up gives the tracker nothing to report, and the bar would sit behind the keyboard until the
+    // next time one of them moved.
+    this.applyBottomInset();
+  }
+
+  /** Re-measure the keyboard overlap when this view's own rectangle moves. */
+  onResize(): void {
+    super.onResize();
+    this.keyboard?.remeasure();
   }
 
   /** Re-read Obsidian's own editor settings and apply any that moved. */
@@ -140,6 +197,13 @@ export class NumbatFileView extends TextFileView {
     this.clearBannerTimer();
     this.input?.destroy();
     this.input = undefined;
+    this.keyBarEl = null;
+    this.escButtonEl = null;
+    this.blockButtonEl = null;
+
+    // The tracker's listeners are unregistered with this component; dropping the reference keeps a
+    // late workspace event from measuring a detached element.
+    this.keyboard = undefined;
   }
 
   // THE FILE (TEXTFILEVIEW'S CONTRACT)
@@ -214,6 +278,10 @@ export class NumbatFileView extends TextFileView {
       this.vimOn = on;
       this.input?.setVim(on);
     }
+
+    // Unconditional: the key bar's Vim buttons also depend on the keyboard being up, which moves
+    // without the setting moving.
+    this.syncKeyBar();
   }
 
   /** Reflect the configured Tab indent width. */
@@ -244,6 +312,12 @@ export class NumbatFileView extends TextFileView {
     this.editorEl.empty();
     this.vimOn = this.plugin.vimModeEnabled();
     this.gutterOn = this.plugin.lineNumbersEnabled();
+
+    // A fresh editor starts in whatever mode Vim starts in, and reports it as soon as it is built;
+    // clearing this first keeps the previous editor's mode from lingering on the key bar in
+    // between.
+    this.setVimMode(null);
+
     this.input = new NumbatInput(
       this.editorEl,
       this.plugin,
@@ -278,6 +352,8 @@ export class NumbatFileView extends TextFileView {
         hoverCard: (symbol) => this.hoverCard(symbol),
         // Document mode shows every line's result instead of the last line's hole.
         holeType: () => null,
+        // What lights up the key bar's visual-block button while that mode is live.
+        vimModeChanged: (mode) => this.setVimMode(mode),
       },
       {
         highlight: true,
@@ -291,6 +367,110 @@ export class NumbatFileView extends TextFileView {
       },
     );
     this.input.setDocument(this.data);
+  }
+
+  // THE MOBILE KEY BAR
+  // ==============================================================================================
+
+  /**
+   * Build the mobile-only bar below the editor: the keys a soft keyboard does not have.
+   *
+   * A phone keyboard has no `Esc`, which strands a Vim user in insert mode, and no `Ctrl-V`, which
+   * puts blockwise visual out of reach entirely — the two things a whole Numbat program is most
+   * awkward to edit without. The third button dismisses the keyboard, which is worth a button of
+   * its own on a screen where the only other way is to tap something unrelated.
+   *
+   * Every button keeps focus where it is (`preventDefault` on pointer-down), or the keyboard would
+   * dismiss itself on the way to being used — which for the first two buttons is precisely wrong.
+   * The bar starts hidden; {@link syncKeyBar} reveals it when the keyboard comes up.
+   */
+  private buildKeyBar(root: HTMLElement): void {
+    if (!Platform.isMobile) {
+      return;
+    }
+
+    const bar = root.createDiv({ cls: "numbat-file-keybar" });
+    bar.hide();
+    this.keyBarEl = bar;
+
+    const button = (cls: string, label: string, onClick: () => void): HTMLButtonElement => {
+      const el = bar.createEl("button", { cls, attr: { type: "button", "aria-label": label } });
+      this.registerDomEvent(el, "mousedown", (evt) => evt.preventDefault());
+      this.registerDomEvent(el, "click", onClick);
+      return el;
+    };
+
+    // Escape, leftmost: the whole key, not just "leave insert mode" — it also leaves the visual
+    // block the next button starts, and cancels a half-typed operator.
+    this.escButtonEl = button("numbat-file-keybar-esc", "Escape", () => {
+      this.input?.pressEscape();
+      this.input?.focus();
+    });
+    this.escButtonEl.setText("⎋");
+
+    // Blockwise visual, beside it. A toggle in both directions, and lit while it is on.
+    this.blockButtonEl = button("numbat-file-keybar-block", "Toggle visual block", () => {
+      this.input?.toggleVisualBlock();
+      this.input?.focus();
+    });
+    setIconOrText(this.blockButtonEl, "box-select", "▦");
+
+    // Everything above is Vim's; the spacer pushes what is not to the far right.
+    bar.createDiv({ cls: "numbat-file-keybar-spacer" });
+
+    // Dismiss the keyboard. The one button that must *not* put focus back, since dropping it is
+    // what closes the keyboard; the bar then hides itself along with it.
+    const hide = button("numbat-file-keybar-hide", "Hide keyboard", () => this.input?.blur());
+    setIconOrText(hide, "keyboard-off", "⌄");
+
+    // The editor is built before the bar is, so its first mode report arrived with no button to
+    // put it on; this applies what was recorded then.
+    this.setVimMode(this.vimMode);
+    this.syncKeyBar();
+  }
+
+  /**
+   * Inset the view's bottom by the keyboard's overlap, so the key bar rises to sit just above it
+   * (see styles.css), and show or hide the bar with the keyboard itself. Called on open and
+   * whenever the tracker reports a move.
+   */
+  private applyBottomInset(): void {
+    this.contentEl.style.setProperty("--numbat-file-bottom-inset", `${this.keyboard?.inset() ?? 0}px`);
+    this.syncKeyBar();
+  }
+
+  /**
+   * Show the key bar only while the soft keyboard is up — that is exactly when the keys it carries
+   * are missing, and with a hardware keyboard attached (which keeps the soft one hidden) every one
+   * of them is redundant.
+   *
+   * Its two Vim buttons additionally need Vim to be on. Dismissing the keyboard does not, so the
+   * bar still appears for it alone.
+   *
+   * The bar floats over the editor, so showing it also has to give the document somewhere to go:
+   * its height becomes both trailing scroll room (styles.css) and the caret's scroll margin, or the
+   * end of the file would sit permanently under a button. That height is measured rather than
+   * assumed, since the buttons are sized in the theme's own units.
+   */
+  private syncKeyBar(): void {
+    const up = this.keyboard?.isUp() ?? false;
+    this.keyBarEl?.toggle(up);
+    this.escButtonEl?.toggle(this.vimOn);
+    this.blockButtonEl?.toggle(this.vimOn);
+
+    // Read after the toggle above, so a hidden bar is not measured as zero-height while it is about
+    // to be shown.
+    const height = up ? (this.keyBarEl?.offsetHeight ?? 0) : 0;
+    this.contentEl.toggleClass("numbat-file-keybar-up", up);
+    this.contentEl.style.setProperty("--numbat-file-keybar-height", `${height}px`);
+    this.input?.setScrollBottomMargin(height);
+  }
+
+  /** Record the editor's Vim mode and light the visual-block button while that mode is the live
+   *  one — a toggle that does not say which way it is toggled is a guess. */
+  private setVimMode(mode: VimMode | null): void {
+    this.vimMode = mode;
+    this.blockButtonEl?.toggleClass("is-active", mode === "visual-block");
   }
 
   // SCOPE AT THE CARET

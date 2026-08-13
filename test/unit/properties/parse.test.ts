@@ -314,6 +314,13 @@ test("an offset written in the value beats the default zone", () => {
   assert.equal(exprFor("2026-01-27T10:30:00Z", zoned), "datetime(\"2026-01-27T10:30:00Z\") -> tz(\"UTC\")");
 });
 
+test("a hand-written lowercase z is an offset like any other", () => {
+  // Numbat reads either case, so a value spelled this way binds as the moment it names rather than
+  // falling through to text. It is passed on as written — nothing here rewrites a note — and the
+  // widgets canonicalize it to `Z` if they ever write the row back (properties/zone.ts).
+  assert.equal(exprFor("2026-01-27T10:30:00z", zoned), "datetime(\"2026-01-27T10:30:00z\") -> tz(\"UTC\")");
+});
+
 test("a Zoned Date carries an offset without carrying a time", () => {
   const dated = { assignedType: () => ZONED_DATE_TYPE };
   assert.equal(exprFor("2026-07-27 +05:45", dated), "datetime(\"2026-07-27T00:00:00+05:45\")");
@@ -1566,6 +1573,72 @@ test("every spelling of zero is caught, and nothing else is", () => {
   // difference: it is the *notice* that belongs to the Numbat type, not the substitution.
   assert.equal(warningFor({ costs: { a: 0.0 } }, "costs.a"), null);
   assert.equal(bindingFor({ costs: { a: 0.0 } }, "costs.a")?.expr, "_Nb_zero_Scalar");
+});
+
+// --- the same zero, reached through an array ----------------------------------
+
+test("a list of zeros that is an object's field is grounded, or it poisons the object", () => {
+  // A `List<A>` leaves the struct holding it exactly as polymorphic as a bare `0` does, and costs
+  // the same thing: every *other* field of the object becomes unreadable too.
+  const bound = bindingFor({ costs: { counts: [0, 0, 0], note: "x" } }, "costs.counts");
+  assert.equal(bound?.expr, "[_Nb_zero_Scalar, _Nb_zero_Scalar, _Nb_zero_Scalar]");
+  assert.deepEqual(bound?.defs, ["let _Nb_zero_Scalar: Scalar = 0"], "declared once for the whole list");
+
+  // What the reader wrote comes back with it, so the list still counts as restating its own source
+  // and no `= [0, 0, 0]` is placed beside a line that already says it.
+  assert.equal(bound?.written, "[0, 0, 0]");
+  assert.equal(bound?.warning, undefined, "a plain number says nothing, here as anywhere");
+});
+
+test("a zero field of an object inside a list is grounded, wherever the list sits", () => {
+  // The struct is minted inside the *list*, so this one breaks even when the array is a top-level
+  // property with no object above it at all.
+  const bound = bindingFor({ crew: [{ score: 0, name: "a" }] }, "crew");
+  assert.match(bound?.expr ?? "", /score: \(_Nb_zero_Scalar\)/);
+  assert.match(bound?.written ?? "", /score: \(0\)/);
+  assert.ok(bound?.defs.includes("let _Nb_zero_Scalar: Scalar = 0"));
+});
+
+test("a list nested inside a struct field is grounded too, however deep", () => {
+  const bound = bindingFor({ crew: [{ scores: [0, 0], name: "a" }] }, "crew");
+  assert.match(bound?.expr ?? "", /scores: \(\[_Nb_zero_Scalar, _Nb_zero_Scalar\]\)/);
+  assert.match(bound?.written ?? "", /scores: \(\[0, 0\]\)/);
+});
+
+test("a list that reaches no struct keeps its zeros, exactly as a lone one does", () => {
+  // `let weights = [0, 0]` generalizes and reads back, so there is nothing to buy by narrowing it —
+  // the same judgement a top-level bare `0` gets.
+  const bound = bindingFor({ weights: [0, 0] }, "weights");
+  assert.equal(bound?.expr, "[0, 0]");
+  assert.deepEqual(bound?.defs, []);
+  assert.equal(bound?.written, undefined, "nothing was substituted, so there is nothing to restate");
+});
+
+test("a numbat-typed zero in a list is reported on the list, since an item has no binding", () => {
+  // The one thing the array case cannot do is report itself: a position inside an array has no
+  // PropertyBinding to carry a notice and no line of its own to place it against, so the notice
+  // goes on the array and names where to look.
+  const typed = { isNumbatTyped: (key: string) => key === "costs.rates.#" };
+  const bound = bindingFor({ costs: { rates: ["0", "5 EUR"] } }, "costs.rates", typed);
+  assert.match(bound?.warning ?? "", /bare 0 has no dimension of its own/);
+  assert.match(bound?.warning ?? "", /Found under 'costs\.rates\.#'\./);
+
+  // One entry per *position*, not per element: every item of an array shares a path.
+  const many = bindingFor({ costs: { rates: ["0", "0", "0"] } }, "costs.rates", typed);
+  assert.equal((many?.warning ?? "").match(/costs\.rates\.#/g)?.length, 1);
+
+  // And a top-level list of the same items keeps its zero: nothing there is a struct field, so
+  // `let rates = [0, 5 EUR]` is Numbat's problem to type and not this file's to narrow.
+  assert.equal(
+    bindingFor({ rates: ["0"] }, "rates", { isNumbatTyped: (k: string) => k === "rates.#" })?.warning,
+    undefined,
+  );
+});
+
+test("a typed zero deep in a list of objects names the field it was found under", () => {
+  const typed = { isNumbatTyped: (key: string) => key === "crew.#.score" };
+  const bound = bindingFor({ crew: [{ score: "0", name: "a" }] }, "crew", typed);
+  assert.match(bound?.warning ?? "", /Found under 'crew\.#\.score'\./);
 });
 
 // --- quoteZonedTimestamps -----------------------------------------------------

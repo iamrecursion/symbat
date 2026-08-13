@@ -47,7 +47,13 @@ export interface ZonedValue {
 const MIN_OFFSET_MINUTES = -12 * 60;
 const MAX_OFFSET_MINUTES = 14 * 60;
 
-/** `Z`, `+02:00` or `+0200` — the three spellings YAML, ISO 8601 and Numbat's own examples use. */
+/**
+ * `Z`, `+02:00` or `+0200` — the spellings YAML, ISO 8601 and Numbat's own examples use, plus the
+ * lowercase `z` a person types. This is the *input* grammar, so it is the lenient one: everything
+ * it admits collapses to one of the two canonical forms below, and properties/parse.ts's
+ * `DATE_TEXT` admits exactly the same set so that a value in a note and a value in a settings field
+ * are never read by two different rules.
+ */
 const OFFSET_TEXT = /^(?:([Zz])|([+-])(\d{2}):?(\d{2}))$/;
 
 /**
@@ -197,11 +203,16 @@ function fromDate(value: Date): ZonedValue | null {
     return null;
   }
 
-  const year = String(value.getUTCFullYear()).padStart(4, "0");
-  if (year.length !== 4) {
-    return null; // a year outside four digits is not a note's due date
+  // A year outside four digits is not a note's due date. Tested before it is padded, not after: a
+  // negative one is already four characters wide (`-123`), so a length check on the padded string
+  // passes it through and builds the date `-123-07-27` — which every reader downstream then splits
+  // on `-` into four fields and makes nonsense of.
+  const fullYear = value.getUTCFullYear();
+  if (fullYear < 0 || fullYear > 9999) {
+    return null;
   }
 
+  const year = String(fullYear).padStart(4, "0");
   const date = `${year}-${pad(value.getUTCMonth() + 1)}-${pad(value.getUTCDate())}`;
   const midnight = value.getUTCHours() === 0 && value.getUTCMinutes() === 0;
   return {
@@ -377,14 +388,27 @@ export function availableZones(): readonly string[] {
   return ALL_ZONES;
 }
 
-/** `GMT+02:00`, `GMT-03:30`, or a bare `GMT` on an ICU that abbreviates the zero case. */
-const GMT_OFFSET = /^GMT(?:([+-]\d{2}:\d{2}))?$/;
+/**
+ * `GMT+02:00`, `GMT-03:30`, or a bare `GMT` on an ICU that abbreviates the zero case.
+ *
+ * **The seconds are matched and thrown away**, because before standard time there were some: every
+ * zone's offset was its town's solar mean, and ICU reports it, so `Europe/Berlin` in 1880 is
+ * `GMT+00:53:28` and `Asia/Calcutta` in 1850 is `GMT+05:53:28`. There is nowhere to put them — the
+ * wire format is `±HH:MM` and so is everything downstream of it — but rejecting the whole reading
+ * over them would be worse than dropping them: {@link offsetForWallClock} would answer `null` for
+ * every date before roughly 1900, which reads to a caller as "this platform does not know this
+ * zone" and quietly turns the reader's zone setting off for those notes.
+ */
+const GMT_OFFSET = /^GMT(?:([+-]\d{2}:\d{2})(?::\d{2})?)?$/;
 
 /**
  * The offset `zone` was at `atMs`, or `null` when the platform does not know the zone.
  *
  * DST is the whole reason this is a function of a moment rather than a constant: `Europe/London` is
  * `+00:00` in January and `+01:00` in July, and `Australia/Lord_Howe` shifts by half an hour.
+ *
+ * Accurate to the minute, which is all a `±HH:MM` can say — see {@link GMT_OFFSET} for the only
+ * moments where that is a truncation rather than the whole answer.
  */
 export function offsetAtInstant(zone: string, atMs: number): string | null {
   if (!Number.isFinite(atMs)) {

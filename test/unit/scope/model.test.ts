@@ -157,6 +157,29 @@ test("property defsite lines come from the frontmatter key", () => {
   assert.equal(tree.properties[0].defsite.line, 1);
 });
 
+test("a property the derivation substituted for carries what the note actually says", () => {
+  // The inspector shows `written` where there is one (views/scope.ts), so a grounded `0` reads as
+  // the `0` the reader wrote rather than as the generated name it binds under. `expr` stays the
+  // derived form, because that is the one scope/eval.ts runs.
+  const lines = ["---", "costs:", "  total: 0", "---"];
+  const tree = buildScopeTree({
+    file: "N.md",
+    lines,
+    config,
+    preamble: derivePreamble({ costs: { total: 0 } }, {
+      isNumbatTyped: () => false,
+      isReserved: () => false,
+      plain: PLAIN_ALL,
+      plainNested: PLAIN_ALL,
+    }),
+    importGroups: [],
+  });
+
+  const entry = tree.properties.find((property) => property.label === "costs.total");
+  assert.equal(entry?.expr, "_Nb_zero_Scalar", "what is evaluated");
+  assert.equal(entry?.written, "0", "what is shown");
+});
+
 // --- current node -------------------------------------------------------------
 
 test("currentNodeId picks the node the caret is in, or null", () => {

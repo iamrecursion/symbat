@@ -129,8 +129,15 @@ export interface ScopeEntry {
    *  search candidate. */
   path?: string[];
 
-  /** The definition expression to show (a property's value, or a `let`'s RHS). */
+  /** The definition expression — a property's value, or a `let`'s RHS. What scope/eval.ts *runs*
+   *  when {@link probe} is `expr`, so it is the derived form and not always the written one; a
+   *  surface showing it to a reader wants {@link written} in front. */
   expr: string;
+
+  /** {@link expr} as the reader wrote it, present only where the derivation substituted for it —
+   *  see {@link PropertyBinding.written}. Display only: it is never run, because the whole reason
+   *  it differs is that the substitution is what Numbat can read. */
+  written?: string;
 
   /** The full statement to run when evaluating (`let name = (expr)` for a property; the verbatim
    *  `let` statement for a block / inline / import binding). */
@@ -434,6 +441,7 @@ function buildImports(groups: readonly ImportGroup[]): ImportScope[] {
         label: binding.key === binding.name ? binding.name : binding.key,
         path: binding.path,
         expr: binding.expr,
+        ...binding.written === undefined ? {} : { written: binding.written },
         code: binding.code,
         defs: binding.defs,
         // Already defined by the chunk replay, so the value comes from probing the bound name —
@@ -528,6 +536,7 @@ function buildProperties(preamble: NotePreamble, lines: string[]): {
       label: binding.key === binding.name ? binding.name : binding.key,
       path: binding.path,
       expr: binding.expr,
+      ...binding.written === undefined ? {} : { written: binding.written },
       code: binding.code,
       defs: binding.defs,
       probe: "expr",

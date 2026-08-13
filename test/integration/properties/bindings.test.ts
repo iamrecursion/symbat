@@ -1014,3 +1014,60 @@ test("a zero under the Numbat type is warned about, on the property it was done 
     nb.free();
   }
 });
+
+// The two ways a zero reaches a struct through an **array**. Both are ordinary frontmatter, and
+// both leave the whole object unreadable if the substitution does not follow them there — a
+// `List<A>` is exactly as polymorphic as a bare `0`, and a list of objects mints its element type
+// inside the list rather than around it. The unit tests stop at the emitted text; this is the half
+// that says Numbat agrees.
+
+test("a list of zeros inside an object: the object's other fields still read", { skip }, async () => {
+  const nb = newContext(await loadNumbat());
+  try {
+    const run = runnerFor(nb);
+    const preamble = derivePreamble(
+      { Data: { counts: [0, 0, 0], name: "hi" }, Read: "Data.name" },
+      {
+        isNumbatTyped: (key) => key === "Read",
+        isReserved: () => false,
+        plain: PLAIN_ALL,
+        plainNested: PLAIN_ALL,
+      },
+    );
+    replay(nb, preamble);
+
+    // The consumer reads a *different* field of the same object — which a `List<A>` in the corner
+    // would have made impossible, exactly as a bare `0` there does.
+    assert.equal(inlineResultFor(run, "Data.name").plain, "\"hi\"");
+    // Escaped, because Numbat leaves a generic's brackets that way and `plain` strips tags only.
+    assert.match(plain(run("type(Data.counts)").output), /List&lt;Scalar&gt;/);
+    assert.equal(inlineResultFor(run, "sum(Data.counts)").plain, "0", "and the zeros are still zero");
+
+    // Nothing is said and nothing shown: a YAML number binding as a Scalar is what the property
+    // meant, and the list still restates its own source however it was written underneath.
+    const hints = frontmatterHints(run, preamble);
+    assert.deepEqual(hints.map((hint) => [hint.key, hint.kind]), [["Read", "result"]]);
+  } finally {
+    nb.free();
+  }
+});
+
+test("a zero field of an object inside a list: its siblings still read", { skip }, async () => {
+  const nb = newContext(await loadNumbat());
+  try {
+    const run = runnerFor(nb);
+    // `crew` rather than `people`: the latter is a prelude name, which the reserved-name tests
+    // above are about.
+    const preamble = derivePreamble(
+      { crew: [{ score: 0, name: "a" }] },
+      { isNumbatTyped: () => false, isReserved: () => false, plain: PLAIN_ALL, plainNested: PLAIN_ALL },
+    );
+    replay(nb, preamble);
+
+    assert.equal(inlineResultFor(run, "head(crew).name").plain, "\"a\"");
+    assert.equal(inlineResultFor(run, "head(crew).score").plain, "0");
+    assert.equal(frontmatterHints(run, preamble).some((hint) => hint.kind === "error"), false);
+  } finally {
+    nb.free();
+  }
+});

@@ -231,14 +231,31 @@
 
 /* --- Numbat file editor (.nbt) ------------------------------------------- */
 
-/* The editor manages its own scrolling and fills the leaf, so drop the view's default content 
+/* The editor manages its own scrolling and fills the leaf, so drop the view's default content
  * padding — otherwise the document scrolls inside a box that is itself inset, and the last line
- * hides under the bottom edge. */
+ * hides under the bottom edge.
+ *
+ * The bottom is kept, though, on mobile: it lifts the key bar clear of the on-screen keyboard, from
+ * the JS-set `--numbat-file-bottom-inset` (see views/nbt.ts). It is `0` on desktop, where the whole
+ * bar is absent, and `border-box` keeps the inset inside the full-height view rather than
+ * overflowing it.
+ *
+ * Deliberately *not* `max(env(safe-area-inset-bottom), …)`, which is how the REPL writes the same
+ * line. A keyboard covers the home indicator, so reserving for both leaves the bar floating a
+ * safe-area's worth of daylight above the keys — and on the platforms where Obsidian's shell
+ * already reflows the view for the keyboard the measured inset is `0`, which makes that reservation
+ * the only thing there. */
 .workspace-leaf-content[data-type="numbat-file"] .view-content {
+  box-sizing: border-box;
   padding: 0;
+  padding-bottom: var(--numbat-file-bottom-inset, 0px);
 }
 
+/* `position: relative` so the mobile key bar can float over the editor rather than take a row of
+ * its own; `--numbat-file-keybar-height` is that bar's measured height (views/nbt.ts), read here by
+ * the editor to keep the document scrollable clear of it. */
 .numbat-file-view {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -323,6 +340,76 @@
 .numbat-file-editor .cm-panel.cm-search button {
   font-family: inherit;
   font-size: var(--font-ui-small);
+}
+
+/* --- The mobile key bar -------------------------------------------------- */
+
+/* Mobile only, and only while the on-screen keyboard is up (views/nbt.ts shows and hides it): the
+ * keys that keyboard does not have.
+ *
+ * It floats *over* the editor's bottom edge rather than taking a row of its own. A row would be a
+ * toolbar however it were painted — giving it no background only means the strip shows the view's
+ * background, since nothing is behind a element the editor was shrunk to make room for. Out of flow,
+ * the file runs on underneath and what reads is three buttons resting on it. Each button carries its
+ * own fill and border (see the shared pill rule), which is what keeps them legible over text.
+ *
+ * Only the buttons take taps; the space between them belongs to the editor, so tapping there places
+ * the caret on the line running behind the bar as it would anywhere else. */
+.numbat-file-keybar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.35em 0.6em;
+  background: none;
+  pointer-events: none;
+}
+
+/* The floating bar covers the last line or two, so while it is up the document gets its height as
+ * extra scrollable room at the end. Together with the editor's scroll margin (views/input.ts), that
+ * is what lets the caret reach the bottom of the file without hiding under a button. */
+.numbat-file-view.numbat-file-keybar-up .numbat-file-editor .cm-content {
+  padding-bottom: calc(0.75em + var(--numbat-file-keybar-height, 3rem));
+}
+
+/* Vim's keys sit together at the left; this pushes "hide keyboard" to the far right, where a
+ * dismissal is least likely to be hit by accident while reaching for the other two. */
+.numbat-file-keybar-spacer {
+  flex: 1 1 auto;
+}
+
+/* The buttons take the REPL pills' shape (see the shared rule further down) at a size meant for a
+ * fingertip rather than a text line — which is why that rule leaves the size to its callers.
+ *
+ * The fill is its own too, and opaque. The REPL's pills use `--background-modifier-hover`, a
+ * low-alpha tint that reads fine over a plain view background; these sit on the file's own text,
+ * where a tint leaves the glyph competing with whatever line is behind it. A solid surface color
+ * plus the theme's small shadow is what separates a button from the code it floats over. */
+.numbat-file-keybar button {
+  min-height: 2.2em;
+  min-width: 2.6em;
+  padding: 0 0.7em;
+  font-size: var(--font-ui-medium);
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  pointer-events: auto;
+}
+
+.numbat-file-keybar button svg {
+  width: 1.2em;
+  height: 1.2em;
+}
+
+/* Lit while blockwise visual is the live mode. A toggle that looks the same in both positions is a
+ * guess, and on a phone the mode indicator Vim would otherwise give you (the block cursor's shape,
+ * a status line) is either absent or too small to read. */
+.numbat-file-keybar button.is-active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--text-on-accent);
 }
 
 /* --- Caret and selection (CodeMirror-drawn) ------------------------------ */
@@ -582,25 +669,34 @@
   font-size: var(--numbat-repl-input-font-size, var(--code-size, 0.9em));
 }
 
-/* The mobile input buttons — the Vim Esc (⎋), at the left before the prompt, and the "evaluate"
- * button at the right — share one style: a rounded accent-colored pill, one line tall (the button
- * shares the input's font-size, so 1.5em here equals one input line box) so its centered symbol/icon
- * sits on the input's first-line centerline with the prompt. */
+/* The mobile buttons — the REPL's Vim Esc (⎋), at the left before the prompt, and its "evaluate"
+ * button at the right, plus the `.nbt` editor's key bar — share one style: a rounded accent-colored
+ * pill, one line tall (the button shares the input's font-size, so 1.5em here equals one input line
+ * box) so its centered symbol/icon sits on the input's first-line centerline with the prompt. The
+ * key bar, which sits on no such line, overrides the height where it is defined. */
 .numbat-repl-esc-button,
-.numbat-repl-submit-button {
+.numbat-repl-submit-button,
+.numbat-file-keybar button {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  cursor: pointer;
+  color: var(--text-accent);
+}
+
+/* The two that share a line with the input are sized to it, and sit on the view's own background —
+ * where a tint is enough of a fill to read as a control. The key bar's are sized for a fingertip
+ * and sit on the file's text, so they state both for themselves where they are defined. */
+.numbat-repl-esc-button,
+.numbat-repl-submit-button {
   height: 1.5em;
   min-width: 1.6em;
   padding: 0 0.4em;
   background: var(--background-modifier-hover);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-l);
   box-shadow: none;
-  cursor: pointer;
-  color: var(--text-accent);
 }
 
 /* Size the icon to the surrounding text so it reads as part of the line. */
@@ -609,8 +705,11 @@
   height: 1.1em;
 }
 
+/* `:not(.is-active)` because a tap on a touch screen leaves the hover state stuck, and this rule
+ * would then repaint a lit button's glyph in the color it has when unlit. */
 .numbat-repl-esc-button:hover,
-.numbat-repl-submit-button:hover {
+.numbat-repl-submit-button:hover,
+.numbat-file-keybar button:not(.is-active):hover {
   color: var(--text-normal);
 }
 

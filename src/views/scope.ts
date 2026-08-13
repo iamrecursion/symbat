@@ -1312,7 +1312,10 @@ export class NumbatScopeView extends ItemView {
       field("Line", (el) => el.setText(String(line + 1)));
     }
 
-    field("Definition", (el) => el.setText(entry.expr));
+    // What the note says, not what was derived from it: a row whose value the derivation
+    // substituted for (a grounded `0`) would otherwise show a generated name the reader never
+    // wrote. The same choice properties/frontmatter-inlay.ts makes, for the same reason.
+    field("Definition", (el) => el.setText(entry.written ?? entry.expr));
     const { value } = entry;
     if (value?.type != null) {
       field("Type", (el) => setNumbatHtml(el, (value.type ?? "").replace(LEADING_COLON, "")));

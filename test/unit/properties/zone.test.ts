@@ -152,6 +152,30 @@ test("parseZoned reads a Date in UTC, as the note's own YAML wrote it", () => {
   assert.equal(parseZoned(new Date("nope")), null);
 });
 
+test("a Date whose year is not four digits is turned away, on either side of the range", () => {
+  // A year below 1000 pads and is fine; one outside the range has no `YYYY-MM-DD` to be written as.
+  // The negative case is the one worth pinning: `String(-123)` is already four characters wide, so
+  // a length check made after padding lets it through and builds `-123-07-27`, which every reader
+  // downstream splits on `-` into four fields.
+  const at = (year: number): Date => {
+    const date = new Date(0);
+    date.setUTCFullYear(year, 6, 27);
+    return date;
+  };
+
+  assert.equal(parseZoned(at(-123)), null, "a negative year");
+  assert.equal(parseZoned(at(12345)), null, "a five-digit year");
+  assert.equal(parseZoned(at(76))?.date, "0076-07-27", "but a short one pads");
+});
+
+test("a lowercase z is the same offset as Z, and is written back as one", () => {
+  // The frontmatter grammar is for what someone may have typed, and `z` means exactly one thing —
+  // Numbat itself reads either. It is canonicalized on the way back out, as `+0200` already is.
+  assert.equal(parseZoned("2026-07-27T10:30:00z")?.offset, "Z");
+  assert.equal(formatZoned(parseZoned("2026-07-27T10:30:00z")!), "2026-07-27T10:30Z");
+  assert.equal(parseZoned("2026-07-27 z")?.offset, "Z", "on a date as much as on a clock");
+});
+
 test("parseZoned rejects what is not a date", () => {
   for (const value of ["tomorrow", "", "1.5", "v2026-07-27", null, undefined, 42, {}]) {
     assert.equal(parseZoned(value), null, JSON.stringify(value));
@@ -305,6 +329,23 @@ test("offsetAtInstant handles half-hour shifts and sub-hour zones", () => {
 
 test("offsetAtInstant reports zero as an offset, not as a bare GMT", () => {
   assert.equal(offsetAtInstant("UTC", JAN), "+00:00");
+});
+
+test("offsetAtInstant reads a pre-standard-time offset to the minute", () => {
+  // Before the railways there was no standard time: a zone's offset was its town's solar mean, and
+  // ICU still reports it — `GMT+00:53:28` for Berlin in 1880. There is nowhere to put the seconds,
+  // so they go; refusing the whole reading over them would make every date this old answer `null`,
+  // which reads as "this platform does not know Europe/Berlin".
+  assert.equal(offsetAtInstant("Europe/Berlin", Date.UTC(1880, 0, 1)), "+00:53");
+  assert.equal(offsetAtInstant("Asia/Calcutta", Date.UTC(1850, 5, 1)), "+05:53");
+});
+
+test("a pre-standard-time offset still reaches a wall clock, and is a real offset", () => {
+  const offset = offsetForWallClock("Europe/Berlin", "1880-05-01T10:30");
+  assert.equal(offset, "+00:53");
+  // Which is the point of truncating rather than rejecting: what comes back has to be something the
+  // widgets can write and this module can read back.
+  assert.equal(normalizeOffset(offset ?? ""), "+00:53");
 });
 
 test("offsetAtInstant returns null rather than throwing on a zone or moment it cannot read", () => {

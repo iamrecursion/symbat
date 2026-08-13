@@ -33,7 +33,7 @@ import type SymbatPlugin from "../main";
 import { isValidCssFontSize } from "../settings/util";
 import { fuzzyFilter } from "./fuzzy";
 import { NumbatInput } from "./input";
-import { KEYBOARD_EVENT_NAMES, keyboardHeightOf } from "./mobile-keyboard";
+import { SoftKeyboardTracker } from "./soft-keyboard";
 
 /** Persisted in the vault's `workspace.json` — see the note on `VIEW_TYPE_NUMBAT_FILE` in
  *  views/nbt.ts. Renaming it orphans open REPL panes. */
@@ -89,13 +89,9 @@ export class NumbatReplView extends ItemView {
   /** Running count of visible lines in the log (for buffer trimming). */
   private visibleLines = 0;
 
-  /** Last bottom inset (px) applied so the input row clears whatever overlaps the view's bottom
-   * edge — the mobile keyboard, or the desktop status bar; `0` when nothing does. */
-  private bottomInset = 0;
-
-  /** Height (CSS px) of the on-screen keyboard from Capacitor's keyboard events; `0` while it is
-   * closed. */
-  private keyboardHeight = 0;
+  /** Whatever overlaps the view's bottom edge — the mobile keyboard, or the desktop status bar
+   *  under the sidebar's bottom split. Built in `onOpen`, since it measures `contentEl`. */
+  private keyboard?: SoftKeyboardTracker;
 
   // Prefix history-recall state (arrow keys). `recallIndex === -1` means no recall is in progress
   // and the input holds the user's own text.
@@ -239,44 +235,21 @@ export class NumbatReplView extends ItemView {
 
     // Keep the input row clear of whatever overlaps the view's bottom edge — the on-screen keyboard
     // on mobile, or Obsidian's status bar when the view is docked in the sidebar's bottom split on
-    // desktop — by padding the view's bottom (see styles.css). Re-measure whenever either can
-    // change.
-    this.registerEvent(this.app.workspace.on("resize", () => this.syncBottomInset()));
-    this.registerEvent(this.app.workspace.on("layout-change", () => this.syncBottomInset()));
+    // desktop — by padding the view's bottom (see styles.css), and reveal the mobile buttons that
+    // only make sense while the soft keyboard is up.
+    this.keyboard = new SoftKeyboardTracker(this, {
+      target: this.contentEl,
+      statusBar: true,
+      changed: () => this.applyBottomInset(),
+    });
 
-    // The visual viewport shrinks for the keyboard where the platform supports it (Android, and
-    // some iOS); a fallback to the Capacitor events below.
-    const viewport = window.visualViewport;
-    if (viewport) {
-      const onViewportChange = (): void => this.syncBottomInset();
-      viewport.addEventListener("resize", onViewportChange);
-      viewport.addEventListener("scroll", onViewportChange);
-      this.register(() => {
-        viewport.removeEventListener("resize", onViewportChange);
-        viewport.removeEventListener("scroll", onViewportChange);
-      });
-    }
-
-    // Obsidian's iOS WebView overlays the keyboard without reflowing the layout or shrinking the
-    // visual viewport, so the reliable signal there is the Capacitor keyboard events it dispatches
-    // on `window`, which carry the exact height. The one handler serves show and hide (hide events
-    // report no height, i.e. `0`).
-    if (Platform.isMobile) {
-      const onKeyboard = (evt: Event): void => {
-        this.keyboardHeight = keyboardHeightOf(evt);
-        this.syncBottomInset();
-        this.syncSubmitButton();
-        this.syncEscButton();
-      };
-
-      for (const name of KEYBOARD_EVENT_NAMES) {
-        window.addEventListener(name, onKeyboard);
-        this.register(() => window.removeEventListener(name, onKeyboard));
-      }
-    }
+    // The tracker sees the keyboard and the viewport itself; these are the moves only the workspace
+    // reports.
+    this.registerEvent(this.app.workspace.on("resize", () => this.keyboard?.remeasure()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.keyboard?.remeasure()));
 
     // Apply the initial inset (e.g. when opened already docked under the status bar).
-    this.syncBottomInset();
+    this.applyBottomInset();
 
     const loading = this.logEl.createDiv({ cls: "numbat-repl-loading", text: "Loading Numbat…" });
     try {
@@ -384,52 +357,25 @@ export class NumbatReplView extends ItemView {
   /** Re-measure the bottom inset on view resize (covers window resize and drags). */
   onResize(): void {
     super.onResize();
-    this.syncBottomInset();
+    this.keyboard?.remeasure();
   }
 
   /**
-   * Match the view's bottom inset to whatever currently overlaps its bottom edge, so the input row
-   * rises to sit just above it. Two obstructions are handled:
+   * Pad the view's bottom by whatever overlaps its bottom edge, so the input row rises to sit just
+   * above it (see styles.css), and re-evaluate the two mobile buttons that exist only while the
+   * soft keyboard is up.
    *
-   *   * The on-screen keyboard on mobile. Preferred from the visual viewport where it shrinks for
-   *     the keyboard; otherwise from the height Capacitor reports (Obsidian's iOS WebView overlays
-   *     the keyboard without shrinking it).
-   *   * Obsidian's status bar on desktop, which floats over the bottom-right of the workspace and
-   *     so covers a view docked in the sidebar's bottom split.
-   *
-   * The larger overlap wins; the inset is `0` when nothing overlaps. Guarded so the CSS variable is
-   * only written when the value changes.
+   * The measurement is the tracker's; this is what the REPL does with it. Called on open and
+   * whenever the tracker reports a move, so the CSS variable is written only when it changed.
    */
-  private syncBottomInset(): void {
-    const rect = this.contentEl.getBoundingClientRect();
-    let inset = 0;
-
-    // Mobile keyboard: how far its top edge rises above the view's bottom edge.
-    const viewport = window.visualViewport;
-    if (viewport && viewport.height < window.innerHeight - 1) {
-      inset = Math.max(inset, rect.bottom - (viewport.offsetTop + viewport.height));
-    } else if (this.keyboardHeight > 0) {
-      inset = Math.max(inset, rect.bottom - (window.innerHeight - this.keyboardHeight));
-    }
-
-    // Desktop status bar: only when it actually floats over this view horizontally.
-    const statusBar = this.contentEl.ownerDocument.body.querySelector<HTMLElement>(".status-bar");
-    if (statusBar) {
-      const bar = statusBar.getBoundingClientRect();
-      if (bar.width > 0 && bar.left < rect.right && bar.right > rect.left) {
-        inset = Math.max(inset, rect.bottom - bar.top);
-      }
-    }
-
-    inset = Math.max(0, Math.round(inset));
-    if (inset === this.bottomInset) {
-      return;
-    }
-    this.bottomInset = inset;
-    this.contentEl.style.setProperty("--numbat-repl-bottom-inset", `${inset}px`);
+  private applyBottomInset(): void {
+    this.contentEl.style.setProperty("--numbat-repl-bottom-inset", `${this.keyboard?.inset() ?? 0}px`);
 
     // Keep the newest output in view as the visible area resizes around the obstruction.
     this.scrollToBottom();
+
+    this.syncSubmitButton();
+    this.syncEscButton();
   }
 
   /**
@@ -487,18 +433,21 @@ export class NumbatReplView extends ItemView {
     this.input = undefined;
     this.submitButtonEl = null;
     this.escButtonEl = null;
+
+    // The tracker's listeners are unregistered with this component; dropping the reference keeps a
+    // late workspace event from measuring a detached element.
+    this.keyboard = undefined;
     freeQuietly(this.context);
     this.context = null;
   }
 
   /**
-   * Whether the on-screen soft keyboard is currently up. Tracked from the Capacitor keyboard events
-   * (see `onOpen`); `false` on desktop and, on mobile, whenever a hardware keyboard is used (which
-   * hides the soft keyboard). Lets the input distinguish a soft-keyboard Return (newline) from a
-   * hardware Enter (submit).
+   * Whether the on-screen soft keyboard is currently up (see views/soft-keyboard.ts). Lets the
+   * input distinguish a soft-keyboard Return (newline) from a hardware Enter (submit), and gates
+   * the two mobile buttons.
    */
   private softKeyboardUp(): boolean {
-    return Platform.isMobile && this.keyboardHeight > 0;
+    return this.keyboard?.isUp() ?? false;
   }
 
   /**

@@ -45,10 +45,11 @@ export interface PropertyBinding {
   /** The expression text the binding evaluates (the property's value). */
   expr: string;
 
-  /** The value as the reader wrote it, present only where {@link expr} is *not* it — today the one
-   *  case is {@link groundZero}'s substituted zero. Consumers that reason about what is on the page
-   *  rather than what is evaluated want this: it is why a grounded `0` still counts as restating
-   *  its own source, and so still shows no `= 0` beside it. */
+  /** The value as the reader wrote it, present only where {@link expr} is *not* it — today the only
+   *  cause is a substituted zero, whether {@link groundZero} did it to the value itself or
+   *  {@link groundItemZero} to something inside a list. Consumers that reason about what is on the
+   *  page rather than what is evaluated want this: it is why a grounded `0` still counts as
+   *  restating its own source, and so still shows no `= 0` beside it. */
   written?: string;
 
   /** The `struct` definitions {@link expr} itself needs — the element type of an array of objects,
@@ -506,12 +507,18 @@ function stringLiteral(text: string): string {
  * Both may appear, as RFC 9557 allows, and a name present wins: it is the more specific statement,
  * and it is the only one of the two that can still be right after the date beside it changes.
  *
+ * A **lowercase `z`** is admitted alongside `Z` for the same reason the compact `+0200` is: this is
+ * the grammar for what someone may have typed, and reading a value is not the place to be strict
+ * about a spelling that means exactly one thing. Numbat itself takes either. Both are canonicalized
+ * the moment a widget writes the value back — properties/zone.ts's `normalizeOffset` is where that
+ * happens, and it accepts precisely these spellings, which is what makes the two grammars one.
+ *
  * The zone forms are written by the `numbat:zoneddate` and `numbat:zoneddatetime` property types.
  * Neither is a YAML timestamp, which is exactly why they live under types of ours rather than under
  * Obsidian's Date and Datetime — see properties/date-type.ts.
  */
 export const DATE_TEXT =
-  /^(\d{4}-\d{2}-\d{2})(?:[T\x20](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?)?\x20*(Z|[+-]\d{2}:?\d{2})?(?:\[([^\]\x20]+)\])?$/;
+  /^(\d{4}-\d{2}-\d{2})(?:[T\x20](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?)?\x20*([Zz]|[+-]\d{2}:?\d{2})?(?:\[([^\]\x20]+)\])?$/;
 
 /**
  * The Numbat expression for a date written as `date`, `time` and `zone` parts, in the *calendar
@@ -956,8 +963,10 @@ interface ItemField {
 type ItemNode =
   /** An explicit absence: an empty property at this position. */
   | { of: "absent"; }
-  /** A leaf, as the Numbat literal or expression it rode along as. */
-  | { of: "scalar"; expr: string; }
+  /** A leaf, as the Numbat literal or expression it rode along as. `written` is what stood here
+   *  before {@link groundItemZero} substituted for it, and is present only where it did — see
+   *  {@link PropertyBinding.written} for what wants it. */
+  | { of: "scalar"; expr: string; written?: string; }
   /** A nested list. */
   | { of: "list"; items: ItemNode[]; }
   /** An object, at the dotted item path its struct type is minted under. */
@@ -1012,6 +1021,12 @@ interface ListState {
   /** Whether anything inside bound as an expression — a field of an array of objects can carry the
    *  Numbat type even when the array itself does not. */
   expressions: boolean;
+
+  /** The item paths where a **numbat-typed** bare zero was grounded (see {@link groundItemZero}),
+   *  deduplicated — every element of an array shares one path, so a list of ten zeros has one entry
+   *  and reports once. Empty for the plain numbers grounded beside them, which say nothing, exactly
+   *  as {@link zeroWarning} explains for a lone one. */
+  grounded: Set<string>;
 }
 
 /**
@@ -1210,6 +1225,7 @@ function listItems(
   typed: boolean,
   depth: number,
   ancestors: Set<object>,
+  inStruct: boolean,
 ): { items: ItemNode[]; element: ItemKind; } | null {
   const itemPath = [...path, ARRAY_ITEM];
   const nodes: ItemNode[] = [];
@@ -1218,7 +1234,7 @@ function listItems(
   let first: ItemKind | undefined;
 
   for (const [index, item] of items.entries()) {
-    const built = itemValue(walk, state, itemPath, item, typed, depth + 1, ancestors);
+    const built = itemValue(walk, state, itemPath, item, typed, depth + 1, ancestors, inStruct);
     if (built === null) {
       state.error ??= `item ${index + 1} holds nothing Numbat can bind`;
       return null;
@@ -1270,8 +1286,17 @@ function isAbsent(reading: Reading, key: string, value: unknown, typed: boolean)
   return value === null && !CHECKBOX_TYPES.has(reading.rules.assignedType?.(key) ?? "");
 }
 
-/** One element (or one field of one), built at its own path. `typed` is that path's reading, as
- *  already resolved by the caller. */
+/**
+ * One element (or one field of one), built at its own path. `typed` is that path's reading, as
+ * already resolved by the caller.
+ *
+ * `inStruct` is whether what is built here ends up **inside a generated struct**, which is the one
+ * place a bare zero is fatal (see {@link groundZero}) and so the one place it is substituted. It
+ * only ever goes false → true, at the two doors into a struct: an array that is itself an object's
+ * field, and every field of an object found inside an array. A list that reaches neither keeps its
+ * polymorphic zeros, for the same reason a lone top-level `0` does — `let weights = [0, 0]`
+ * generalizes and reads back, so nothing is bought by narrowing it.
+ */
 function itemValue(
   walk: Walk,
   state: ListState,
@@ -1280,6 +1305,7 @@ function itemValue(
   typed: boolean,
   depth: number,
   ancestors: Set<object>,
+  inStruct: boolean,
 ): ItemValue | null {
   if (Array.isArray(value) || isPlainObject(value)) {
     // A YAML anchor can make the value genuinely cyclic, and a deep one merely absurd; neither
@@ -1299,6 +1325,7 @@ function itemValue(
           typed || walk.rules.isNumbatTyped(dottedKey([...path, ARRAY_ITEM])),
           depth,
           ancestors,
+          inStruct,
         );
         return nested === null ? null : {
           node: { of: "list", items: nested.items },
@@ -1323,7 +1350,12 @@ function itemValue(
     }
 
     state.expressions = true;
-    return { node: { of: "scalar", expr: `(${text})` }, kind: kindOf({ of: "expression" }) };
+    const written = `(${text})`;
+    const grounded = inStruct ? groundItemZero(state, path, text, true) : null;
+    return {
+      node: grounded === null ? { of: "scalar", expr: written } : { of: "scalar", expr: grounded, written },
+      kind: kindOf({ of: "expression" }),
+    };
   }
 
   const plain = plainExpression(walk, dottedKey(path), value);
@@ -1331,7 +1363,41 @@ function itemValue(
     return null;
   }
 
-  return { node: { of: "scalar", expr: plain.expr }, kind: kindOf({ of: plain.kind }) };
+  const grounded = inStruct ? groundItemZero(state, path, plain.expr, false) : null;
+  return {
+    node: grounded === null
+      ? { of: "scalar", expr: plain.expr }
+      : { of: "scalar", expr: grounded, written: plain.expr },
+    kind: kindOf({ of: plain.kind }),
+  };
+}
+
+/**
+ * The `Scalar` zero to write at `path` in place of a bare one, or `null` when the value is not a
+ * bare zero and nothing is owed.
+ *
+ * This is {@link groundZero} for everything an array holds, and it exists separately for one
+ * reason: an array's leaves are built by {@link itemValue}, which returns a node rather than a
+ * {@link Leaf}, and carries its definitions on the shared {@link ListState} rather than per value.
+ * The substitution itself is identical, and so is the reason for it — a polymorphic zero anywhere
+ * inside a generated struct leaves the whole type unsolved, and Numbat can then read *none* of that
+ * object's fields, which costs every property of the note that touches it.
+ *
+ * The definition is pushed once per array, not once per zero: it is one name for the whole
+ * preamble, and a `let` Numbat is happy to see redefined.
+ */
+function groundItemZero(state: ListState, path: readonly string[], expr: string, typed: boolean): string | null {
+  if (!isBareZero(expr)) {
+    return null;
+  }
+
+  if (!state.defs.includes(ZERO_DEF)) {
+    state.defs.push(ZERO_DEF);
+  }
+  if (typed) {
+    state.grounded.add(dottedKey(path));
+  }
+  return ZERO_NAME;
 }
 
 /**
@@ -1366,6 +1432,10 @@ function structValue(
       typed || walk.rules.isNumbatTyped(dottedKey(here)),
       depth + 1,
       ancestors,
+      // Whatever this field holds is about to become a struct field, which is where a bare zero
+      // costs the whole object — so from here down every zero is grounded, however deeply it is
+      // nested (a list inside this field poisons the type exactly as a bare one does).
+      true,
     );
 
     if (built === null) {
@@ -1394,20 +1464,32 @@ function structValue(
 // RENDERING WHAT THE WALK FOUND
 // ================================================================================================
 
+/**
+ * Which of a leaf's two spellings a render writes.
+ *
+ * `bound` is the one that goes to Numbat, with every {@link groundItemZero} substitution in place.
+ * `written` is the same literal with the zeros the reader actually typed back in it — not source to
+ * evaluate, but what a consumer reasoning about the page needs (see {@link PropertyBinding.written}
+ * and `properties/frontmatter-inlay.ts`, which is why a grounded list still counts as restating
+ * itself). A second pass costs nothing and mints nothing: {@link renderStruct} caches its type
+ * names on the state and pushes a definition only when it mints one.
+ */
+type RenderAs = "bound" | "written";
+
 /** The items of one list as a Numbat list literal, every item written to the *joined* element kind
  *  — which is what makes a position that was absent anywhere nullable everywhere. */
-function renderList(state: ListState, items: readonly ItemNode[], element: ItemKind): string {
-  return `[${items.map((item) => renderNode(state, item, element)).join(", ")}]`;
+function renderList(state: ListState, items: readonly ItemNode[], element: ItemKind, as: RenderAs): string {
+  return `[${items.map((item) => renderNode(state, item, element, as)).join(", ")}]`;
 }
 
 /** One position as Numbat source, wrapped as a nullable when anything at this position, in any
  *  item, was absent. */
-function renderNode(state: ListState, node: ItemNode, kind: ItemKind): string {
+function renderNode(state: ListState, node: ItemNode, kind: ItemKind, as: RenderAs): string {
   if (!kind.nullable) {
-    return renderShape(state, node, kind.shape);
+    return renderShape(state, node, kind.shape, as);
   }
 
-  return node.of === "absent" ? NULLABLE_ABSENT : definedValue(renderShape(state, node, kind.shape));
+  return node.of === "absent" ? NULLABLE_ABSENT : definedValue(renderShape(state, node, kind.shape, as));
 }
 
 /**
@@ -1420,7 +1502,7 @@ function renderNode(state: ListState, node: ItemNode, kind: ItemKind): string {
  * particular would mint `struct X<> { }`, which Numbat does not parse. Reaching either means the
  * walk and the joined kind have come apart, which is a bug in this file.
  */
-function renderShape(state: ListState, node: ItemNode, shape: ItemShape | null): string {
+function renderShape(state: ListState, node: ItemNode, shape: ItemShape | null, as: RenderAs): string {
   switch (node.of) {
     case "absent":
       // Unreachable: refine marks every position an absence reached as nullable, and renderNode
@@ -1428,11 +1510,11 @@ function renderShape(state: ListState, node: ItemNode, shape: ItemShape | null):
       // always the right answer for an absence.
       return NULLABLE_ABSENT;
     case "scalar":
-      return node.expr;
+      return as === "written" ? node.written ?? node.expr : node.expr;
     case "list":
-      return renderList(state, node.items, shape?.of === "list" ? shape.element : OPEN_KIND);
+      return renderList(state, node.items, shape?.of === "list" ? shape.element : OPEN_KIND, as);
     case "struct":
-      return renderStruct(state, node, shape?.of === "struct" ? shape.fields : []);
+      return renderStruct(state, node, shape?.of === "struct" ? shape.fields : [], as);
   }
 }
 
@@ -1449,6 +1531,7 @@ function renderStruct(
   state: ListState,
   node: Extract<ItemNode, { of: "struct"; }>,
   fields: readonly ItemField[],
+  as: RenderAs,
 ): string {
   const parts: string[] = [];
   for (const field of node.fields) {
@@ -1456,7 +1539,7 @@ function renderStruct(
     // for every element alike, so the elements still agree.
     const joined = fields.find((candidate) => candidate.name === field.name);
     if (joined !== undefined) {
-      parts.push(`${field.name}: (${renderNode(state, field.node, joined.kind)})`);
+      parts.push(`${field.name}: (${renderNode(state, field.node, joined.kind, as)})`);
     }
   }
 
@@ -1581,7 +1664,16 @@ function arrayExpression(
   value: readonly unknown[],
   typed: boolean,
   depth: number,
-): { expr: string; defs: string[]; expressions: boolean; plainKind: PlainKind; typeFree: boolean; } | null {
+  inObject: boolean,
+): {
+  expr: string;
+  written: string | null;
+  defs: string[];
+  expressions: boolean;
+  plainKind: PlainKind;
+  typeFree: boolean;
+  grounded: Set<string>;
+} | null {
   const key = dottedKey(path);
   const state: ListState = {
     defs: [],
@@ -1594,6 +1686,7 @@ function arrayExpression(
     reported: new Set<string>(),
     error: null,
     expressions: false,
+    grounded: new Set<string>(),
   };
 
   // The items sit below the top level even when the array itself is a top-level property, so they
@@ -1602,7 +1695,10 @@ function arrayExpression(
   walk.plain = nestedPlain(walk.rules);
   const built = depth >= MAX_PROPERTY_DEPTH
     ? null
-    : listItems(walk, state, path, value, typed, depth, new Set<object>([value]));
+    // An array that is itself an object's field puts everything it holds inside that object's
+    // struct, so its zeros are grounded from the first item down (see itemValue's `inStruct`); one
+    // standing on its own grounds only what reaches a struct of its own.
+    : listItems(walk, state, path, value, typed, depth, new Set<object>([value]), inObject);
   walk.plain = outerPlain;
 
   // An element left with no fields at all — every item wrote every one of them empty — cannot be a
@@ -1631,16 +1727,22 @@ function arrayExpression(
 
   // The struct definitions are minted here rather than during the walk, so a failed array leaves
   // none behind, and every element writes the joined element type rather than its own.
-  const expr = renderList(state, built.items, element);
+  const expr = renderList(state, built.items, element, "bound");
+
+  // The same literal with the grounded zeros back as the reader typed them, and only where one was
+  // grounded — so an array that lost nothing carries nothing extra.
+  const written = state.defs.includes(ZERO_DEF) ? renderList(state, built.items, element, "written") : null;
 
   return {
     expr,
+    written,
     defs: state.defs,
     expressions: state.expressions,
     // `number` for a list with nothing scalar in it to go on — an empty array, or one of objects.
     plainKind: scalarKind(element) ?? "number",
     // True only for a list of nothing but holes, which carries no type just as a lone hole does.
     typeFree: isTypeFree({ shape: { of: "list", element }, nullable: false }),
+    grounded: state.grounded,
   };
 }
 
@@ -1697,6 +1799,9 @@ interface Leaf {
    *  {@link PropertyBinding.written}. */
   written?: string;
 
+  /** What the derivation has to say about this leaf — see {@link PropertyBinding.warning}. */
+  warning?: string;
+
   /** Whether the value says nothing about its own type, so it cannot become a struct field at all
    *  (see {@link isTypeFree}). */
   typeFree?: true;
@@ -1734,15 +1839,18 @@ function leafExpression(
       return null;
     }
 
-    const list = arrayExpression(walk, path, value, items, depth);
+    const list = arrayExpression(walk, path, value, items, depth, inObject);
     if (list === null) {
       return null;
     }
 
+    const grounded = listZeroWarning(key, list.grounded);
     return {
       expr: list.expr,
       defs: list.defs,
       kind: items || list.expressions ? "expression" : list.plainKind,
+      ...list.written === null ? {} : { written: list.written },
+      ...grounded === null ? {} : { warning: grounded },
       ...list.typeFree ? { typeFree: true as const } : {},
     };
   }
@@ -1790,7 +1898,7 @@ function leafExpression(
       return null;
     }
 
-    return groundZero({ expr, defs: [], kind: "expression" }, inObject);
+    return groundZero(key, { expr, defs: [], kind: "expression" }, inObject);
   }
 
   const plain = plainExpression(walk, key, value);
@@ -1798,7 +1906,7 @@ function leafExpression(
     return null; // not a participant — no skip entry, this is the common case
   }
 
-  return groundZero({ expr: plain.expr, defs: [], kind: plain.kind }, inObject);
+  return groundZero(key, { expr: plain.expr, defs: [], kind: plain.kind }, inObject);
 }
 
 /** A bare zero, in any spelling YAML or a Numbat expression can write one — `0`, `0.0`, `-0`,
@@ -1844,13 +1952,19 @@ const ZERO_DEF = `let ${ZERO_NAME}: ${PLAIN_TYPE.number} = 0`;
  * What this cannot reach is an expression that merely *evaluates* to a polymorphic zero (`0 * 2`,
  * `x - x`); no static rule can. Those still fail, and `evaluation/inlay-parse.ts`'s
  * `unsolvedFieldSummary` is what makes Numbat's complaint about them legible.
+ *
+ * This is the substitution for a value bound as a leaf in its own right. A zero inside an **array**
+ * reaches a struct by a different road and is grounded by {@link groundItemZero}, on the same rule
+ * and for the same reason.
  */
-function groundZero(leaf: Leaf, inObject: boolean): Leaf {
+function groundZero(key: string, leaf: Leaf, inObject: boolean): Leaf {
   if (!inObject || !isBareZero(leaf.expr)) {
     return leaf;
   }
 
-  return { ...leaf, expr: ZERO_NAME, written: leaf.expr, defs: [...leaf.defs, ZERO_DEF] };
+  const grounded: Leaf = { ...leaf, expr: ZERO_NAME, written: leaf.expr, defs: [...leaf.defs, ZERO_DEF] };
+  const warning = leaf.kind === "expression" ? zeroWarning(key, "object") : null;
+  return warning === null ? grounded : { ...grounded, warning };
 }
 
 /**
@@ -2076,7 +2190,6 @@ function bindNested(walk: Walk, state: ObjectState, path: string[], value: unkno
     return;
   }
   state.generation += 1;
-  const warning = zeroFieldWarning(key, leaf);
   walk.bindings.push({
     key,
     path,
@@ -2086,13 +2199,12 @@ function bindNested(walk: Walk, state: ObjectState, path: string[], value: unkno
     code: generationCode(state, segments, leaf.expr),
     kind: leaf.kind,
     ...leaf.written === undefined ? {} : { written: leaf.written },
-    ...warning === null ? {} : { warning },
+    ...leaf.warning === undefined ? {} : { warning: leaf.warning },
   });
 }
 
 /**
- * The notice a **numbat-typed** field {@link groundZero} substituted earns, or `null` for every
- * other value.
+ * The notice a grounded zero earns, phrased for where it was found.
  *
  * Said out loud rather than done quietly, because under the Numbat type the value is an
  * *expression*, where a polymorphic zero is a real thing to have written and useful at the top
@@ -2104,19 +2216,40 @@ function bindNested(walk: Walk, state: ObjectState, path: string[], value: unkno
  * asking to be dimensionless than `1` beside it is, and every other one of them already binds as a
  * `Scalar`. Grounding it is what the property meant in the first place, not a liberty taken with
  * it, so it is done in silence — the same distinction {@link bindNested}'s `report` draws, for the
- * same reason: a value that merely rode along was never asked for.
+ * same reason: a value that merely rode along was never asked for. Neither caller reaches this for
+ * one, so everything below is written for a value under the Numbat type.
  *
- * Detected by the substitution rather than by re-testing the value, so the notice cannot drift out
- * of step with what was actually emitted.
+ * `holds` is what stays readable because of the substitution, and it is all the two callers differ
+ * on: {@link groundZero}'s notice sits on the property it was done to, where {@link
+ * listZeroWarning}'s sits on the array *containing* it — a list item has no binding of its own to
+ * carry one — and appends where inside it to look.
  */
-function zeroFieldWarning(key: string, leaf: Leaf): string | null {
-  if (leaf.expr !== ZERO_NAME || leaf.kind !== "expression") {
+function zeroWarning(key: string, holds: "object" | "list"): string {
+  return `property '${key}': a bare 0 has no dimension of its own in Numbat, so it is read here as`
+    + ` a dimensionless Scalar — which is what keeps the rest of this ${holds} readable. Write it`
+    + " with a unit (0 m) if you meant a zero quantity.";
+}
+
+/**
+ * The notice an array carries for the numbat-typed zeros grounded inside it, or `null` when there
+ * were none.
+ *
+ * It lands on the **array** rather than on the item, and that is a limitation stated rather than a
+ * choice: an array binds as one value, so a position inside it has no {@link PropertyBinding} to
+ * hang a notice on and no line of its own for a surface to place it against. The item paths are
+ * appended for exactly that reason — `rates.#` for a list of expressions, `crew.#.score` for a
+ * field of a list of objects — since the message can no longer simply point at itself.
+ *
+ * One entry per position, not per element: every item of an array shares a path, so a list of ten
+ * zeros says this once.
+ */
+function listZeroWarning(key: string, grounded: ReadonlySet<string>): string | null {
+  if (grounded.size === 0) {
     return null;
   }
 
-  return `property '${key}': a bare 0 has no dimension of its own in Numbat, so it is read here as`
-    + " a dimensionless Scalar — which is what keeps the rest of this object readable. Write it"
-    + " with a unit (0 m) if you meant a zero quantity.";
+  const where = [...grounded].map((path) => `'${path}'`).join(", ");
+  return `${zeroWarning(key, "list")} Found under ${where}.`;
 }
 
 /** Walk one object's entries in document order, descending into sub-objects. */
@@ -2258,6 +2391,10 @@ export function derivePreamble(frontmatter: Record<string, unknown>, rules: Prea
       defs: leaf.defs,
       code: `let ${name} = (${leaf.expr})`,
       kind: leaf.kind,
+      // A top-level leaf is never grounded (see groundZero), but a top-level *array* can hold an
+      // object whose fields are — so both of these reach this push as well as the nested one.
+      ...leaf.written === undefined ? {} : { written: leaf.written },
+      ...leaf.warning === undefined ? {} : { warning: leaf.warning },
     });
   }
 

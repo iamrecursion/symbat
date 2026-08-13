@@ -72,6 +72,7 @@ import { unicodePrefixAt } from "../unicode/codes";
 import { numbatUnicodeInput } from "../unicode/input";
 import { fuzzyFilter } from "./fuzzy";
 import { DEFAULT_INDENT_WIDTH, numbatIndentKeymap, numbatIndentUnit } from "./indent";
+import { type VimMode, vimModeFrom, vimModeOf } from "./vim-mode";
 
 /** The `userEvent` tagged on programmatic value changes (recall, clear) so the update listener can
  *  tell them apart from the user's own edits. */
@@ -153,6 +154,11 @@ export interface NumbatInputHost {
    *  the prompt's row instead of below it; a surface that omits it pays nothing, since the watcher
    *  is only installed for a host that asks. */
   vimPanelChanged?(open: boolean): void;
+
+  /** Vim's mode changed, or Vim was switched off (`null`). Only the `.nbt` file editor uses it, to
+   *  light up its mobile visual-block button while that mode is live; as above, the watcher behind
+   *  it is only installed for a host that asks. */
+  vimModeChanged?(mode: VimMode | null): void;
 }
 
 /** How one consumer wants its input to behave. */
@@ -437,6 +443,61 @@ function vimPanelWatcher(host: NumbatInputHost): ViewPlugin<{ update(update: Vie
   });
 }
 
+/**
+ * Report Vim's current mode to a host, so it can show what mode the editor is in.
+ *
+ * `vim-mode-change` is a documented event of the CM5 vim API, and the only signal that catches
+ * *every* mode change — several of them (leaving insert with the caret at column 0, for one) move
+ * nothing and so produce no transaction to watch for.
+ *
+ * The subscription has to follow the editor's `cm` object rather than being made once: that object
+ * is created by the vim extension when it loads and deleted when it unloads, which is exactly what
+ * toggling Vim in Obsidian's settings does through the vim compartment. So each update re-reads it,
+ * re-subscribing when it has been replaced and reporting `null` once it is gone.
+ */
+function vimModeWatcher(host: NumbatInputHost): ViewPlugin<{ update(): void; destroy(): void; }> {
+  return ViewPlugin.define((view) => {
+    /** The `cm` currently subscribed to, so a replaced one can be noticed and unsubscribed. */
+    let attached: ReturnType<typeof getCM> = null;
+
+    /** The last mode reported, so an event that does not change it stays silent. */
+    let reported: VimMode | null = null;
+
+    const report = (mode: VimMode | null): void => {
+      if (mode !== reported) {
+        reported = mode;
+        host.vimModeChanged?.(mode);
+      }
+    };
+
+    const onModeChange = (event: unknown): void => report(vimModeFrom(event as { mode?: string; subMode?: string; }));
+
+    const sync = (): void => {
+      const cm = getCM(view);
+      if (cm === attached) {
+        return;
+      }
+
+      attached?.off("vim-mode-change", onModeChange);
+      attached = cm;
+      if (cm === null) {
+        report(null); // Vim was switched off
+        return;
+      }
+
+      // No event fires for the mode already in force, so read it off the state directly.
+      cm.on("vim-mode-change", onModeChange);
+      report(vimModeOf(cm.state.vim));
+    };
+
+    sync();
+    return {
+      update: () => sync(),
+      destroy: () => attached?.off("vim-mode-change", onModeChange),
+    };
+  });
+}
+
 // THE INPUT EDITOR
 // ================================================================================================
 
@@ -491,6 +552,11 @@ export class NumbatInput {
   /** The completion the popup is showing or about to show, so re-selecting the same row does not
    *  re-arm the dwell. */
   private dwellLabel: string | null = null;
+
+  /** Room (px) to keep clear below the caret when scrolling it into view, for a control floating
+   *  over the editor's bottom edge. `0` unless a host sets it — see
+   *  {@link setScrollBottomMargin}. */
+  private scrollBottomMargin = 0;
 
   /**
    * Build the editor and mount it under `parent`. `options` decides which optional extensions are
@@ -592,6 +658,12 @@ export class NumbatInput {
         // Installed only for a host that asks, so the property field and the `.nbt` editor schedule
         // no measurements for a panel they do not restyle.
         ...(host.vimPanelChanged === undefined ? [] : [vimPanelWatcher(host)]),
+        ...(host.vimModeChanged === undefined ? [] : [vimModeWatcher(host)]),
+
+        // Keep the caret clear of whatever a host floats over the editor's bottom edge. The facet
+        // takes a function, so the live field is read at scroll time and no reconfiguration is
+        // needed when the margin moves.
+        EditorView.scrollMargins.of(() => ({ bottom: this.scrollBottomMargin })),
         numbatLanguage,
         this.gutterCompartment.of(options.lineNumbers === true ? lineNumbers() : []),
         this.highlightCompartment.of(highlight ? numbatReplHighlight : []),
@@ -880,6 +952,15 @@ export class NumbatInput {
     });
   }
 
+  /**
+   * Keep `px` of room clear below the caret when the editor scrolls it into view, for a host that
+   * floats a control over the editor's bottom edge (the `.nbt` file's mobile key bar). Without it
+   * the caret is "in view" the moment it reaches the scroller's edge — underneath the control.
+   */
+  setScrollBottomMargin(px: number): void {
+    this.scrollBottomMargin = px;
+  }
+
   /** Toggle Vim key bindings without rebuilding the editor. */
   setVim(on: boolean): void {
     this.view.dispatch({
@@ -945,6 +1026,45 @@ export class NumbatInput {
       // object is the same, so narrow via the param type.
       Vim.exitInsertMode(cm as Parameters<typeof Vim.exitInsertMode>[0]);
     }
+  }
+
+  /**
+   * Press Escape in Vim, for a mobile key bar. Unlike {@link exitInsertMode} this is the whole key:
+   * it leaves insert *and* visual mode, and cancels a half-typed operator or count — which is what
+   * a button labelled `Esc` has to do, since a soft keyboard gives no other way to take any of it
+   * back. A no-op when Vim is off.
+   *
+   * `"user"` is the origin the library passes for a real keypress, so a recording macro sees this
+   * as one.
+   */
+  pressEscape(): void {
+    const cm = getCM(this.view);
+    if (cm === null) {
+      return;
+    }
+
+    Vim.handleKey(cm, "<Esc>", "user");
+  }
+
+  /**
+   * Toggle Vim's blockwise-visual mode, for a mobile key bar (a soft keyboard has no `Ctrl-V`).
+   *
+   * Vim's own `<C-v>` is already the toggle — charwise or linewise visual switches to blockwise,
+   * blockwise returns to normal — so this only has to deal with insert mode, where `<C-v>` means
+   * "insert the next key literally" instead. Leaving insert first makes the button do the same
+   * thing wherever it is pressed. A no-op when Vim is off.
+   */
+  toggleVisualBlock(): void {
+    const cm = getCM(this.view);
+    if (cm === null) {
+      return;
+    }
+
+    if (cm.state.vim?.insertMode === true) {
+      Vim.exitInsertMode(cm as Parameters<typeof Vim.exitInsertMode>[0]);
+    }
+
+    Vim.handleKey(cm, "<C-v>", "user");
   }
 
   /** Tear the editor down, along with the dwell timer and the documentation popup. */

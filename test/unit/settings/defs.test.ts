@@ -18,6 +18,7 @@ import {
   SETTING_BLOCKS,
   type SettingDescriptor,
   type SettingEffect,
+  validateTimeZone,
 } from "../../../src/settings/defs.ts";
 
 /**
@@ -79,6 +80,7 @@ const EXPECTED_EFFECTS: Record<string, readonly SettingEffect[]> = {
   notePropertyNumbers: ["refreshNoteScope"],
   notePropertyText: ["refreshNoteScope"],
   notePropertyDates: ["refreshNoteScope"],
+  notePropertyDefaultZone: ["refreshNoteScope"],
   notePropertyBooleans: ["refreshNoteScope"],
   noteImports: ["refreshNoteScope"],
 
@@ -296,4 +298,39 @@ test("in-range values and the defaults themselves pass through untouched", () =>
 
 test("null data yields the defaults", () => {
   assert.deepEqual(normalizeSettings(null), DEFAULT_SETTINGS);
+});
+
+// --- validateTimeZone --------------------------------------------------------
+//
+// The one setting whose validity is the *platform's* answer rather than the table's, so what counts
+// is asked of the same `Intl` the bindings ask (properties/zone.ts). The generic pass above only
+// ever checks that the default — blank — is accepted.
+
+test("a blank default zone is the reader's own, and valid", () => {
+  assert.equal(validateTimeZone(""), undefined);
+  assert.equal(validateTimeZone("   "), undefined, "and so is whitespace, which trims to blank");
+});
+
+test("an IANA name the platform knows is a zone", () => {
+  for (const zone of ["Europe/Berlin", "UTC", "America/New_York", "Etc/GMT+5"]) {
+    assert.equal(validateTimeZone(zone), undefined, zone);
+  }
+  assert.equal(validateTimeZone("  Europe/Berlin  "), undefined, "surrounding space is trimmed");
+});
+
+test("a literal offset is a zone, in every spelling normalizeOffset admits", () => {
+  for (const offset of ["+02:00", "-05:00", "Z", "+0530", "+05:45"]) {
+    assert.equal(validateTimeZone(offset), undefined, offset);
+  }
+});
+
+test("a name the platform does not know, or an impossible offset, is rejected with advice", () => {
+  // `+15:00` is past the widest offset in use, and `Europe/Berlim` is the typo it looks like. Both
+  // have to fail: a zone that does not resolve would silently leave every date read at the
+  // interpreter's own local, which is the ambiguity the setting exists to remove.
+  for (const bad of ["Europe/Berlim", "not a zone", "+15:00", "-13:00", "+02:99", "02:00"]) {
+    const message = validateTimeZone(bad);
+    assert.notEqual(message, undefined, `${bad} should be rejected`);
+    assert.match(message ?? "", /Europe\/Berlin/, "and the message shows a spelling that works");
+  }
 });

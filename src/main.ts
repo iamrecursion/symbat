@@ -45,6 +45,7 @@ import {
   setUserPrelude,
 } from "./interpreter/numbat";
 import { VersionedLoad } from "./interpreter/versioned-load";
+import { registerZonedDateTypes } from "./properties/date-type";
 import {
   frontmatterBody,
   invalidateReservedNames,
@@ -53,6 +54,7 @@ import {
   propertyTypeManager,
 } from "./properties/note";
 import { disposePropertyEditors, registerNumbatPropertyType } from "./properties/type";
+import { disposeZoneEditors } from "./properties/zone-editor";
 import { setCaretTarget } from "./scope/goto-definition";
 import { normalizeSettings, type SymbatSettings, SymbatSettingTab } from "./settings/tab";
 import { normalizePreludeFiles } from "./settings/util";
@@ -154,6 +156,11 @@ export default class SymbatPlugin extends Plugin {
     // The `Numbat` property type (assignable from a property's type menu); a property so typed
     // binds its value into the note's scope (properties/note.ts).
     registerNumbatPropertyType(this);
+
+    // The `Zoned Date` and `Zoned Datetime` types — a date or a moment that can carry a time zone,
+    // which Obsidian's own Date type has nowhere to put and its Datetime type discards. Both add a
+    // type to the menu rather than replacing one, so neither is gated on a setting.
+    registerZonedDateTypes(this);
 
     // A type (re)assignment changes which properties bind — re-evaluate open editors. The event is
     // undocumented (like the registry); a missing `on` just means stale hints until the next edit.
@@ -365,6 +372,7 @@ export default class SymbatPlugin extends Plugin {
     unmapVimHoverKey();
     invalidateDefinitions();
     disposePropertyEditors();
+    disposeZoneEditors();
     this.moduleGraph?.dispose();
     disposeCompletionContexts();
   }

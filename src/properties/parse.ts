@@ -45,6 +45,12 @@ export interface PropertyBinding {
   /** The expression text the binding evaluates (the property's value). */
   expr: string;
 
+  /** The value as the reader wrote it, present only where {@link expr} is *not* it — today the one
+   *  case is {@link groundZero}'s substituted zero. Consumers that reason about what is on the page
+   *  rather than what is evaluated want this: it is why a grounded `0` still counts as restating
+   *  its own source, and so still shows no `= 0` beside it. */
+  written?: string;
+
   /** The `struct` definitions {@link expr} itself needs — the element type of an array of objects,
    *  and nothing else, so this is empty for almost every binding. Replayed immediately *before*
    *  {@link code} by every surface that replays a preamble.
@@ -61,6 +67,23 @@ export interface PropertyBinding {
   /** Whether the property is numbat-typed (its value is an expression), or the kind of untyped
    *  value it rode along as. */
   kind: "expression" | PlainKind;
+
+  /**
+   * A diagnostic about a binding that *did* bind — shown where its value would be, since there is
+   * something to say about it and nothing useful to show.
+   *
+   * Distinct from a {@link PropertySkip}, and the distinction is the point: a skip says a property
+   * contributed no binding, and every consumer reads it that way (the scope tree lists it apart,
+   * the widget reports it in place of a value). This one is a property that bound perfectly well
+   * and will still not work, which is a state the skip vocabulary cannot express.
+   *
+   * It exists for exactly one condition today — see {@link zeroFieldWarning} — and the reason it is
+   * a field here rather than an error raised at evaluation time is placement: by the time Numbat
+   * objects, the only thing it knows is that some struct's type never resolved, so its complaint
+   * lands on whatever line read the object and never on the line that caused it. Deciding it here
+   * is what puts the message on the property at fault.
+   */
+  warning?: string;
 }
 
 /** Why a property contributed no binding. `reserved` and `unsupported` are surfaced as errors on
@@ -332,6 +355,30 @@ export interface PreambleRules {
    */
   assignedType?: (key: string) => string | null;
 
+  /**
+   * The UTC offset to read a date by, when the value does not carry one of its own — asked for the
+   * wall clock the value names (`2026-07-27`, `2026-07-27T10:30`), because a zone's offset depends
+   * on the date it is asked about and half the world's do change twice a year.
+   *
+   * Optional, and without it a date binds the way it always did: at whatever the interpreter calls
+   * local. `properties/note.ts` supplies one built from the reader's setting, falling back to their
+   * own zone — so in practice every binding is explicitly zoned, and the surfaces cannot disagree
+   * about what a note's dates mean. Kept as a callback rather than a zone name so this file stays
+   * free of `Intl` and of the settings that choose it; `properties/zone.ts` does that resolving.
+   */
+  defaultOffset?: (isoLocal: string) => string | null;
+
+  /**
+   * The UTC offset a *named* zone was at a given wall clock — what resolves the `[Europe/Berlin]`
+   * of a floating value into something Numbat can read, since `datetime("…")` takes an offset and
+   * never a name.
+   *
+   * Asked per value, which is the whole point of storing a name instead of an offset: the same zone
+   * owes a date in January and one in July different answers. Optional and a callback for the same
+   * reasons as {@link defaultOffset} — this file holds no `Intl` and no settings.
+   */
+  zoneOffset?: (zone: string, isoLocal: string) => string | null;
+
   /** Disambiguates the struct type names an object binding generates. A note's properties and those
    *  of every note it imports replay into one interpreter, and a repeated `struct` definition is a
    *  hard error (where a repeated `let` is harmless), so the emitting note's path goes here.
@@ -343,8 +390,48 @@ export interface PreambleRules {
  *  `null` that binds `false`, and Better Properties' two-state toggle. */
 const CHECKBOX_TYPES: ReadonlySet<string> = new Set(["checkbox", "better-properties:toggle"]);
 
-/** Property types whose value is a date, so text under one reads as a date rather than as text. */
-const DATE_TYPES: ReadonlySet<string> = new Set(["date", "datetime", "better-properties:datecustom"]);
+/**
+ * This plugin's own date type, whose values are `YYYY-MM-DD` with an optional `±HH:MM` suffix —
+ * the one shape that can name a zone and still be a date. It is not Obsidian's `date`, and that is
+ * deliberate: a suffixed date is not a YAML timestamp and not valid ISO 8601, so putting it under
+ * Obsidian's type would hand a broken value to everything that reads dates natively. Under our own
+ * type there is no such contract to break. The widget is in properties/date-type.ts.
+ *
+ * A compatibility contract once shipped, like the `VIEW_TYPE_*` ids: it is persisted in the vault's
+ * `types.json` against every property assigned it, so renaming it silently un-types them all.
+ */
+export const ZONED_DATE_TYPE = "numbat:zoneddate";
+
+/**
+ * The datetime counterpart, whose values are full RFC 9557: an RFC 3339 timestamp followed by the
+ * zone name, `2026-07-27T10:30:00+02:00[Europe/Berlin]`.
+ *
+ * Both halves earn their place. The bracketed name is what makes the value *float* — move its date
+ * across a daylight saving boundary and the instant moves with it, where a bare offset would pin
+ * the old one. The offset in front keeps the value **lexically sortable** and makes its prefix a
+ * valid RFC 3339 timestamp, so a reader that stops at the bracket still gets the right instant.
+ *
+ * It exists for the same reason {@link ZONED_DATE_TYPE} does: neither moment (frozen at 2.29, years
+ * before RFC 9557) nor `new Date` will parse the bracketed form, so under Obsidian's own Datetime
+ * type the value would be an invalid date to Bases, to sorting, and to every other plugin. A value
+ * that needs to stay legible to those belongs under Obsidian's own Datetime type, which this plugin
+ * reads and never writes.
+ */
+export const ZONED_DATETIME_TYPE = "numbat:zoneddatetime";
+
+/**
+ * Property types whose value is a date, so text under one reads as a date rather than as text.
+ *
+ * {@link ZONED_DATE_TYPE} is this plugin's own, and the only one of them whose values can carry a
+ * zone without also carrying a time of day. The rest are Obsidian's and Better Properties'.
+ */
+const DATE_TYPES: ReadonlySet<string> = new Set([
+  "date",
+  "datetime",
+  "better-properties:datecustom",
+  ZONED_DATE_TYPE,
+  ZONED_DATETIME_TYPE,
+]);
 
 /**
  * Top-level keys that never ride along untyped: this plugin's own `numbat-use`, which names the
@@ -399,36 +486,161 @@ function stringLiteral(text: string): string {
   return `"${escaped}"`;
 }
 
-/** A date, optionally with a time and an explicit UTC offset — `2026-07-27`, `2026-07-27 10:30`,
- *  `2026-07-27T10:30:00.5+02:00`. Matched textually rather than parsed into a `Date`, so no
- *  timezone conversion can happen behind the scenes. */
-const DATE_TEXT = /^(\d{4}-\d{2}-\d{2})(?:[T\x20](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?\x20*(Z|[+-]\d{2}:?\d{2})?)?$/;
+/**
+ * A date, optionally with a time, and optionally zoned two different ways — `2026-07-27`,
+ * `2026-07-27 10:30`, `2026-07-27T10:30:00.5+02:00`, `2026-07-27 +02:00`,
+ * `2026-07-27 [Europe/Berlin]`. Matched textually rather than parsed into a `Date`, so no timezone
+ * conversion can happen behind the scenes.
+ *
+ * Two things here are wider than ISO 8601, and each buys something:
+ *
+ *  - **The offset sits outside the time group**, so a date can carry one without a time of day,
+ *    with optional space between (`2026-07-27 +02:00`). The space is what properties/zone.ts's
+ *    `applyZone` writes, since `2026-07-27-07:00` is a counting exercise; the form without it is
+ *    what it used to write, and is admitted so that every value already in a vault reads.
+ *  - **A bracketed IANA name** (`[Europe/Berlin]`) is RFC 9557's spelling — the standard for
+ *    attaching a zone to a timestamp, and what `Temporal.ZonedDateTime` round-trips. It says
+ *    something an offset cannot: that the value *floats*, so moving its date across a daylight
+ *    saving boundary moves the instant with it. An offset pins one instant forever.
+ *
+ * Both may appear, as RFC 9557 allows, and a name present wins: it is the more specific statement,
+ * and it is the only one of the two that can still be right after the date beside it changes.
+ *
+ * The zone forms are written by the `numbat:zoneddate` and `numbat:zoneddatetime` property types.
+ * Neither is a YAML timestamp, which is exactly why they live under types of ours rather than under
+ * Obsidian's Date and Datetime — see properties/date-type.ts.
+ */
+export const DATE_TEXT =
+  /^(\d{4}-\d{2}-\d{2})(?:[T\x20](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?)?\x20*(Z|[+-]\d{2}:?\d{2})?(?:\[([^\]\x20]+)\])?$/;
 
 /**
  * The Numbat expression for a date written as `date`, `time` and `zone` parts, in the *calendar
  * fields as written* — no conversion, ever.
  *
- * Which function is emitted carries the meaning:
+ * The zone is the one thing that can be filled in rather than read off, and there are four places
+ * it comes from, in order:
  *
- *  - **A date alone** is `date("2026-07-27")`, which Numbat reads as local midnight. A `due:` on a
- *    note is a day in the reader's life, not a day in UTC.
- *  - **A time with no offset** is `datetime("2026-07-27 10:30:00")` — the *space*-separated form,
- *    which Numbat reads as local wall-clock. (The `T`-separated form is a runtime error without an
- *    offset, which is exactly the shape Better Properties writes, so the separator is swapped.)
- *  - **An explicit offset** is kept verbatim, in the `T` form that requires one.
+ *  - **A bracketed zone name in the value** (`[Europe/Berlin]`) is resolved through {@link
+ *    PreambleRules.zoneOffset} *at this value's own wall clock*. It comes first because it is the
+ *    more specific statement: a name says which zone was meant, so it stays right after the date
+ *    beside it changes, where the offset RFC 9557 writes in front of it would go stale.
+ *  - **An offset in the value** is kept verbatim, in the `T` form that requires one. This is the
+ *    only case that reads the same whatever the reader's settings.
+ *  - **Otherwise {@link PreambleRules.defaultOffset}**, asked for this value's own wall clock so a
+ *    date in January and one in July get the offset their zone actually had. A date with no time is
+ *    that zone's midnight — a `due:` on a note is a day in someone's life, not a day in UTC.
+ *  - **Otherwise nothing**, and the value binds the way it did before there was a setting for it:
+ *    `date("2026-07-27")` for a date, which Numbat reads as local midnight, and the *space*
+ *    -separated `datetime("2026-07-27 10:30:00")` for a time, which it reads as local wall clock.
+ *    (The `T`-separated form is a runtime error without an offset, which is exactly the shape
+ *    Better Properties writes, so the separator is swapped.)
+ *
+ * A name that will not resolve — an unknown zone, or a caller that supplied no resolver — falls
+ * through to the cases below it rather than failing the binding. The value still names a moment;
+ * only the reader's opinion of which one is less certain.
+ *
+ * **A value that carries a zone is also displayed in it**, through `-> tz(...)`. Numbat renders
+ * every `DateTime` in the machine's own zone, so without this a note saying
+ * `2026-07-27T09:00-07:00` reads back `17:00` in Berlin — the same instant, correctly converted,
+ * and not the appointment the note is about. The conversion returns a `DateTime`, so this is a
+ * display concern only: the value stays the same moment, and arithmetic against it is untouched.
+ *
+ * It applies only to a zone the *value* carries, never to {@link PreambleRules.defaultOffset}. A
+ * value read by default is being read in the reader's own zone, which is the one Numbat would show
+ * it in anyway. What each case can name is {@link namedDisplayZone} and {@link fixedDisplayZone}.
  *
  * Numbat wants whole seconds, so a bare `HH:MM` is filled out and a fractional second dropped —
  * frontmatter that carries one is being read as a moment, not as a measurement.
  */
-function dateExpression(date: string, time: string | undefined, zone: string | undefined): string {
-  if (time === undefined) {
-    return `date("${date}")`;
+function dateExpression(
+  date: string,
+  time: string | undefined,
+  zone: string | undefined,
+  name: string | undefined,
+  rules: PreambleRules,
+): string {
+  const seconds = time === undefined ? "00:00:00" : time.length === 5 ? `${time}:00` : time;
+  const wall = time === undefined ? date : `${date}T${time}`;
+  const named = name === undefined ? null : rules.zoneOffset?.(name, wall) ?? null;
+  const offset = named ?? zone ?? rules.defaultOffset?.(wall) ?? null;
+
+  if (offset !== null) {
+    const stamp = `datetime("${date}T${seconds}${offset}")`;
+    // Only from a zone the *value itself* carries. A default-offset value is being read in the
+    // reader's own zone, which is the one Numbat shows it in already.
+    const shown = named !== null && name !== undefined ? namedDisplayZone(name) : fixedDisplayZone(zone);
+    return shown === null ? stamp : `${stamp} -> tz("${shown}")`;
   }
 
-  const seconds = time.length === 5 ? `${time}:00` : time;
-  return zone === undefined
-    ? `datetime("${date} ${seconds}")`
-    : `datetime("${date}T${seconds}${zone}")`;
+  return time === undefined ? `date("${date}")` : `datetime("${date} ${seconds}")`;
+}
+
+/**
+ * A zone name safe to write into generated Numbat source.
+ *
+ * {@link DATE_TEXT} accepts anything without a space or a `]` between the brackets, which includes
+ * a quote — and a quote would close the string literal this goes into and turn a note's frontmatter
+ * into arbitrary Numbat. In practice a name that got this far already resolved through {@link
+ * PreambleRules.zoneOffset}, so `Intl` has vouched for it; this is the belt to that's braces, and
+ * it costs one regex.
+ */
+const ZONE_NAME = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)*$/;
+
+/** A fixed offset in either spelling {@link DATE_TEXT} admits. */
+const PLAIN_OFFSET = /^(?:([Zz])|([+-])(\d{2}):?(\d{2}))$/;
+
+/** The `Etc/GMT±H` zones exist for whole hours from −14 through +12 — those are the bounds, and
+ *  they are the *offset's*, so they read backwards from the names. See {@link fixedDisplayZone}. */
+const MAX_EAST_HOURS = 14;
+const MAX_WEST_HOURS = 12;
+
+/** {@link dateExpression}'s display zone for a value that names one. */
+function namedDisplayZone(name: string): string | null {
+  return ZONE_NAME.test(name) ? name : null;
+}
+
+/**
+ * {@link dateExpression}'s display zone for a value that carries only an **offset**, as the IANA
+ * name of the zone fixed at it — or `null` when there is none.
+ *
+ * `Etc/GMT+7` **is** UTC−07:00. The sign is inverted, which looks like a bug and is POSIX's rule,
+ * kept by the IANA database ever since. It is what makes these usable here: they are fixed by
+ * definition, so displaying a value in one cannot move its wall clock the way a populated zone with
+ * a daylight saving rule could.
+ *
+ * They exist only for whole hours, so `+05:45` and `+03:30` get nothing and their values stay in
+ * the reader's own zone. The alternative would be to name a *place* at that offset —
+ * `Asia/Kathmandu` for `+05:45` — which would put a location into a value that never claimed one,
+ * and for the ones that observe daylight saving would show the wrong clock half the year.
+ */
+function fixedDisplayZone(offset: string | undefined): string | null {
+  const match = offset === undefined ? null : PLAIN_OFFSET.exec(offset);
+  if (match === null) {
+    return null;
+  }
+
+  const [, zulu, sign, hours, minutes] = match;
+  if (zulu !== undefined) {
+    return "UTC";
+  }
+  if (Number(minutes) !== 0) {
+    return null;
+  }
+
+  const magnitude = Number(hours);
+  if (magnitude === 0) {
+    return "UTC";
+  }
+
+  // An offset outside the range the `Etc` zones cover is a typo rather than a zone, and naming a
+  // zone that does not exist would fail the binding at runtime — where leaving it alone only shows
+  // the value in the reader's own zone.
+  const east = sign === "+";
+  if (magnitude > (east ? MAX_EAST_HOURS : MAX_WEST_HOURS)) {
+    return null;
+  }
+
+  return `Etc/GMT${east ? "-" : "+"}${magnitude}`;
 }
 
 /** The two-digit form of a date or clock field. */
@@ -531,7 +743,7 @@ function plainExpression(reading: Reading, key: string, value: unknown): { expr:
   if (plain.dates && DATE_TYPES.has(declared() ?? "")) {
     const match = DATE_TEXT.exec(text.trim());
     if (match !== null) {
-      return { expr: dateExpression(match[1], match[2], match[3]), kind: "date" };
+      return { expr: dateExpression(match[1], match[2], match[3], match[4], reading.rules), kind: "date" };
     }
   }
 
@@ -1468,6 +1680,28 @@ function declaredKind(reading: Reading, key: string): PlainKind | null {
   return null;
 }
 
+/** One bound leaf as {@link leafExpression} resolves it: the Numbat expression to bind, whatever
+ *  definitions that expression needs replayed first, and how it was read. */
+interface Leaf {
+  /** The expression the binding evaluates. */
+  expr: string;
+
+  /** Definitions `expr` depends on — an annotated `let` for a typed hole or a grounded zero, and
+   *  the element type of an array of objects. */
+  defs: string[];
+
+  /** Whether the leaf is numbat-typed, or the plain kind it rode along as. */
+  kind: "expression" | PlainKind;
+
+  /** The value as written, where `expr` is a substitution for it — see
+   *  {@link PropertyBinding.written}. */
+  written?: string;
+
+  /** Whether the value says nothing about its own type, so it cannot become a struct field at all
+   *  (see {@link isTypeFree}). */
+  typeFree?: true;
+}
+
 /** The expression a property contributes, or `null` when it contributes nothing — either quietly
  *  (the common case: an untyped non-number) or as a pushed skip. */
 function leafExpression(
@@ -1476,7 +1710,7 @@ function leafExpression(
   value: unknown,
   depth: number,
   inObject: boolean,
-): { expr: string; defs: string[]; kind: "expression" | PlainKind; typeFree?: true; } | null {
+): Leaf | null {
   const key = dottedKey(path);
   const typed = walk.rules.isNumbatTyped(key);
 
@@ -1556,7 +1790,7 @@ function leafExpression(
       return null;
     }
 
-    return { expr, defs: [], kind: "expression" };
+    return groundZero({ expr, defs: [], kind: "expression" }, inObject);
   }
 
   const plain = plainExpression(walk, key, value);
@@ -1564,7 +1798,59 @@ function leafExpression(
     return null; // not a participant — no skip entry, this is the common case
   }
 
-  return { expr: plain.expr, defs: [], kind: plain.kind };
+  return groundZero({ expr: plain.expr, defs: [], kind: plain.kind }, inObject);
+}
+
+/** A bare zero, in any spelling YAML or a Numbat expression can write one — `0`, `0.0`, `-0`,
+ *  `+0.00`. A plain number always arrives as `String(0)`, so the wider forms are for a value
+ *  written under the Numbat type. */
+const ZERO_LITERAL = /^[+-]?0+(?:\.0*)?$/;
+
+/** Whether an expression is a bare zero — the value {@link groundZero} substitutes. Exported for
+ *  the property widget, which judges the text being *typed* rather than the derived binding, so an
+ *  advisory clears the moment the value stops being one. */
+export function isBareZero(expr: string): boolean {
+  return ZERO_LITERAL.test(expr.trim());
+}
+
+/** The `Scalar` zero {@link groundZero} substitutes, and its definition. One name for the whole
+ *  preamble, redefined as often as it is needed — which Numbat allows for a `let`, and which
+ *  {@link typedHole} already relies on. */
+const ZERO_NAME = "_Nb_zero_Scalar";
+const ZERO_DEF = `let ${ZERO_NAME}: ${PLAIN_TYPE.number} = 0`;
+
+/**
+ * A leaf with a bare `0` replaced by a `Scalar` zero — but only where it is about to become a
+ * **struct field**, which is the one place the difference is fatal.
+ *
+ * `0` is the single literal Numbat gives no type of its own: it is zero of *any* dimension
+ * (`type(0)` is `forall A: Dim. A`), where `1` is a `Scalar`. At the top level that is a feature
+ * and is left alone — `let x = 0` still adds to `5 m` and to `5 seconds` alike. Inside a generated
+ * struct it leaves the whole type polymorphic, and Numbat can then read **none** of that object's
+ * fields: one `0` in one corner costs every property of the object, of every note that imports it,
+ * and reports itself only on whatever unrelated line happened to read one.
+ *
+ * Substituting is a *faithful* reading rather than a liberty, which is what makes it the right
+ * answer and not merely the convenient one. Every other plain number in a note binds as a `Scalar`
+ * already; `0` binding as one is what makes it behave like `1` instead of like a hole. The
+ * polymorphism it gives up could not have been used from a struct field anyway — the field was
+ * unreadable while it had it.
+ *
+ * The mechanism is {@link typedHole}'s exactly: an annotated `let` in the binding's `defs`, whose
+ * name goes in the value's place. A struct field cannot carry the annotation itself (see that
+ * function), and an arithmetic dodge that types as `Scalar` — `0 + (1 - 1)` — would read as a
+ * puzzle wherever the expression is shown.
+ *
+ * What this cannot reach is an expression that merely *evaluates* to a polymorphic zero (`0 * 2`,
+ * `x - x`); no static rule can. Those still fail, and `evaluation/inlay-parse.ts`'s
+ * `unsolvedFieldSummary` is what makes Numbat's complaint about them legible.
+ */
+function groundZero(leaf: Leaf, inObject: boolean): Leaf {
+  if (!inObject || !isBareZero(leaf.expr)) {
+    return leaf;
+  }
+
+  return { ...leaf, expr: ZERO_NAME, written: leaf.expr, defs: [...leaf.defs, ZERO_DEF] };
 }
 
 /**
@@ -1790,6 +2076,7 @@ function bindNested(walk: Walk, state: ObjectState, path: string[], value: unkno
     return;
   }
   state.generation += 1;
+  const warning = zeroFieldWarning(key, leaf);
   walk.bindings.push({
     key,
     path,
@@ -1798,7 +2085,38 @@ function bindNested(walk: Walk, state: ObjectState, path: string[], value: unkno
     defs: leaf.defs,
     code: generationCode(state, segments, leaf.expr),
     kind: leaf.kind,
+    ...leaf.written === undefined ? {} : { written: leaf.written },
+    ...warning === null ? {} : { warning },
   });
+}
+
+/**
+ * The notice a **numbat-typed** field {@link groundZero} substituted earns, or `null` for every
+ * other value.
+ *
+ * Said out loud rather than done quietly, because under the Numbat type the value is an
+ * *expression*, where a polymorphic zero is a real thing to have written and useful at the top
+ * level: `let x = 0` adds to `5 m` and to `5 seconds` alike. Substituting takes that away, so
+ * someone who meant a zero *quantity* is told how to say it — with a unit, which only the Numbat
+ * type has room for.
+ *
+ * A **plain** number says nothing of the sort. `0` there is a YAML number among numbers, no more
+ * asking to be dimensionless than `1` beside it is, and every other one of them already binds as a
+ * `Scalar`. Grounding it is what the property meant in the first place, not a liberty taken with
+ * it, so it is done in silence — the same distinction {@link bindNested}'s `report` draws, for the
+ * same reason: a value that merely rode along was never asked for.
+ *
+ * Detected by the substitution rather than by re-testing the value, so the notice cannot drift out
+ * of step with what was actually emitted.
+ */
+function zeroFieldWarning(key: string, leaf: Leaf): string | null {
+  if (leaf.expr !== ZERO_NAME || leaf.kind !== "expression") {
+    return null;
+  }
+
+  return `property '${key}': a bare 0 has no dimension of its own in Numbat, so it is read here as`
+    + " a dimensionless Scalar — which is what keeps the rest of this object readable. Write it"
+    + " with a unit (0 m) if you meant a zero quantity.";
 }
 
 /** Walk one object's entries in document order, descending into sub-objects. */
@@ -2003,6 +2321,18 @@ interface FrontmatterScan {
   /** Every array-item value, by the line it is written on. Keyed by line rather than by path
    *  because a path (`rates.#`, `people.#.pace`) names one position and repeats once per item. */
   items: Map<number, PropertyValueSite>;
+
+  /**
+   * Where the value starts on every line that has one, keyed by line — a key's and an item's alike,
+   * since {@link quoteZonedTimestamps} cares only that there is a scalar there and not what it is
+   * called.
+   *
+   * Only lines the scan accepted as key or item lines appear, which is the whole point of deriving
+   * this here rather than matching the text again: a `2026-07-27T10:30:00+02:00` inside a `|` block
+   * scalar, a flow mapping, or the continuation of a multi-line plain scalar has no entry, and so
+   * cannot be rewritten by something that has no idea it is inside a string.
+   */
+  values: Map<number, number>;
 }
 
 /**
@@ -2032,9 +2362,10 @@ interface FrontmatterScan {
 function scanFrontmatter(lines: Iterable<string>): FrontmatterScan {
   const keys = new Map<string, KeySite>();
   const items = new Map<number, PropertyValueSite>();
+  const values = new Map<number, number>();
   const body = frontmatterBody(lines);
   if (body === null) {
-    return { keys, items };
+    return { keys, items, values };
   }
 
   // Open blocks, outermost first. `indent` is the column this block's children sit at, unknown
@@ -2093,6 +2424,10 @@ function scanFrontmatter(lines: Iterable<string>): FrontmatterScan {
 
     if (valueText(value) === "") {
       stack.push({ indent: null, openedAt: offset + ch, path, sequence: false });
+    } else if (value !== undefined) {
+      // Measured from the match rather than by searching for the colon, so a quoted key with a
+      // colon in it (`"a:b": 5`) still reports where its *value* starts.
+      values.set(line, offset + text.length - value.length);
     }
     return true;
   };
@@ -2117,6 +2452,7 @@ function scanFrontmatter(lines: Iterable<string>): FrontmatterScan {
     if (!placeKey(nested, line, rest, valueCh)) {
       stack.pop(); // not a mapping — the item *is* the value
       items.set(line, { key: dottedKey(path), valueCh });
+      values.set(line, valueCh);
     }
   };
 
@@ -2186,7 +2522,7 @@ function scanFrontmatter(lines: Iterable<string>): FrontmatterScan {
     close(stack.pop() as Block);
   }
 
-  return { keys, items };
+  return { keys, items, values };
 }
 
 /**
@@ -2261,6 +2597,77 @@ export function propertyValueAt(
   // key half of its own to guard.
   const item = scan.items.get(line);
   return item !== undefined && ch >= item.valueCh ? item : null;
+}
+
+/** A trailing YAML comment: a `#` at the start of the value or preceded by whitespace. **A tab
+ *  counts**, which is why this is a character class rather than the literal space it reads as —
+ *  a comment {@link quoteZonedTimestamps} fails to strip makes the value in front of it match
+ *  nothing, and the timestamp then goes unquoted and reads two ways. */
+const COMMENT_TAIL = /(^|[\x20\t])#.*$/;
+
+/**
+ * A frontmatter body with every **zoned** timestamp quoted, so the YAML parser hands it back as the
+ * text it was written as rather than as an instant.
+ *
+ * This exists because a note is read two ways. Obsidian's property cache stores plain data and
+ * keeps a zoned timestamp verbatim; the note's own YAML is parsed, and a parser turns
+ * `2026-07-27T10:30:00+02:00` into a `Date` — at which point the offset is gone and the value is
+ * indistinguishable from a bare `2026-07-27 08:30`. The same note therefore bound one thing in
+ * Source mode and another in the widget, the scope inspector, and every import. Quoting first makes
+ * both surfaces read the same string, and the disagreement stops existing rather than being
+ * documented.
+ *
+ * **Only a value carrying an offset is touched.** A bare `due: 2026-07-27` and an offset-less
+ * `when: 2026-07-27 10:30` have nothing to lose to the parser and are returned exactly as they
+ * came — which is what keeps a date a date. Quoting is also a no-op for the shapes a parser already
+ * declines to read as timestamps (`2026-07-27+02:00`, and any time without seconds); they are
+ * quoted anyway, because "has an offset" is a rule about the value and not about one parser's
+ * table.
+ *
+ * The lines to consider come from {@link scanFrontmatter}, not from matching the text again. That
+ * is the whole safety argument: a timestamp inside a `|` block scalar, a flow mapping, or the
+ * continuation of a multi-line plain scalar is not a value site, gets no entry, and so cannot be
+ * rewritten by something with no idea it is inside a string.
+ */
+export function quoteZonedTimestamps(body: string[]): string[] {
+  // `scanFrontmatter` reads a whole note and strips the delimiters itself, so they go back on; its
+  // line numbers then line up with `body` one-indexed.
+  const { values } = scanFrontmatter(["---", ...body, "---"]);
+  if (values.size === 0) {
+    return body;
+  }
+
+  return body.map((text, index) => {
+    const valueCh = values.get(index + 1);
+    if (valueCh === undefined) {
+      return text;
+    }
+
+    const raw = text.slice(valueCh);
+    const stripped = raw.replace(COMMENT_TAIL, "$1");
+    const scalar = stripped.trim();
+    if (scalar.startsWith("\"") || scalar.startsWith("'")) {
+      return text; // already a string, whatever it looks like
+    }
+
+    const match = DATE_TEXT.exec(scalar);
+    if (match === null || match[3] === undefined) {
+      return text; // not a date, or a date with no offset to protect
+    }
+
+    // A single-quoted YAML scalar spells its own quote `''`, and {@link DATE_TEXT}'s bracketed zone
+    // group admits one — `[Africa/N'Djamena]`, a plausible misremembering of the real
+    // `Africa/Ndjamena`. Unescaped, that would close the string early and leave the *whole note* as
+    // unparseable YAML, which {@link notePreamble} absorbs into an empty preamble: every binding in
+    // the note would vanish in Source mode while the cache path still had them, which is precisely
+    // the disagreement this function exists to end. The inverse is {@link unquote}.
+    const quoted = scalar.replace(/'/g, "''");
+
+    // Sliced out of `raw` rather than `stripped`: the two agree up to the comment, so this keeps
+    // the value's own leading space and everything after it — the comment included — as written.
+    const lead = stripped.length - stripped.trimStart().length;
+    return `${text.slice(0, valueCh)}${raw.slice(0, lead)}'${quoted}'${raw.slice(stripped.trimEnd().length)}`;
+  });
 }
 
 /**

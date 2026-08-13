@@ -268,11 +268,56 @@ export function errorSummary(output: string): string | null {
   }
 
   if (header !== null && !/^while /.test(header) && header !== "runtime error") {
-    return header;
+    return unsolvedFieldSummary(output) ?? header;
   }
 
   const label = labels.reduce<string | null>((a, b) => (a === null || b.length > a.length ? b : a), null);
   return label ?? notes[0] ?? header;
+}
+
+/** An unsolved `HasField` constraint, and the field name it is asking about. The struct argument is
+ *  matched non-greedily up to the quoted name, which is the only part of the dump worth reading. */
+const HAS_FIELD = /HasField\(.*?,\s*"([^"]+)"\s*,/;
+
+/** The header Numbat writes when a type-checking constraint set came out unsolved, singular or
+ *  plural. The plural form carries the constraints on the lines *below* it, so the header alone
+ *  says nothing at all — which makes this rewrite worth doing rather than merely nicer. */
+const UNSOLVED_HEADER = /^error:\s*Could not solve the following constraints?:/m;
+
+/**
+ * A readable summary for the one Numbat diagnostic that is genuinely unreadable: an unsolved
+ * `HasField` constraint, which is what reading *any* field of a struct whose type never resolved
+ * produces.
+ *
+ * The raw form is a dump of the whole struct with its unsolved type variables in it
+ * (`HasField(_Nb_StateDataStruct_1pnpqoo_6_2<…> {…}, "Time_Zone", Fn[(DateTime) -> T391])`), naming
+ * a generated type the reader never wrote; and in the plural case {@link errorSummary} would
+ * otherwise return the bare header, which carries no information whatever. Both are replaced with
+ * the one sentence that says what to do about it.
+ *
+ * **What causes it is worth stating outright**, because nothing about the raw text suggests it: a
+ * field whose value has no type of its own leaves the whole struct polymorphic, and Numbat can then
+ * read *none* of its fields — so the error surfaces on whatever line happened to touch the object,
+ * never on the one that caused it. A bare `0` is far and away the usual culprit, since in Numbat it
+ * is zero of *any* dimension (`type(0)` is `forall A: Dim. A`) rather than a `Scalar`. The other
+ * ways in — an empty list, `nil` — are already refused before they reach a struct field by
+ * properties/parse.ts's `isTypeFree`, which describes the same failure from the other end.
+ *
+ * `null` when the diagnostic is not this one, leaving every other error exactly as it was.
+ */
+function unsolvedFieldSummary(output: string): string | null {
+  const text = plainText(output);
+  if (!UNSOLVED_HEADER.test(text)) {
+    return null;
+  }
+
+  const field = HAS_FIELD.exec(text);
+  if (field === null) {
+    return null; // an unsolved constraint of some other kind; its own header is the better answer
+  }
+
+  return `field '${field[1]}' cannot be read: something in its object has no type of its own`
+    + " — most often a bare 0, which in Numbat is zero of any dimension rather than a Scalar";
 }
 
 // INCOMPLETE EXPRESSIONS
@@ -346,13 +391,21 @@ export interface Hint {
   /** Column (characters) within that line to anchor the widget at. */
   column: number;
 
-  /** What the hint reports: an inferred `type` (rendered inline, at `column`), a computed `result`,
-   *  the type filling a typed `hole`, or an `error` summary. Each maps to its own CSS class and to
-   *  a filter the user can switch off. */
-  kind: "type" | "result" | "hole" | "error";
+  /**
+   * What the hint reports: an inferred `type` (rendered inline, at `column`), a computed `result`,
+   * the type filling a typed `hole`, an `error` summary, or a `warning`. Each maps to its own CSS
+   * class and to a filter the user can switch off.
+   *
+   * `warning` and `error` differ in whether anything failed, which is the distinction worth drawing
+   * for a reader deciding whether to act *now*: an error is a line that produced no value, a
+   * warning is one that produced a value under a reading it wants to declare. Today only the
+   * frontmatter properties raise one (a bare `0` read as a `Scalar`); a code block has nowhere to
+   * make such a choice, so nothing there emits it.
+   */
+  kind: "type" | "result" | "hole" | "error" | "warning";
 
   /** Formatter HTML (for `type`/`result`) or plain text (the hole's type for `hole`, the diagnostic
-   *  summary for `error`). */
+   *  summary for `error`, the advisory for `warning`). */
   content: string;
 
   /** Virtual spaces to render before an end-of-line hint (0 or 1), so it sits one space from the

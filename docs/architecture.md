@@ -32,7 +32,7 @@ these are the files that change together.
 | `unicode/`     | LaTeX-style `\code` → glyph expansion, both eager and popover                                              |
 | `hover/`       | what the symbol under the pointer or caret is, and the card that answers                                   |
 | `scope/`       | what a position can see: the tree, the replay, value probing, search, go-to-definition                     |
-| `properties/`  | frontmatter → Numbat bindings, and the `Numbat` property type                                              |
+| `properties/`  | frontmatter → Numbat bindings, the `Numbat` and `Zoned Date` property types, and time zones                |
 | `imports/`     | `numbat-use`: the graph walk, and the note cache behind it                                                 |
 | `evaluation/`  | running Numbat and showing the answer: code blocks, inlay hints, inline `` n`…` `` spans                   |
 | `views/`       | the REPL, the scope inspector, the `.nbt` editor, and the CodeMirror host all three share                  |
@@ -53,12 +53,13 @@ main.ts                     │  plugin lifecycle, commands, │
  ┌────┴─────┐    ┌──────┴──────┐   ┌───────┴──────┐   ┌───────┴──────┐  ┌───────┴──────┐
  │  views/  │    │ CM6 editor  │   │   reading    │   │ properties/  │  │  settings/   │
  │          │    │ extensions  │   │     view     │   │              │  │              │
- │ repl,    │    │ syntax/,    │   │ evaluation/  │   │ parse,       │  │ tab.ts       │
- │ scope,   │    │ evaluation/,│   │  codeblock,  │   │ note,        │  │ (renderer)   │
- │ nbt,     │    │ hover/,     │   │  inline-     │   │ type,        │  │ defs.ts      │
- │ input    │    │ unicode/,   │   │  reading     │   │ frontmatter- │  │ (pure table) │
- │          │    │ completion/,│   │ interpreter/ │   │ inlay        │  │              │
- │          │    │ document/   │   │  render      │   │              │  │              │
+ │ repl,    │    │ syntax/,    │   │ evaluation/  │   │ parse, zone, │  │ tab.ts       │
+ │ scope,   │    │ evaluation/,│   │  codeblock,  │   │ note, type,  │  │ (renderer)   │
+ │ nbt,     │    │ hover/,     │   │  inline-     │   │ date-type,   │  │ defs.ts      │
+ │ input    │    │ unicode/,   │   │  reading     │   │ zone-editor, │  │ (pure table) │
+ │          │    │ completion/,│   │ interpreter/ │   │ frontmatter- │  │              │
+ │          │    │ document/   │   │  render      │   │ inlay        │  │              │
+ │          │    │             │   │              │   │              │  │              │
  └────┬─────┘    └──────┬──────┘   └───────┬──────┘   └───────┬──────┘  └──────────────┘
       │                 │                  │                  │
       └─────────────────┴─────────┬────────┴──────────────────┘
@@ -91,11 +92,13 @@ Roughly half the modules import nothing at all, or import only other modules tha
 They are the parsers, the models, and the decision procedures: `completion/expressions.ts` (what to
 offer and when), `evaluation/inlay-parse.ts` (what a line of interpreter output means),
 `evaluation/inline-parse.ts` (finding and reading `` n`…` `` spans), `properties/parse.ts`
-(frontmatter → Numbat bindings), `scope/model.ts` (every source a note's scope draws on),
-`hover/parse.ts`, `imports/parse.ts`, `scope/search.ts`, `syntax/identifier.ts`,
-`interpreter/markup.ts`, `interpreter/nullable.ts` (the injected nullable vocabulary and the two
-literals written with it), `interpreter/nullable-display.ts` (reading one back out of formatter
-output), `document/frontmatter.ts`, `views/fuzzy.ts`, `settings/defs.ts`.
+(frontmatter → Numbat bindings), `properties/zone.ts` (offsets, and resolving a named zone to the
+one it had on a given date — `Intl` is a platform built-in, so this stays pure and testable),
+`scope/model.ts` (every source a note's scope draws on), `hover/parse.ts`, `imports/parse.ts`,
+`scope/search.ts`, `syntax/identifier.ts`, `interpreter/markup.ts`, `interpreter/nullable.ts` (the
+injected nullable vocabulary and the two literals written with it),
+`interpreter/nullable-display.ts` (reading one back out of formatter output),
+`document/frontmatter.ts`, `views/fuzzy.ts`, `settings/defs.ts`.
 
 The rule is not a convention that could quietly rot, but instead is **self-enforcing**. `test/unit/`
 runs under **plain Node** with no access to Obsidian, so a unit test can only load its module if
@@ -249,7 +252,7 @@ hardest to test. Only the leaf helpers moved, into `views/mobile-keyboard.ts`.
 
 ## Things Obsidian Does not Officially Support
 
-Four features **reach past the public API**. They are defensive where they have to be, and each
+Five features **reach past the public API**. They are defensive where they have to be, and each
 carries a comment saying what it depends on:
 
 - **Syntax Highlighting Inside a Fence:** Obsidian exposes no way to bind a CodeMirror 6 language to
@@ -260,7 +263,21 @@ carries a comment saying what it depends on:
   the Better Properties plugin both use. Better Properties prefixes its ids, so the two coexist. The
   same registry is how a _sub_-property is typed: Better Properties keys an object's fields
   `<parent>.<field>` and an array's items `<parent>.#`, which is the spelling `properties/parse.ts`
-  reads the assignment of a nested property or a list item under.
+  reads the assignment of a nested property or a list item under. The `Zoned Date` and
+  `Zoned Datetime` types (`properties/date-type.ts`) are registered exactly the same way, and _read_
+  Obsidian's own `date` and `datetime` widgets back out of the registry to draw their calendar
+  halves — a read, so there is nothing to restore, and whatever another plugin has wrapped one with
+  is called through as it stands. The row's calendar `<input>` is found by
+  `input:not(.numbat-property-zone)`, because the zone field is an `<input>` in the same row and a
+  built-in that drew none of its own would otherwise have a zone _label_ written back as the value's
+  wall clock. All three registrations are removed on unload **only if the entry is still the one
+  they installed**, so a plugin that wrapped one of ours keeps its wrapper.
+- **No Monkey-Patching of Property Widgets:** An earlier version replaced the `datetime` registry
+  entry outright, behind a setting, to add the same zone field to Obsidian's own widget. It was
+  removed in favour of the `Zoned Datetime` type, which covers the same ground: a patch inherits
+  every change Obsidian makes to the widget it wraps, has to be undone exactly on unload, and has to
+  coexist with whatever else has wrapped the same entry — three standing risks the type does not
+  carry. `docs/design/property-timezones.md` records what it did and why it went.
 - **Toggle Comment Interception:** It cannot be intercepted by a key handler by default as Obsidian
   handles it before any listener a plugin can register. `syntax/comment.ts` is therefore a
   CodeMirror _transaction filter_: when the built-in command inserts `%%` markers inside a numbat

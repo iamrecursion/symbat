@@ -13,7 +13,10 @@ import {
   type PlainBindings,
   type PreambleRules,
   propertyValueAt,
+  quoteZonedTimestamps,
   sanitizeIdentifier,
+  ZONED_DATE_TYPE,
+  ZONED_DATETIME_TYPE,
 } from "../../../src/properties/parse.ts";
 
 // --- sanitizeIdentifier -------------------------------------------------------
@@ -240,7 +243,7 @@ test("text is escaped so nothing in it can be read as Numbat", () => {
   assert.equal(exprFor("a\nb\tc"), "\"a\\nb\\tc\"");
 });
 
-test("a date binds as local midnight, and a time as local wall-clock", () => {
+test("with no default zone, a date binds as local midnight and a time as local wall-clock", () => {
   const dated = { assignedType: () => "date" };
   // A `due:` on a note is a day in the reader's life, so `date(…)` — which Numbat reads as local.
   assert.equal(exprFor(new Date("2026-07-27T00:00:00Z"), dated), "date(\"2026-07-27\")");
@@ -269,9 +272,13 @@ test("a date that arrives as text is read as one only under a date property", ()
   // separator is swapped — which is exactly the shape Better Properties writes.
   assert.equal(exprFor("2026-07-27T10:30:00", dated), "datetime(\"2026-07-27 10:30:00\")");
   assert.equal(exprFor("2026-07-27 10:30", dated), "datetime(\"2026-07-27 10:30:00\")");
-  // An explicit offset is kept, in the form that requires one.
-  assert.equal(exprFor("2026-07-27T10:30:00+02:00", dated), "datetime(\"2026-07-27T10:30:00+02:00\")");
-  assert.equal(exprFor("2026-07-27T10:30:00.500Z", dated), "datetime(\"2026-07-27T10:30:00Z\")");
+  // An explicit offset is kept, in the form that requires one — and shown in the zone it names
+  // rather than in the reader's, which is the `-> tz(...)` on the end. See the block below.
+  assert.equal(
+    exprFor("2026-07-27T10:30:00+02:00", dated),
+    "datetime(\"2026-07-27T10:30:00+02:00\") -> tz(\"Etc/GMT-2\")",
+  );
+  assert.equal(exprFor("2026-07-27T10:30:00.500Z", dated), "datetime(\"2026-07-27T10:30:00Z\") -> tz(\"UTC\")");
 
   // Without the type assignment it is text — Obsidian shows its date picker for a date-shaped value
   // without assigning anything, so the shape is not the opt-in it looks like. Text that will not
@@ -280,6 +287,132 @@ test("a date that arrives as text is read as one only under a date property", ()
   assert.equal(exprFor("not a date", dated), "\"not a date\"");
   // Better Properties' own date type counts as one.
   assert.equal(exprFor("2026-07-27", { assignedType: () => "better-properties:datecustom" }), "date(\"2026-07-27\")");
+});
+
+// --- zoned dates --------------------------------------------------------------
+
+// What `properties/note.ts` supplies from the reader's setting: the offset a value with none of its
+// own is read at, asked for that value's own wall clock. Berlin's two offsets stand in for every
+// zone that changes twice a year.
+const berlin = (isoLocal: string): string => (isoLocal >= "2026-04" && isoLocal < "2026-10" ? "+02:00" : "+01:00");
+const zoned = { assignedType: () => "date", defaultOffset: berlin };
+
+test("with a default zone, every date binds explicitly zoned", () => {
+  // The two shapes that used to defer to whatever the interpreter called local.
+  assert.equal(exprFor("2026-07-27", zoned), "datetime(\"2026-07-27T00:00:00+02:00\")");
+  assert.equal(exprFor("2026-07-27 10:30", zoned), "datetime(\"2026-07-27T10:30:00+02:00\")");
+  assert.equal(exprFor(new Date("2026-07-27T00:00:00Z"), zoned), "datetime(\"2026-07-27T00:00:00+02:00\")");
+});
+
+test("the default zone is asked about the value's own date, not about today", () => {
+  assert.equal(exprFor("2026-01-27", zoned), "datetime(\"2026-01-27T00:00:00+01:00\")");
+  assert.equal(exprFor("2026-07-27", zoned), "datetime(\"2026-07-27T00:00:00+02:00\")");
+});
+
+test("an offset written in the value beats the default zone", () => {
+  assert.equal(exprFor("2026-07-27T10:30:00+05:45", zoned), "datetime(\"2026-07-27T10:30:00+05:45\")");
+  assert.equal(exprFor("2026-01-27T10:30:00Z", zoned), "datetime(\"2026-01-27T10:30:00Z\") -> tz(\"UTC\")");
+});
+
+test("a Zoned Date carries an offset without carrying a time", () => {
+  const dated = { assignedType: () => ZONED_DATE_TYPE };
+  assert.equal(exprFor("2026-07-27 +05:45", dated), "datetime(\"2026-07-27T00:00:00+05:45\")");
+  // A negative one too — the shape the space exists to keep legible.
+  assert.equal(exprFor("2026-07-27 -05:00", dated), "datetime(\"2026-07-27T00:00:00-05:00\") -> tz(\"Etc/GMT+5\")");
+  // And without a suffix it is the plain date it always was, read at the default zone.
+  assert.equal(exprFor("2026-07-27", { ...dated, defaultOffset: berlin }), "datetime(\"2026-07-27T00:00:00+02:00\")");
+});
+
+test("a Zoned Date written before the space was reads exactly as one written after", () => {
+  // The widget stopped writing this spelling (properties/zone.ts's `applyZone`), which is a change
+  // to what is *written* and to nothing else: the values already in a vault go on binding.
+  const dated = { assignedType: () => ZONED_DATE_TYPE, zoneOffset: resolveZone };
+  assert.equal(exprFor("2026-07-27+05:45", dated), "datetime(\"2026-07-27T00:00:00+05:45\")");
+  assert.equal(exprFor("2026-07-27-05:00", dated), "datetime(\"2026-07-27T00:00:00-05:00\") -> tz(\"Etc/GMT+5\")");
+  assert.equal(
+    exprFor("2026-07-27[Europe/Berlin]", dated),
+    "datetime(\"2026-07-27T00:00:00+02:00\") -> tz(\"Europe/Berlin\")",
+  );
+});
+
+// A stand-in for properties/note.ts's Intl-backed resolver, with Berlin's two offsets.
+const resolveZone = (zone: string, isoLocal: string): string | null =>
+  zone !== "Europe/Berlin" ? null : isoLocal >= "2026-04" && isoLocal < "2026-10" ? "+02:00" : "+01:00";
+
+test("a named zone floats: the same value reads at the offset its zone had on that date", () => {
+  const named = { assignedType: () => ZONED_DATE_TYPE, zoneOffset: resolveZone };
+  assert.equal(
+    exprFor("2026-07-27 [Europe/Berlin]", named),
+    "datetime(\"2026-07-27T00:00:00+02:00\") -> tz(\"Europe/Berlin\")",
+  );
+  assert.equal(
+    exprFor("2026-01-27 [Europe/Berlin]", named),
+    "datetime(\"2026-01-27T00:00:00+01:00\") -> tz(\"Europe/Berlin\")",
+  );
+});
+
+test("a name beats the offset written beside it, because only the name survives an edit", () => {
+  // RFC 9557's extended form carries both. The bracket is the more specific statement: move the
+  // date and the offset in front of it goes stale, where the name does not.
+  const named = { assignedType: () => ZONED_DATETIME_TYPE, zoneOffset: resolveZone };
+  assert.equal(
+    exprFor("2026-01-27T10:30:00+02:00[Europe/Berlin]", named),
+    "datetime(\"2026-01-27T10:30:00+01:00\") -> tz(\"Europe/Berlin\")",
+    "the stale +02:00 is corrected by the zone that outranks it",
+  );
+});
+
+test("a zoned value is shown in its own zone, not in the reader's", () => {
+  // Numbat renders every DateTime in the machine's zone, so without this a 9am appointment written
+  // in Los Angeles reads back as 6pm in Berlin: the same instant, and not what the note is about.
+  const dated = { assignedType: () => ZONED_DATETIME_TYPE, zoneOffset: resolveZone };
+  const tzFor = (value: string): string | null => exprFor(value, dated)?.split(" -> ")[1] ?? null;
+
+  // A name is shown as itself. It is also the only case that can say a *place*.
+  assert.equal(tzFor("2026-07-27T10:30:00[Europe/Berlin]"), "tz(\"Europe/Berlin\")");
+
+  // An offset is shown through the fixed-offset zone that *is* it. `Etc/GMT+5` is UTC−05:00 — the
+  // sign is inverted, which is POSIX's rule and not a typo here.
+  assert.equal(tzFor("2026-07-27T10:30:00-05:00"), "tz(\"Etc/GMT+5\")");
+  assert.equal(tzFor("2026-07-27T10:30:00+02:00"), "tz(\"Etc/GMT-2\")");
+  // Both spellings of zero are the same zone, and it has a name of its own.
+  assert.equal(tzFor("2026-07-27T10:30:00Z"), "tz(\"UTC\")");
+  assert.equal(tzFor("2026-07-27T10:30:00+00:00"), "tz(\"UTC\")");
+  // The compact spelling is an offset too.
+  assert.equal(tzFor("2026-07-27T10:30:00+0300"), "tz(\"Etc/GMT-3\")");
+
+  // The `Etc` zones are whole hours only. A value at a fractional offset keeps its instant and is
+  // shown in the reader's zone, rather than being labelled with a *place* that happens to sit at
+  // that offset — which would be a claim the value never made.
+  assert.equal(tzFor("2026-07-27T10:30:00+05:45"), null);
+  assert.equal(tzFor("2026-07-27T10:30:00-03:30"), null);
+
+  // Nothing outside the range those zones cover: naming one that does not exist would fail the
+  // binding outright, where showing the value in the reader's zone only shows it in the wrong one.
+  assert.equal(tzFor("2026-07-27T10:30:00+14:00"), "tz(\"Etc/GMT-14\")");
+  assert.equal(tzFor("2026-07-27T10:30:00+15:00"), null);
+  assert.equal(tzFor("2026-07-27T10:30:00-12:00"), "tz(\"Etc/GMT+12\")");
+  assert.equal(tzFor("2026-07-27T10:30:00-13:00"), null);
+});
+
+test("a value read at the default zone is left in the reader's own", () => {
+  // The default zone *is* the reader's, near enough — asking Numbat to convert into it would be
+  // asking it to show the value in the zone it already shows values in.
+  assert.equal(exprFor("2026-07-27 10:30", zoned), "datetime(\"2026-07-27T10:30:00+02:00\")");
+  assert.equal(exprFor("2026-07-27", zoned), "datetime(\"2026-07-27T00:00:00+02:00\")");
+});
+
+test("an unresolvable name falls through rather than failing the binding", () => {
+  const named = { assignedType: () => ZONED_DATE_TYPE, zoneOffset: resolveZone, defaultOffset: berlin };
+  // The resolver does not know this zone, so the offset written beside it answers…
+  assert.equal(exprFor("2026-07-27+05:45[Mars/Olympus]", named), "datetime(\"2026-07-27T00:00:00+05:45\")");
+  // …and failing that, the reader's default.
+  assert.equal(exprFor("2026-07-27[Mars/Olympus]", named), "datetime(\"2026-07-27T00:00:00+02:00\")");
+});
+
+test("the suffixed form is a date only under a type that means it", () => {
+  // Under no date type it is text, like any other prose that happens to look like something.
+  assert.equal(exprFor("2026-07-27+05:45"), "\"2026-07-27+05:45\"");
 });
 
 test("an unticked checkbox binds false rather than undefined", () => {
@@ -1359,4 +1492,175 @@ test("generated struct names carry a readable label derived from the key", () =>
   assert.ok(names.every((n) => /^_Nb_[A-Za-z0-9]+_[0-9a-z]+_\d+_\d+$/.test(n)), names.join(" "));
   // Distinct definitions throughout — a repeated `struct` is a hard error.
   assert.equal(new Set(names).size, names.length);
+});
+
+// --- the bare-zero warning ----------------------------------------------------
+
+// `warning` for one key of a preamble, or null. The whole point is *which* property carries it.
+const warningFor = (record: Record<string, unknown>, key: string, over: Partial<PreambleRules> = {}): string | null =>
+  derivePreamble(record, rules({ plainNested: PLAIN_ALL, ...over })).bindings
+    .find((binding) => binding.key === key)?.warning ?? null;
+
+// The binding for one key of a preamble.
+const bindingFor = (record: Record<string, unknown>, key: string, over: Partial<PreambleRules> = {}) =>
+  derivePreamble(record, rules({ plainNested: PLAIN_ALL, ...over })).bindings.find((b) => b.key === key);
+
+test("a bare zero inside an object is grounded to a Scalar, quietly for a plain number", () => {
+  // `0` is the one literal with no type of its own (`forall A: Dim. A`), which would leave the
+  // generated struct polymorphic — and Numbat can then read *none* of the object's fields. It is
+  // substituted for an annotated `Scalar` zero, the way every other plain number already binds.
+  const record = { costs: { total: 0, note: "x" } };
+  const bound = bindingFor(record, "costs.total");
+  assert.notEqual(bound?.expr, "0", "the bare literal never reaches the struct");
+  assert.deepEqual(bound?.defs, ["let _Nb_zero_Scalar: Scalar = 0"], "the type rides on an annotated let");
+  assert.equal(bound?.expr, "_Nb_zero_Scalar");
+
+  // Nothing is said about it: a YAML number was never asking to be dimensionless, no more than the
+  // `10` beside it is, so binding it as a `Scalar` is the property's own meaning and not a liberty.
+  assert.equal(bound?.warning, undefined);
+
+  // Nothing is dropped: the field and its siblings all bind.
+  const keys = derivePreamble(record, rules({ plainNested: PLAIN_ALL })).bindings.map((b) => b.key);
+  assert.deepEqual(keys, ["costs.total", "costs.note"]);
+});
+
+test("a zero under the Numbat type is grounded too — and that one is said out loud", () => {
+  // There the value is an expression, where a polymorphic zero is a real thing to have written.
+  // Substituting takes it away, so it is reported rather than done quietly.
+  const typed = { isNumbatTyped: (key: string) => key === "costs.total" };
+  const bound = bindingFor({ costs: { total: "0", note: "x" } }, "costs.total", typed);
+  assert.equal(bound?.expr, "_Nb_zero_Scalar");
+  assert.match(bound?.warning ?? "", /bare 0 has no dimension of its own/);
+  assert.match(bound?.warning ?? "", /dimensionless Scalar/, "and says what it did");
+});
+
+test("only a struct field is grounded — a top-level zero keeps its polymorphism", () => {
+  // `let x = 0` generalizes and stays useful there: it adds to `5 m` and to `5 seconds` alike.
+  // Nothing is wrong with it until it becomes a field, so nothing is done to it and nothing said.
+  const bound = bindingFor({ total: 0 }, "total");
+  assert.equal(bound?.expr, "0");
+  assert.deepEqual(bound?.defs, []);
+  assert.equal(bound?.warning, undefined);
+});
+
+test("every spelling of zero is caught, and nothing else is", () => {
+  // A nested property is typed under its *dotted* key, so the helper's `nb_` rule misses it.
+  const typed = { isNumbatTyped: (key: string) => key === "costs.a" };
+
+  // Every spelling a Numbat expression can write one in — a plain number only ever arrives as
+  // `String(0)`, so the wider forms are the ones the type menu makes reachable.
+  assert.notEqual(warningFor({ costs: { a: 0 } }, "costs.a", typed), null);
+  assert.notEqual(warningFor({ costs: { a: "0.00" } }, "costs.a", typed), null);
+  assert.notEqual(warningFor({ costs: { a: "-0" } }, "costs.a", typed), null);
+  assert.equal(bindingFor({ costs: { a: "0.00" } }, "costs.a", typed)?.expr, "_Nb_zero_Scalar");
+
+  // A value that merely *contains* a zero, or evaluates to one, is not a bare literal. The last is
+  // a real miss, and is what `evaluation/inlay-parse.ts`'s translation is the net for.
+  assert.equal(warningFor({ costs: { a: 10 } }, "costs.a", typed), null);
+  assert.equal(warningFor({ costs: { a: "0 m" } }, "costs.a", typed), null);
+  assert.equal(warningFor({ costs: { a: "x - x" } }, "costs.a", typed), null);
+  // And an untyped string that merely looks like one is text, not a number at all.
+  assert.equal(warningFor({ costs: { a: "0" } }, "costs.a"), null);
+
+  // The plain number is grounded on the very same rule and says nothing, which is the whole of the
+  // difference: it is the *notice* that belongs to the Numbat type, not the substitution.
+  assert.equal(warningFor({ costs: { a: 0.0 } }, "costs.a"), null);
+  assert.equal(bindingFor({ costs: { a: 0.0 } }, "costs.a")?.expr, "_Nb_zero_Scalar");
+});
+
+// --- quoteZonedTimestamps -----------------------------------------------------
+
+test("a value carrying an offset is quoted, so the parser cannot collapse it", () => {
+  assert.deepEqual(
+    quoteZonedTimestamps(["when: 2026-07-27T10:30:00+02:00"]),
+    ["when: '2026-07-27T10:30:00+02:00'"],
+  );
+  assert.deepEqual(quoteZonedTimestamps(["when: 2026-07-27T10:30:00Z"]), ["when: '2026-07-27T10:30:00Z'"]);
+  // Both spellings of a zoned date: the one the widget writes now, and the one it used to.
+  assert.deepEqual(quoteZonedTimestamps(["due: 2026-07-27 +02:00"]), ["due: '2026-07-27 +02:00'"]);
+  assert.deepEqual(quoteZonedTimestamps(["due: 2026-07-27+02:00"]), ["due: '2026-07-27+02:00'"]);
+});
+
+test("a value with no offset is returned exactly as it came", () => {
+  // The invariant that keeps a date a date: there is nothing here for the parser to lose, so there
+  // is nothing to protect it from.
+  const body = ["due: 2026-07-27", "when: 2026-07-27 10:30", "also: 2026-07-27T10:30:00", "prose: not a date"];
+  assert.deepEqual(quoteZonedTimestamps(body), body);
+});
+
+test("a value that is already a string is left alone", () => {
+  const body = ["a: \"2026-07-27T10:30:00+02:00\"", "b: '2026-07-27T10:30:00+02:00'"];
+  assert.deepEqual(quoteZonedTimestamps(body), body);
+});
+
+test("a quote inside the value is escaped, so quoting can never break the note's YAML", () => {
+  // `DATE_TEXT`'s bracketed zone group admits an apostrophe, and `Africa/Ndjamena` is real enough
+  // that `Africa/N'Djamena` is a plausible thing to type. Unescaped it closed the string early and
+  // left the whole frontmatter unparseable — which `notePreamble` absorbs into an empty preamble,
+  // silently dropping every binding in the note.
+  assert.deepEqual(
+    quoteZonedTimestamps(["when: 2026-07-27T10:30:00+02:00[Africa/N'Djamena]"]),
+    ["when: '2026-07-27T10:30:00+02:00[Africa/N''Djamena]'"],
+  );
+});
+
+test("a timestamp inside a block scalar is not a value site and is not touched", () => {
+  // The case a regex over the raw text gets wrong. `notes:` has no value of its own, so everything
+  // indented under it is one string — including a line that looks exactly like a key.
+  const body = [
+    "notes: |",
+    "  starts 2026-07-27T10:30:00+02:00 sharp",
+    "  ends: 2026-07-27T12:00:00+02:00",
+  ];
+  assert.deepEqual(quoteZonedTimestamps(body), body);
+});
+
+test("an array item is quoted, and its unzoned siblings are not", () => {
+  assert.deepEqual(
+    quoteZonedTimestamps(["dates:", "  - 2026-07-27T10:30:00-03:30", "  - 2026-07-27"]),
+    ["dates:", "  - '2026-07-27T10:30:00-03:30'", "  - 2026-07-27"],
+  );
+});
+
+test("quoting keeps the rest of the line — the comment, and a colon in the key", () => {
+  assert.deepEqual(
+    quoteZonedTimestamps(["when: 2026-07-27T10:30:00+05:45 # the meeting"]),
+    ["when: '2026-07-27T10:30:00+05:45' # the meeting"],
+  );
+  assert.deepEqual(
+    quoteZonedTimestamps(["\"odd:key\": 2026-07-27T10:30:00Z"]),
+    ["\"odd:key\": '2026-07-27T10:30:00Z'"],
+  );
+});
+
+test("a comment behind a tab is still a comment, so the value in front of it is still quoted", () => {
+  // YAML takes any whitespace before a `#` as opening a comment. A tab the stripper missed would
+  // leave the value matching nothing, and the timestamp would go unquoted — reading one way here
+  // and another through Obsidian's property cache, which is the whole disagreement this ends.
+  assert.deepEqual(
+    quoteZonedTimestamps(["when: 2026-07-27T10:30:00+02:00\t# the meeting"]),
+    ["when: '2026-07-27T10:30:00+02:00'\t# the meeting"],
+  );
+});
+
+test("a body with nothing to quote is handed back unchanged", () => {
+  const body = ["title: A note", "tags:", "  - one", "count: 3"];
+  assert.deepEqual(quoteZonedTimestamps(body), body);
+  assert.deepEqual(quoteZonedTimestamps([]), []);
+});
+
+test("the first line of a multi-line plain scalar is a value site, and quoting it strands the rest", () => {
+  // Not the behavior anyone wants — it is the reason `properties/note.ts` re-parses the *unquoted*
+  // body when the quoted one throws. A value site is where a scalar starts, and a plain scalar can
+  // run past its own line; quoting closes it early and leaves `continued` outside the string it
+  // belonged to, which `parseYaml` rejects.
+  //
+  // Absorbing that throw would have cost the whole note its bindings in Source mode while
+  // Obsidian's cache path kept them — a strictly worse outcome than the "reads two ways"
+  // limitation `docs/roadmap.md` already records for a zoned value the quoter cannot reach. Pinned
+  // here so the fallback is not mistaken for dead code and quietly removed.
+  assert.deepEqual(
+    quoteZonedTimestamps(["when: 2026-07-27T10:30:00+02:00", "  continued"]),
+    ["when: '2026-07-27T10:30:00+02:00'", "  continued"],
+  );
 });

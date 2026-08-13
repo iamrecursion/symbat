@@ -22,7 +22,9 @@ test("a result places on a key whose value is on that line, and not on one writt
 });
 
 test("a problem places wherever the key is — it restates no data", () => {
-  for (const kind of ["error", "hole"] as const) {
+  // A warning belongs with them: it is the only sign that a property below the key wants
+  // attention, and it restates nothing the reader can already see on the lines under it.
+  for (const kind of ["error", "hole", "warning"] as const) {
     assert.equal(hintPlacesOnKey(kind, site(1, 1)), true);
     assert.equal(hintPlacesOnKey(kind, site(1, 4)), true);
   }

@@ -816,3 +816,201 @@ test("undefined values: an empty date or number property still binds inside an o
     nb.free();
   }
 });
+
+test("zoned dates: every form the widgets write evaluates, and means what it says", { skip }, async () => {
+  // The guarantee this file exists to hold up, for the zoned-date work: what
+  // `properties/zone-editor.ts` writes into a note is only useful if `dateExpression` can emit it
+  // *and* Numbat can read it. Nothing else pins the second half — the unit tests stop at the text.
+  const nb = newContext(await loadNumbat());
+  try {
+    const run = runnerFor(nb);
+    // A date, a datetime, a negative sub-hour offset, and the widest offsets in use. The names are
+    // deliberately not single letters: `d` is a prelude alias for `day`, which is the very hazard
+    // the reserved-name tests above are about.
+    const preamble = derivePreamble(
+      {
+        berlin: "2026-07-27+02:00",
+        kathmandu: "2026-07-27T10:30:00+05:45",
+        stJohns: "2026-01-15-03:30",
+        kiritimati: "2026-07-27+14:00",
+        baker: "2026-07-27-12:00",
+      },
+      {
+        isNumbatTyped: () => false,
+        isReserved: () => false,
+        assignedType: () => "numbat:zoneddate",
+        plain: PLAIN_ALL,
+      },
+    );
+    replay(nb, preamble);
+
+    // Each binding is a real DateTime rather than an absorbed error.
+    for (const name of ["berlin", "kathmandu", "stJohns", "kiritimati", "baker"]) {
+      assert.match(plain(run(`type(${name})`).output), /DateTime/, name);
+    }
+
+    // And the offsets are load-bearing, not decorative: the same wall clock in two zones is two
+    // different instants, exactly the offset apart.
+    assert.equal(inlineResultFor(run, "(berlin - datetime(\"2026-07-27T00:00:00+00:00\")) -> hours").plain, "-2 h");
+    assert.equal(
+      inlineResultFor(run, "(kathmandu - datetime(\"2026-07-27T10:30:00+00:00\")) -> minutes").plain,
+      "-345 min",
+    );
+    assert.equal(inlineResultFor(run, "(kiritimati - baker) -> hours").plain, "-26 h");
+  } finally {
+    nb.free();
+  }
+});
+
+test("zoned dates: an unzoned value read at a default zone is that zone's instant", { skip }, async () => {
+  const nb = newContext(await loadNumbat());
+  try {
+    const run = runnerFor(nb);
+    // What `properties/note.ts` supplies when the reader has set a zone: a bare date becomes that
+    // zone's midnight rather than whatever the interpreter would have called local.
+    const preamble = derivePreamble({ due: "2026-07-27" }, {
+      isNumbatTyped: () => false,
+      isReserved: () => false,
+      assignedType: () => "date",
+      plain: PLAIN_ALL,
+      defaultOffset: () => "+02:00",
+    });
+    assert.equal(preamble.bindings[0].expr, "datetime(\"2026-07-27T00:00:00+02:00\")");
+
+    replay(nb, preamble);
+    assert.equal(inlineResultFor(run, "(due - datetime(\"2026-07-27T00:00:00+00:00\")) -> hours").plain, "-2 h");
+  } finally {
+    nb.free();
+  }
+});
+
+test("zoned dates: a floating zone resolves to the offset it had on that date", { skip }, async () => {
+  // The point of storing a name rather than an offset: the same zone owes January and July
+  // different answers, and Numbat has to be handed the right one for each.
+  const nb = newContext(await loadNumbat());
+  try {
+    const run = runnerFor(nb);
+    const preamble = derivePreamble(
+      { summer: "2026-07-27T12:00:00+02:00[Europe/Berlin]", winter: "2026-01-27T12:00:00+02:00[Europe/Berlin]" },
+      {
+        isNumbatTyped: () => false,
+        isReserved: () => false,
+        assignedType: () => "numbat:zoneddatetime",
+        plain: PLAIN_ALL,
+        zoneOffset: (zone, isoLocal) =>
+          zone !== "Europe/Berlin" ? null : isoLocal >= "2026-04" && isoLocal < "2026-10" ? "+02:00" : "+01:00",
+      },
+    );
+    // Note the winter value's own `+02:00` is stale — RFC 9557 lets both be written, and the name
+    // is what stays true after the date moves.
+    assert.equal(preamble.bindings[1].expr, "datetime(\"2026-01-27T12:00:00+01:00\") -> tz(\"Europe/Berlin\")");
+
+    replay(nb, preamble);
+    for (const name of ["summer", "winter"]) {
+      assert.match(plain(run(`type(${name})`).output), /DateTime/, name);
+    }
+
+    // Noon in Berlin reads back as noon in Berlin, wherever the machine running this happens to be.
+    // The zone *name* in the output is the tell: it is Numbat repeating the `tz(...)` it was given,
+    // and no local rendering of these values can produce it.
+    for (const name of ["summer", "winter"]) {
+      const shown = plain(run(name).output);
+      assert.match(shown, /12:00:00/, name);
+      assert.match(shown, /Europe\/Berlin/, name);
+    }
+
+    // Both are noon in Berlin, so both sit one-or-two hours before noon UTC — the offset each zone
+    // actually had, not one snapshot applied to both.
+    assert.equal(inlineResultFor(run, "(summer - datetime(\"2026-07-27T12:00:00+00:00\")) -> hours").plain, "-2 h");
+    assert.equal(inlineResultFor(run, "(winter - datetime(\"2026-01-27T12:00:00+00:00\")) -> hours").plain, "-1 h");
+  } finally {
+    nb.free();
+  }
+});
+
+// The note both halves of this work on: a plain `0` two levels inside an object, read by a property
+// that touches a *different* field of it. `typedZero` is the same note with the zero written under
+// the Numbat type instead, where the substitution costs something and is reported.
+const zeroNote = (typedZero: boolean) =>
+  derivePreamble(
+    { Data: { Zone: "tz(\"Etc/GMT+7\")", Pop: { Current: typedZero ? "0" : 0 } }, Local: "Data.Zone(now())" },
+    {
+      isNumbatTyped: (key) => key === "Data.Zone" || key === "Local" || (typedZero && key === "Data.Pop.Current"),
+      isReserved: () => false,
+      assignedType: () => null,
+      plain: PLAIN_ALL,
+      plainNested: PLAIN_ALL,
+    },
+  );
+
+test("a bare zero in an object: readable at every consumer, and quiet about a plain number", { skip }, async () => {
+  // The answer to Numbat's `HasField` dump. A `0` has no type of its own (`forall A: Dim. A`),
+  // which leaves the generated struct polymorphic — and Numbat can then read *none* of the object's
+  // fields, so its complaint lands on whatever line happened to touch the object and never on the
+  // `0` itself.
+  const nb = newContext(await loadNumbat());
+  try {
+    const run = runnerFor(nb);
+    const preamble = zeroNote(false);
+
+    // 1. The substitution keeps the object readable: the consumer that reads a *different* field
+    //    of the same object evaluates, where a bare `0` would have made every field unreadable.
+    const hints = frontmatterHints(run, preamble);
+    const consumer = hints.find((hint) => hint.key === "Local");
+    assert.equal(consumer?.kind, "result", `expected a value, got: ${consumer?.content}`);
+
+    // 2. And the zero itself still holds its value, rather than being dropped to save the object.
+    assert.equal(inlineResultFor(run, "Data.Pop.Current").plain, "0");
+    assert.match(plain(run("type(Data.Pop.Current)").output), /Scalar/);
+
+    // 3. Nothing is said about it and nothing shown beside it. A plain number binding as a `Scalar`
+    //    is what the property already meant, and the `= 0` an evaluated value would place there is
+    //    suppressed as restating its source — which it is, whatever name it carries underneath.
+    assert.equal(hints.some((hint) => hint.key === "Data.Pop.Current"), false, "no hint at all");
+    assert.equal(hints.some((hint) => hint.kind === "error"), false, "and nothing anywhere failed");
+
+    // And the diagnosis is real: the same note with a non-zero value evaluates cleanly. In a
+    // context of its own, because the two preambles mint the same generated `struct` names — one
+    // note's worth of bindings is what a real interpreter ever replays, and a repeated `struct` is
+    // a hard error.
+    const fixed = derivePreamble(
+      { Data: { Zone: "tz(\"Etc/GMT+7\")", Pop: { Current: 3537082 } }, Local: "Data.Zone(now())" },
+      {
+        isNumbatTyped: (key) => key === "Data.Zone" || key === "Local",
+        isReserved: () => false,
+        assignedType: () => null,
+        plain: PLAIN_ALL,
+        plainNested: PLAIN_ALL,
+      },
+    );
+    assert.equal(fixed.bindings.find((b) => b.key === "Data.Pop.Current")?.warning, undefined);
+
+    const clean = newContext(await loadNumbat());
+    try {
+      assert.equal(frontmatterHints(runnerFor(clean), fixed).some((hint) => hint.kind === "error"), false);
+    } finally {
+      clean.free();
+    }
+  } finally {
+    nb.free();
+  }
+});
+
+test("a zero under the Numbat type is warned about, on the property it was done to", { skip }, async () => {
+  // There the value is an expression, and a polymorphic zero is a real thing to have written — so
+  // the substitution takes something away and says so, on the one line that would otherwise show
+  // nothing at all (its value restates its source, and is suppressed as noise).
+  const nb = newContext(await loadNumbat());
+  try {
+    const hints = frontmatterHints(runnerFor(nb), zeroNote(true));
+
+    const culprit = hints.find((hint) => hint.key === "Data.Pop.Current");
+    assert.equal(culprit?.kind, "warning", "an advisory, not an error — the note works");
+    assert.match(culprit?.content ?? "", /bare 0 has no dimension of its own/);
+
+    assert.equal(hints.find((hint) => hint.key === "Local")?.kind, "result", "the consumer still reads");
+    assert.equal(hints.some((hint) => hint.kind === "error"), false, "and nothing anywhere failed");
+  } finally {
+    nb.free();
+  }
+});

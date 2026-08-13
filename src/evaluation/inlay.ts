@@ -99,8 +99,8 @@ class InlayWidget extends WidgetType {
     if (this.kind === "hole") {
       // A placeholder for the missing operand's type (e.g. `⟨Length⟩`).
       span.appendText(`⟨${this.content}⟩`);
-    } else if (this.kind === "error") {
-      // The diagnostic's summary line, plain text (colored by the class above).
+    } else if (this.kind === "error" || this.kind === "warning") {
+      // The diagnostic's summary line, or the advisory, as plain text (colored by the class above).
       span.appendText(this.content);
     } else {
       // Reuse Numbat's own formatter HTML so types/dimensions/values color as they do in the
@@ -156,10 +156,12 @@ interface HintFilter {
   results: boolean;
 }
 
-/** Whether a hint should be shown under the given filter: holes are type hints; an error hint is
- *  the line's outcome, so it follows the results toggle. */
+/** Whether a hint should be shown under the given filter: holes are type hints; an error or warning
+ *  hint is the line's outcome, so both follow the results toggle. */
 function hintEnabled(hint: Hint, filter: HintFilter): boolean {
-  return hint.kind === "result" || hint.kind === "error" ? filter.results : filter.types;
+  return hint.kind === "result" || hint.kind === "error" || hint.kind === "warning"
+    ? filter.results
+    : filter.types;
 }
 
 // CODE-BLOCK HINTS

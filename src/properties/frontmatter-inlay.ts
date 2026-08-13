@@ -18,10 +18,17 @@ export interface FmHint {
   /** The property name the hint belongs to — how the editor finds its line. */
   key: string;
 
-  /** What the hint reports, selecting its CSS class and how `content` is rendered. */
-  kind: "result" | "hole" | "error";
+  /**
+   * What the hint reports, selecting its CSS class and how `content` is rendered.
+   *
+   * `warning` is the one that is not about failure: the property bound, and produced a value, under
+   * a reading of its data worth declaring — see {@link PropertyBinding.warning}. It is kept apart
+   * from `error` so a note that works does not look like a note that does not.
+   */
+  kind: "result" | "hole" | "error" | "warning";
 
-  /** Formatter HTML for a `result`, plain text for a `hole` type or `error` summary. */
+  /** Formatter HTML for a `result`, plain text for a `hole` type, an `error` summary or a
+   *  `warning`. */
   content: string;
 }
 
@@ -48,8 +55,17 @@ export function frontmatterHints(run: LineInterpret, preamble: NotePreamble): Fm
     }
 
     const result = inlineResultFor(run, binding.expr);
-    if ((result.kind === "value" || result.kind === "binding") && result.resultHtml !== null) {
-      if (!valueRepeatsExpr(result.plain, binding.expr)) {
+    if (binding.warning !== undefined) {
+      // A binding the derivation has something to say about outranks its own value, which is why
+      // this comes first rather than filling in behind a missing result. The one case today is a
+      // bare `0`, whose value would in any case be dropped just below as merely restating its
+      // source — so without this the property it was done to is the one line in the note showing
+      // nothing at all.
+      hints.push({ key: binding.key, kind: "warning", content: binding.warning });
+    } else if ((result.kind === "value" || result.kind === "binding") && result.resultHtml !== null) {
+      // Against the value as *written*, not as evaluated: a property the derivation rewrote (a
+      // grounded `0`) is still restating itself on the page, whatever name it was given underneath.
+      if (!valueRepeatsExpr(result.plain, binding.written ?? binding.expr)) {
         hints.push({ key: binding.key, kind: "result", content: result.resultHtml });
       }
     } else if (result.kind === "hole" && result.holeType !== null) {
@@ -80,9 +96,10 @@ export function valueRepeatsExpr(plain: string | null, expr: string): boolean {
  * screenful of struct literals. So a **result** is dropped there, for the same reason an object
  * property shows nothing on its own key line while its leaves each show their own.
  *
- * An **error** or an incomplete **hole** still places: neither restates data you can read, and both
- * are the only warning that something in the block below is wrong. And a value written on the key
- * line itself (`rates: [5 EUR, 3 EUR]`) keeps its result, because there the line *is* the value.
+ * An **error**, a **warning** or an incomplete **hole** still places: none restates data you can
+ * read, and they are the only sign that something in the block below wants attention. And a value
+ * written on the key line itself (`rates: [5 EUR, 3 EUR]`) keeps its result, because there the line
+ * *is* the value.
  */
 export function hintPlacesOnKey(kind: FmHint["kind"], site: { line: number; endLine: number; }): boolean {
   return kind !== "result" || site.endLine === site.line;

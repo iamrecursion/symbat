@@ -7,6 +7,8 @@
 // would drift on.
 
 import { AbstractInputSuggest, type App, prepareFuzzySearch, renderResults, type SearchResult } from "obsidian";
+import { deferFocusCheck } from "./focus-guard";
+import { ACTIVE_CLASS, COMPACT_CLASS, type PropertyHost, resolveHost, unclipHost } from "./host";
 import type { PropertyWidgetContext } from "./note";
 import {
   applyZone,
@@ -14,6 +16,7 @@ import {
   offsetChoice,
   parseZoned,
   plainForm,
+  readableForm,
   selectedChoice,
   type ZoneChoice,
   zoneChoices,
@@ -96,9 +99,11 @@ export function buildZoneEditor(
   spec: ZoneEditorSpec,
 ): unknown {
   // Rows the metadata editor has since discarded, whose menus would otherwise still be open over a
-  // field no longer in the document. Swept here because a render is the one moment this code is
-  // reliably given — see {@link liveSuggests}.
+  // field no longer in the document, and whose cells would otherwise keep the clipping a focused
+  // row lifted off them. Swept here because a render is the one moment this code is reliably given
+  // — see {@link liveSuggests}.
   sweepSuggests();
+  sweepUnclips();
   el.addClass(spec.cls);
 
   const parsed = parseZoned(value);
@@ -124,6 +129,11 @@ export function buildZoneEditor(
     }
   }
 
+  // What a compact row shows while it is not being edited. Kept current by `write`, because the row
+  // closes on the value as it now stands rather than the one it opened with — Obsidian re-renders
+  // the row after a change, but not before this has had to draw the value it just wrote.
+  let shown = parsed === null ? (typeof value === "string" ? value : "") : readableForm(parsed, spec.withTime);
+
   // The last value the built-in editor reported, for the case where it has drawn no `<input>` the
   // zone handler can read.
   //
@@ -137,45 +147,186 @@ export function buildZoneEditor(
     lastPlain = nextPlain;
     const trimmed = nextPlain.trim();
     // A cleared field is cleared, not an orphan zone looking for a date.
-    if (trimmed === "") {
-      ctx.onChange?.("");
+    // Resolved here, from the date being written, rather than from the one that was read: that is
+    // what carries a named zone across a daylight saving boundary when the date is moved.
+    const written = trimmed === ""
+      ? ""
+      : applyZone(trimmed, selected?.zone ?? null, selected?.offsetAt(trimmed) ?? null);
+
+    shown = readableText(written, spec.withTime);
+    ctx.onChange?.(written);
+  };
+
+  /** Draw the editor proper: the built-in calendar half, then the zone field beside it. */
+  const build = (): unknown => {
+    // The built-in editors report a string, but the contract is `unknown` and nothing here should
+    // depend on that: anything else is read as "no value" rather than stringified into `[object
+    // Object]` and written to the note.
+    const report = (next: unknown): void => write(typeof next === "string" ? next : "");
+    // `lastPlain` rather than `plain`: in a compact host the row can be opened, closed and opened
+    // again within one render, and the second opening must show what the first one wrote.
+    const handle = spec.draw(lastPlain, { ...ctx, onChange: report });
+
+    // A thunk rather than the value: the field outlives this line, and what it shows when focus
+    // leaves it is whatever has been chosen *since* — see buildZoneField.
+    const field = buildZoneField(el, () => selected);
+    attachZoneSuggest(app, field, {
+      options: () => zoneOptions(choices),
+      current: () => selected?.label ?? "",
+      pick: (option) => {
+        const chosen = option.resolve();
+        // A name the platform will not resolve resolves to nothing, and "no zone" resolves to
+        // nothing too — told apart by which was asked for. Only the second is a request to clear
+        // the zone; the first is a dead end, and the field goes back to what the value still means.
+        if (chosen === null && option.id !== NO_ZONE_ID) {
+          showZone(field, selected);
+          return;
+        }
+
+        selected = chosen;
+        showZone(field, selected);
+        write(currentPlain());
+      },
+    });
+
+    return handle;
+  };
+
+  // Guessed now and corrected on the next frame if the guess was the wrong way round — the shared
+  // dance, so that this widget and the Numbat one cannot drift apart on it (properties/host.ts).
+  // `toPanel` is assigned below because the correction needs the row it is correcting.
+  let toPanel: (() => void) | null = null;
+  const host = resolveHost(el, () => toPanel?.());
+
+  if (host() !== "compact") {
+    return build();
+  }
+
+  const compact = buildCompact(el, build, () => shown, host);
+  toPanel = compact.toPanel;
+  return compact.handle;
+}
+
+/**
+ * The same editor in a Bases cell: the value as text until the cell is clicked into, and the
+ * calendar-plus-zone row only while it is.
+ *
+ * A property row can afford to stand two controls side by side; a table cell cannot, and the pair
+ * wraps rather than shrinks — which is how a cell ends up showing the vertical middle of its own
+ * value. What a column wants is the value, so that is what it gets until someone means to edit it.
+ *
+ * This is the one place the pass-through contract in date-type.ts's `drawBuiltin` bends: the
+ * built-in's handle does not exist when `render` returns, because nothing has been built yet. Ours
+ * is returned instead, and the built-in's is produced — and focused — on activation.
+ *
+ * `toPanel` is the other half of {@link resolveHost}: what to do when the row this drew as a cell
+ * turns out, a frame later, to have been a property row all along. It gives the row back the
+ * always-live editor a panel is entitled to, and everything here goes quiet — the presses and the
+ * focus tracking all read `host()`, so none of them fires again.
+ */
+function buildCompact(
+  el: HTMLElement,
+  build: () => unknown,
+  shown: () => string,
+  host: () => PropertyHost,
+): { handle: { focus: () => void; }; toPanel: () => void; } {
+  el.addClass(COMPACT_CLASS);
+  const textEl = el.createSpan({ cls: "numbat-zoned-readable", text: shown() });
+
+  let handle: unknown = null;
+
+  /** The registered undo for the clipping lifted around this row, while there is one. */
+  let unclipped: LiveUnclip | null = null;
+
+  /** Build the row if it is not built, and put the caret in it either way — this is what Obsidian
+   *  is handed as `focus`, and a focus request on an open row is still a focus request. */
+  const activate = (): void => {
+    if (handle === null) {
+      textEl.detach();
+      el.addClass(ACTIVE_CLASS);
+      // Before the row is built, so what it measures itself against is the space it will actually
+      // have rather than the column's width.
+      unclipped = { el, reclip: unclipHost(el) };
+      liveUnclips.add(unclipped);
+      handle = build();
+    }
+
+    focusEditor(el, handle);
+  };
+
+  /** Give up the cell treatment: a panel row keeps its editor, needs no press to open it, and must
+   *  not have its cell's clipping lifted, because it is not in one. */
+  const toPanel = (): void => {
+    reclip();
+    el.removeClasses([COMPACT_CLASS, ACTIVE_CLASS]);
+    if (handle === null) {
+      textEl.detach();
+      handle = build();
+    }
+  };
+
+  /** Put back the clipping this row lifted, if it lifted any. */
+  const reclip = (): void => {
+    if (unclipped !== null) {
+      unclipped.reclip();
+      liveUnclips.delete(unclipped);
+      unclipped = null;
+    }
+  };
+
+  const deactivate = (): void => {
+    if (handle === null || host() === "panel") {
       return;
     }
 
-    // Resolved here, from the date being written, rather than from the one that was read: that is
-    // what carries a named zone across a daylight saving boundary when the date is moved.
-    ctx.onChange?.(applyZone(trimmed, selected?.zone ?? null, selected?.offsetAt(trimmed) ?? null));
+    handle = null;
+    reclip();
+    el.empty();
+    // The zone field has just left the document with everything else in the row; its menu, which
+    // is drawn on `document.body`, has not (see {@link liveSuggests}).
+    sweepSuggests();
+    el.removeClass(ACTIVE_CLASS);
+    textEl.setText(shown());
+    el.appendChild(textEl);
   };
 
-  // The built-in editors report a string, but the contract is `unknown` and nothing here should
-  // depend on that: anything else is read as "no value" rather than stringified into `[object
-  // Object]` and written to the note.
-  const report = (next: unknown): void => write(typeof next === "string" ? next : "");
-  const handle = spec.draw(plain, { ...ctx, onChange: report });
-
-  // A thunk rather than the value: the field outlives this line, and what it shows when focus
-  // leaves it is whatever has been chosen *since* — see buildZoneField.
-  const field = buildZoneField(el, () => selected);
-  attachZoneSuggest(app, field, {
-    options: () => zoneOptions(choices),
-    current: () => selected?.label ?? "",
-    pick: (option) => {
-      const chosen = option.resolve();
-      // A name the platform will not resolve resolves to nothing, and "no zone" resolves to
-      // nothing too — told apart by which was asked for. Only the second is a request to clear the
-      // zone; the first is a dead end, and the field goes back to what the value still means.
-      if (chosen === null && option.id !== NO_ZONE_ID) {
-        showZone(field, selected);
-        return;
-      }
-
-      selected = chosen;
-      showZone(field, selected);
-      write(currentPlain());
-    },
+  // `mousedown` with the default suppressed, so the press that opens the row is not also a press
+  // that focuses something else and blurs it again. The primary button only: a right-click is
+  // asking for a context menu, and suppressing its default to build a picker nobody asked for would
+  // take Obsidian's own away.
+  el.addEventListener("mousedown", (event) => {
+    if (event.button === 0 && handle === null && host() === "compact") {
+      event.preventDefault();
+      activate();
+    }
   });
 
-  return handle;
+  // Deferred, because at `focusout` time focus has left the old element and not yet reached the new
+  // one — moving between the calendar input and the zone field would otherwise close the row. What
+  // it may not close on is covered by properties/focus-guard.ts: the zone field's own suggestion
+  // menu is drawn outside the row, and an alt-tab is not a departure at all.
+  el.addEventListener("focusout", () => deferFocusCheck(el, deactivate));
+
+  return { handle: { focus: activate }, toPanel };
+}
+
+/** A written value as a reader sees it, for the idle row. Anything that will not parse is shown as
+ *  it stands — the same rule the calendar half follows for a value it cannot hold. */
+function readableText(written: string, withTime: boolean): string {
+  const parsed = parseZoned(written);
+  return parsed === null ? written : readableForm(parsed, withTime);
+}
+
+/** Put the caret in a freshly built row: through the built-in's own handle where it offers one, and
+ *  into its `<input>` where it does not. */
+function focusEditor(el: HTMLElement, handle: unknown): void {
+  const focus = (handle as { focus?: unknown; } | null)?.focus;
+  if (typeof focus === "function") {
+    (focus as () => void).call(handle);
+    return;
+  }
+
+  el.querySelector<HTMLInputElement>(CALENDAR_INPUT)?.focus();
 }
 
 /**
@@ -299,6 +450,48 @@ interface LiveSuggest {
   attached: boolean;
 }
 
+/**
+ * Rows whose ancestors currently have their clipping lifted (see {@link unclipHost}), so it can be
+ * put back even for a row that never deactivates.
+ *
+ * That is not a hypothetical: choosing a date writes the value, and Obsidian answers by
+ * re-rendering the row — the element the focus handler would have closed is gone before it could.
+ * The class left on Obsidian's own cell would then outlive everything that had a reason for it.
+ *
+ * Module-level and swept on the next render, for the same reason {@link liveSuggests} is: the
+ * widget contract has no teardown hook. Unlike that one there is no `attached` dance to get right,
+ * because a row is only ever unclipped by being clicked into, which it cannot be while detached.
+ *
+ * A render is not the only sweep, though, and cannot be: what these classes are left on is
+ * **Obsidian's own cell**, and a virtualised table recycles those. If the last zoned row in a view
+ * goes without another ever being drawn — the reader navigates away, or the column scrolls out for
+ * good — a render-only sweep would leave a `width: max-content` cell in someone else's table until
+ * unload. {@link sweepZoneUnclips} is the way out, wired to `layout-change` in main.ts.
+ */
+interface LiveUnclip {
+  el: HTMLElement;
+  reclip: () => void;
+}
+
+const liveUnclips = new Set<LiveUnclip>();
+
+/** Put back the clipping around any zoned row that has left the document. For the plugin to call on
+ *  a layout change, which is the event that says a view — and everything drawn in it — may have
+ *  gone without this file being given a render to notice. */
+export function sweepZoneUnclips(): void {
+  sweepUnclips();
+}
+
+/** Put back the clipping around rows that have gone, and (on unload) around all of them. */
+function sweepUnclips(all = false): void {
+  for (const entry of [...liveUnclips]) {
+    if (all || !entry.el.isConnected) {
+      entry.reclip();
+      liveUnclips.delete(entry);
+    }
+  }
+}
+
 /** Close and forget the suggesters whose rows are gone, and (on unload) all of them. */
 function sweepSuggests(all = false): void {
   for (const entry of [...liveSuggests]) {
@@ -320,6 +513,7 @@ function sweepSuggests(all = false): void {
 /** Shut every open zone menu, for plugin unload. The rows themselves are Obsidian's to remove. */
 export function disposeZoneEditors(): void {
   sweepSuggests(true);
+  sweepUnclips(true);
 }
 
 /** Attach the type-ahead to the field, and register it for the sweep above. */

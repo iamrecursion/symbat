@@ -293,6 +293,27 @@ export function formatZoned(value: ZonedValue): string {
   return applyZone(plainForm(value), value.zone, value.offset);
 }
 
+/**
+ * The value as a person reads it: `2026-07-27`, `2026-07-27 10:30`, `2026-07-27 10:30
+ * Europe/Berlin`, `2026-07-27 +02:00`.
+ *
+ * What {@link formatZoned} produces is a value's *written* form — RFC 9557, brackets and all —
+ * which is right for the note and wrong for a table cell, where it is the widest thing in the
+ * column and says the least. This is the form a Bases cell shows while it is not being edited, so
+ * it is pure: no interpreter, no Obsidian, no `Intl`, nothing a cell would have to wait for.
+ *
+ * Two differences from {@link plainForm} are deliberate. It **never invents a `00:00`**: that
+ * function feeds an `<input>` which demands a clock, this one feeds a reader, and a date that says
+ * nothing about a time of day should not grow one merely by being looked at. And where a value
+ * carries both, the zone **name wins over the offset** — the name is what the value means, and the
+ * offset is the arithmetic that follows from it.
+ */
+export function readableForm(value: ZonedValue, withTime = value.time !== null): string {
+  const clock = withTime && value.time !== null ? ` ${value.time}` : "";
+  const zone = value.zone ?? value.offset;
+  return `${value.date}${clock}${zone === null ? "" : ` ${zone}`}`;
+}
+
 // ZONES
 // ================================================================================================
 

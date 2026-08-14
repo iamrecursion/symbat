@@ -18,6 +18,7 @@ import {
   offsetMinutes,
   parseZoned,
   plainForm,
+  readableForm,
   selectedChoice,
   zoneChoices,
   zoneForName,
@@ -236,6 +237,32 @@ test("plainForm can be asked for a clock a date does not have, and never for one
   // not be handed a time, or editing a date would silently give it one.
   assert.equal(plainForm(parseZoned("2026-07-27")!, true), "2026-07-27T00:00");
   assert.equal(plainForm(parseZoned("2026-07-27T10:30")!, false), "2026-07-27");
+});
+
+// --- readableForm -------------------------------------------------------------
+
+test("readableForm is the value as a person reads it, not as it is written", () => {
+  assert.equal(readableForm(parseZoned("2026-07-27")!), "2026-07-27");
+  assert.equal(readableForm(parseZoned("2026-07-27T10:30")!), "2026-07-27 10:30");
+  assert.equal(readableForm(parseZoned("2026-07-27 +02:00")!), "2026-07-27 +02:00");
+  assert.equal(readableForm(parseZoned("2026-07-27[Europe/Berlin]")!), "2026-07-27 Europe/Berlin");
+
+  // No `T`, no brackets, and no seconds — the written form is RFC 9557, and this is not it.
+  assert.equal(
+    readableForm(parseZoned("2026-07-27T10:30:00+02:00[Europe/Berlin]")!),
+    "2026-07-27 10:30 Europe/Berlin",
+    "the name wins over the offset it implies",
+  );
+
+  // `Z` is kept as written everywhere else, so it is kept here too.
+  assert.equal(readableForm(parseZoned("2026-07-27T10:30:00Z")!), "2026-07-27 10:30 Z");
+});
+
+test("readableForm never invents a clock, whatever it is asked for", () => {
+  // The opposite of plainForm above, and deliberately: that one feeds an `<input>` which demands a
+  // time of day, this one feeds a reader, who should not be told one the value does not carry.
+  assert.equal(readableForm(parseZoned("2026-07-27")!, true), "2026-07-27");
+  assert.equal(readableForm(parseZoned("2026-07-27T10:30")!, false), "2026-07-27");
 });
 
 test("a zone name the platform cannot resolve is not a zone", () => {

@@ -621,6 +621,32 @@ array — it binds when a wanted leaf sits inside it, item types included (`legs
 All three behaviors live under the **Note properties** settings section: a master toggle, one
 sub-toggle per kind of plain value (numbers, text, dates, checkboxes), and the imports sub-toggle.
 
+### Properties in Bases
+
+A Numbat property needs nothing extra to appear in a **Base**: Obsidian draws a table or card cell
+with the same widget the properties panel uses, so the column evaluates per row, against that note's
+own properties and imports.
+
+A cell is a box in a grid rather than a line of its own, though, so there the widget reads as a
+value rather than as an editor:
+
+- **A cell shows the result**, on its own (no expression, no leading `=`) at the weight of every
+  other column, keeping the colors Numbat gives a value. An expression that fails shows its error
+  instead. A value too wide for the column runs off the end and fades out, rather than wrapping to a
+  second line the row has no room for.
+- **Clicking a cell opens the expression**, with its `= value` beside it exactly as in the
+  properties panel: completion, hover cards and Unicode expansion all work there. Clicking away, or
+  pressing Enter, commits and gives the cell back to its value.
+- **The property panel is unchanged**, and so is the Properties sidebar, and so is a hover popover.
+  Those have a line each, and keep the editor they have always had.
+
+The [Zoned Date and Zoned Datetime](#time-zones-on-dates) types behave the same way, showing
+`2026-07-27 10:30 Europe/Berlin` until the cell is clicked into and the picker appears.
+
+An empty column is worth one note: a cell shows the property's **expression** whenever there is no
+result to show yet — while the interpreter is still starting up, or with **Note properties** turned
+off — so a column is never blank when the notes underneath it are not.
+
 ## Note Scope Inspector
 
 A right-sidebar panel, opened from the ribbon (the list icon) or the **Symbat: Open note scope
@@ -807,6 +833,11 @@ The widget is Obsidian's own date or datetime picker with a zone field beside it
 under types of ours rather than Obsidian's, deliberately: neither spelling is a YAML timestamp, and
 nothing that parses dates today reads RFC 9557, so under Obsidian's own types they would be broken
 dates to Bases, to sorting, and to every other plugin.
+
+In a **Base** cell the same widget shows the value as text — `2026-07-27 10:30 Europe/Berlin`, with
+none of the punctuation the written form needs — and produces the picker and the zone field, side by
+side on one line, only once the cell is clicked into. See
+[Properties in Bases](#properties-in-bases).
 
 The zone field **searches as you type**. Leave it empty and it offers the short list — your own
 zone, `UTC`, and the offsets in real-world use — so the common choices are still one click away.

@@ -930,6 +930,14 @@ export class NumbatInput {
     this.view.focus();
   }
 
+  /** Whether the completion popup is open. A host that tears the editor down when focus leaves it
+   *  must not do so while the reader is picking a completion: the popup is parented on
+   *  `document.body`, so pressing part of it blurs the editor without the reader having gone
+   *  anywhere (properties/focus-guard.ts). */
+  completionOpen(): boolean {
+    return completionStatus(this.view.state) === "active";
+  }
+
   /** Toggle live syntax highlighting without rebuilding the editor. */
   setHighlight(on: boolean): void {
     this.view.dispatch({

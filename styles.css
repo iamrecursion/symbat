@@ -1061,6 +1061,188 @@
   color: var(--text-warning);
 }
 
+/* --- The same widgets in a Bases cell (see properties/host.ts) ------------- */
+
+/* A property row is a line of its own; a Base cell is a box in a grid. Everything above lays a
+ * widget out as a row that *wraps* when it runs out of width, which in a cell means the value is
+ * stacked, centered, and then clipped by the cell — so what a reader sees is the vertical middle of
+ * their own value. In a cell the widget shows the value on one line instead, and only becomes an
+ * editor once it is clicked into.
+ *
+ * `numbat-property-compact` and `is-active` are the plugin's own classes, decided in
+ * properties/host.ts. Nothing here names an Obsidian DOM class: which surface this is, is one guess
+ * made in one place. */
+.numbat-property.numbat-property-compact,
+.numbat-zoned-date.numbat-property-compact,
+.numbat-zoned-datetime.numbat-property-compact {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  /* The whole cell is the click target that opens the field, so it should say so. */
+  cursor: text;
+  /* And so it must *be* one. An empty property draws nothing — no editor until the press, and no
+   * value or expression to fall back to — and a flex row with nothing in it is zero pixels tall, so
+   * the press would land on Obsidian's cell and open nothing. A line's worth of height is the
+   * difference between a property that can be filled in from a Base and one that cannot, which is
+   * exactly the property most in need of it. */
+  min-height: 1.5em;
+}
+
+/* The same leading inset `.numbat-property` has carried since Base cells were first looked at: a
+ * cell gives the widget no padding of its own, and a value starting hard against the column divider
+ * reads as cramped. On the row rather than on the idle text, so that the value and the picker that
+ * replaces it start at the same place and the cell does not shift when it is clicked into. */
+.numbat-zoned-date.numbat-property-compact,
+.numbat-zoned-datetime.numbat-property-compact {
+  padding-inline-start: var(--size-4-2);
+}
+
+/* A value too wide for its column runs off the end rather than wrapping, and fades as it goes.
+ *
+ * The mask is on the *row*, which is `width: 100%`, so the fade is the last stretch of the **cell**
+ * — a value that fits ends before it and is untouched, and only one that is about to be cut off
+ * runs into it. On `.numbat-property-result`, which hugs its content, it would fade every value.
+ * The prefixed property is not decoration: unprefixed `mask-image` is newer than the WebKit
+ * Obsidian ships on some mobile devices. */
+.numbat-property.numbat-property-compact:not(.is-active),
+.numbat-zoned-date.numbat-property-compact:not(.is-active),
+.numbat-zoned-datetime.numbat-property-compact:not(.is-active) {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent 100%);
+}
+
+/* Idle, there is no editor — the field element is still there, holding nothing, and must take up
+ * nothing. */
+.numbat-property.numbat-property-compact .numbat-property-input:empty {
+  display: none;
+}
+
+/* Idle, the value *is* the cell's content rather than an annotation on an expression beside it: it
+ * reads at the weight of every other column, upright and at full contrast, with the `numbat-*`
+ * token spans still carrying Numbat's own colors. The `=` is dropped in properties/type.ts, which
+ * is the same distinction made on the other side of the widget. */
+.numbat-property.numbat-property-compact:not(.is-active) .numbat-property-result {
+  opacity: 1;
+  font-style: normal;
+  white-space: pre;
+}
+
+/* Active, it is a field being typed into: no mask, which would fade the caret at the right-hand
+ * edge, and no clipping. */
+.numbat-property.numbat-property-compact.is-active,
+.numbat-zoned-date.numbat-property-compact.is-active,
+.numbat-zoned-datetime.numbat-property-compact.is-active {
+  overflow: visible;
+}
+
+/* A focused cell wraps and grows its row, so the whole expression and its result are visible while
+ * they are being edited, rather than the reader typing into a slot the width of a column.
+ *
+ * That this works at all is a fact about Bases rather than a wish: its tables are virtualised, and a
+ * virtualised table is perfectly entitled to give its rows a fixed height and clip anything taller.
+ * **Checked in the app — the row grows.** Worth re-checking if a Bases release ever makes a focused
+ * cell show the top of its own editor; the answer then is a cell that scrolls sideways instead
+ * (`flex-wrap: nowrap` with `overflow-x: auto` here and on `.cm-scroller`), which is a real
+ * alternative rather than a repair. */
+.numbat-property.numbat-property-compact.is-active {
+  flex-wrap: wrap;
+}
+
+.numbat-property.numbat-property-compact.is-active .numbat-property-result {
+  white-space: pre-wrap;
+}
+
+/* A zoned value, idle: the date and its zone as one piece of text, read rather than picked.
+ *
+ * The metrics are `.numbat-property-result`'s, deliberately and not by inheritance — a Bases cell
+ * does not hand the widget the font its own text is in, so an unstyled span comes out at the
+ * document's default and reads as a different size from everything around it. Taking the numbat
+ * result's treatment means this plugin's two kinds of cell agree with each other, which is the
+ * comparison a reader actually makes: they sit in the same table. */
+.numbat-zoned-readable {
+  white-space: pre;
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+}
+
+/* A zoned value, active: the picker and the zone field butted right up against each other, so the
+ * two read as one value rather than as two controls that happen to share a cell. `gap: 0` replaces
+ * the row gap the property panel's version uses; the zone field's own inline padding is all the
+ * separation there should be.
+ *
+ * **The focused row is as wide as its value, not as wide as its cell**, and overflows to the
+ * trailing side — the answer a spreadsheet gives a cell being edited. A date picker is a fixed
+ * amount of text and a calendar button; it has no useful narrow form, and a `nowrap` row capped at
+ * the column's width can only get one by squeezing the digits out of the date. Sizing the row to
+ * `max-content` means neither control is ever asked to shrink: the growth goes sideways, out of the
+ * cell, where there is room for it.
+ *
+ * That leaves it overlapping the columns beside it, hence the background and the stacking context —
+ * without them the neighbouring cells would read straight through the picker. The cell does clip,
+ * so the row also has to be let out of it: properties/host.ts marks the clipping boxes around a
+ * focused row, and `.numbat-unclipped` below is what that mark does. */
+.numbat-zoned-date.numbat-property-compact.is-active,
+.numbat-zoned-datetime.numbat-property-compact.is-active {
+  gap: 0;
+  width: max-content;
+  max-width: none;
+  position: relative;
+  z-index: 1;
+  background-color: var(--background-primary);
+}
+
+/* Both halves keep the width they ask for. The picker's 8em floor from the property-row rule above
+ * is exactly right here too, and with the row at `max-content` there is no shortfall to take it out
+ * of. */
+.numbat-zoned-date.numbat-property-compact.is-active > input:not(.numbat-property-zone),
+.numbat-zoned-datetime.numbat-property-compact.is-active > input:not(.numbat-property-zone) {
+  flex: 0 0 auto;
+}
+
+/* Sized in characters from the zone's own name (properties/zone-editor.ts sets `size`), so it must
+ * not be capped at a cell width the row no longer has — that is what was ellipsising
+ * `America/Denver` to `America/D…`. */
+.numbat-zoned-date.numbat-property-compact.is-active .numbat-property-zone,
+.numbat-zoned-datetime.numbat-property-compact.is-active .numbat-property-zone {
+  flex: 0 0 auto;
+  max-width: none;
+}
+
+/* A box that was cutting a focused row off at the cell's edge, marked by properties/host.ts for as
+ * long as that row is focused and unmarked the moment it is not.
+ *
+ * `!important` because the elements carrying this are Obsidian's own, styled by rules of unknown
+ * specificity in a stylesheet that has every right to be more specific than one class. Nothing that
+ * scrolls is ever marked (a scroll container's clipping is its scrolling), so this cannot turn a
+ * viewport into an overflowing page — the walk stops before reaching one. */
+.numbat-unclipped {
+  overflow: visible !important;
+}
+
+/* The innermost of those — the cell — grows with what it holds, so that the border and the focus
+ * ring it draws still go round the value rather than through it.
+ *
+ * The floor is the width the cell had before it grew, measured in properties/host.ts and handed
+ * over as a pixel value. Not `100%`: a percentage resolves against the containing block, which for
+ * a cell in a flex row is the row — so `min-width: 100%` asks for a cell as wide as the whole
+ * table, which is exactly what it got. */
+.numbat-unclipped-cell {
+  /* `flex` first, and for the same reason the floor is a measurement: the cell turning out to be a
+   * flex item is what the `100%` above proved. A column's width is its flex basis, and a basis
+   * outranks a width — so without resetting it to `auto` the growth below would silently do
+   * nothing. Harmless where the cell is a grid item instead, which ignores `flex` entirely. */
+  flex: 0 0 auto !important;
+  width: max-content !important;
+  min-width: var(--numbat-unclipped-floor, 0) !important;
+  z-index: 1;
+}
+
+/* Only where the cell was not positioned already (properties/host.ts checks): a grown cell overlaps
+ * the one beside it, and without being lifted out of the normal paint order the neighbour's
+ * background would be drawn over this one's trailing border. */
+.numbat-unclipped-lift {
+  position: relative;
+}
+
 /* --- Time zones on date properties (see properties/zone-editor.ts) --------- */
 
 /* The zone field sits beside a built-in date or datetime editor, in a row the built-in never

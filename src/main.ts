@@ -46,6 +46,7 @@ import {
 } from "./interpreter/numbat";
 import { VersionedLoad } from "./interpreter/versioned-load";
 import { registerZonedDateTypes } from "./properties/date-type";
+import { watchPointerDown } from "./properties/focus-guard";
 import {
   frontmatterBody,
   invalidateReservedNames,
@@ -53,8 +54,8 @@ import {
   primeReservedNames,
   propertyTypeManager,
 } from "./properties/note";
-import { disposePropertyEditors, registerNumbatPropertyType } from "./properties/type";
-import { disposeZoneEditors } from "./properties/zone-editor";
+import { clearPropertyOutcomes, disposePropertyEditors, registerNumbatPropertyType } from "./properties/type";
+import { disposeZoneEditors, sweepZoneUnclips } from "./properties/zone-editor";
 import { setCaretTarget } from "./scope/goto-definition";
 import { normalizeSettings, type SymbatSettings, SymbatSettingTab } from "./settings/tab";
 import { normalizePreludeFiles } from "./settings/util";
@@ -152,6 +153,11 @@ export default class SymbatPlugin extends Plugin {
     });
 
     registerCodeBlocks(this);
+
+    // Where the reader last pressed, which is what tells a property widget in a Bases cell whether
+    // a blur means they have left the field or merely reached for its completion popup
+    // (properties/focus-guard.ts). Registered before the types that consult it.
+    watchPointerDown(this);
 
     // The `Numbat` property type (assignable from a property's type menu); a property so typed
     // binds its value into the note's scope (properties/note.ts).
@@ -353,6 +359,11 @@ export default class SymbatPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("delete", () => this.moduleGraph?.reset()));
     this.registerEvent(this.app.vault.on("rename", () => this.moduleGraph?.reset()));
 
+    // A focused zoned property in a Bases cell marks Obsidian's own cell so the picker can overflow
+    // it, and puts the mark back when it closes — but a view that goes while a cell is open never
+    // closes it. This is the event that says so (properties/zone-editor.ts).
+    this.registerEvent(this.app.workspace.on("layout-change", () => sweepZoneUnclips()));
+
     // We explicitly avoid initializing the WASM interpreter on load, as we do it lazily instead to
     // conserve memory and compute.
   }
@@ -372,6 +383,7 @@ export default class SymbatPlugin extends Plugin {
     unmapVimHoverKey();
     invalidateDefinitions();
     disposePropertyEditors();
+    clearPropertyOutcomes();
     disposeZoneEditors();
     this.moduleGraph?.dispose();
     disposeCompletionContexts();
@@ -455,6 +467,9 @@ export default class SymbatPlugin extends Plugin {
    * refresh on their next render as usual.
    */
   refreshNoteScope(): void {
+    // The property widgets' evaluated outcomes are keyed on the scope they were evaluated in, and
+    // this is exactly the event that says that scope has moved (properties/type.ts).
+    clearPropertyOutcomes();
     this.refreshInlayHints();
     this.refreshInlineEval();
     this.refreshScopeViews();

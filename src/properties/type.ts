@@ -54,6 +54,7 @@ import {
   scopeChunksAbove,
 } from "./note";
 import { isBareZero } from "./parse";
+import { tintedIcon } from "./registry";
 
 // REGISTERING THE TYPE
 // ================================================================================================
@@ -74,7 +75,9 @@ export function registerNumbatPropertyType(plugin: SymbatPlugin): void {
 
   const widget = {
     type: NUMBAT_PROPERTY_TYPE,
-    icon: "calculator",
+    // Our own copy of the glyph, tinted green — the tell that this type came from a plugin rather
+    // than from Obsidian (properties/registry.ts).
+    icon: tintedIcon("calculator"),
     name: () => "Numbat",
     // What Obsidian considers an assignable value for this type: the expression text (a bare number
     // is how YAML stores an unquoted numeric expression).

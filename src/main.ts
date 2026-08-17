@@ -54,6 +54,7 @@ import {
   primeReservedNames,
   propertyTypeManager,
 } from "./properties/note";
+import { installTypeOrder } from "./properties/registry";
 import { clearPropertyOutcomes, disposePropertyEditors, registerNumbatPropertyType } from "./properties/type";
 import { disposeZoneEditors, sweepZoneUnclips } from "./properties/zone-editor";
 import { setCaretTarget } from "./scope/goto-definition";
@@ -167,6 +168,11 @@ export default class SymbatPlugin extends Plugin {
     // which Obsidian's own Date type has nowhere to put and its Datetime type discards. Both add a
     // type to the menu rather than replacing one, so neither is gated on a setting.
     registerZonedDateTypes(this);
+
+    // The type menu lists types in the order the registry holds them, which puts everything a
+    // plugin registers after everything Obsidian ships. Sort the registry by name instead, so the
+    // three above sit among the built-in types rather than behind them (properties/registry.ts).
+    installTypeOrder(this);
 
     // A type (re)assignment changes which properties bind — re-evaluate open editors. The event is
     // undocumented (like the registry); a missing `on` just means stale hints until the next edit.

@@ -26,6 +26,7 @@
 import type SymbatPlugin from "../main";
 import { type PropertyTypeManager, propertyTypeManager, type PropertyWidget } from "./note";
 import { ZONED_DATE_TYPE, ZONED_DATETIME_TYPE } from "./parse";
+import { tintedIcon } from "./registry";
 import { parseZoned, type ZonedValue } from "./zone";
 import { buildZoneEditor } from "./zone-editor";
 
@@ -101,7 +102,9 @@ function register(
 ): void {
   const widget = {
     type: spec.type,
-    icon: spec.icon,
+    // The spec names the Lucide glyph; what goes into the registry is this plugin's own copy of it,
+    // tinted green to mark the type as one Obsidian did not come with (properties/registry.ts).
+    icon: tintedIcon(spec.icon),
     name: () => spec.label,
     validate: (value: unknown) => {
       if (value === null || value === undefined || value === "") {

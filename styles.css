@@ -1061,6 +1061,34 @@
   color: var(--text-warning);
 }
 
+/* The icon of a property type this plugin registered, wherever Obsidian draws it: the type menu,
+ * the property row, a Bases picker. The class is on a group *inside* an icon this plugin registered
+ * with `addIcon` (see properties/icon-svg.ts), which is why there is a plugin class to name here at
+ * all.
+ *
+ * The stroke width is restated because that group carries one as a presentation attribute —
+ * Lucide's, in Lucide's own coordinate space, which the group's transform preserves — and an
+ * inherited value cannot outrank a presentation attribute while an author rule can. This is what
+ * lets the glyph follow the theme's icon weight like every icon beside it. */
+.numbat-type-icon {
+  stroke-width: var(--icon-stroke, 2);
+}
+
+/* And the green, which is the *type menu's* alone: green says "this type came from a plugin, not
+ * from Obsidian", which is worth saying while choosing a type and only noise once one is chosen.
+ * Better Properties draws the same line for its own types in blue. It is the theme's green, so it
+ * is whatever shade the reader's theme has chosen for one.
+ *
+ * `menu` is Obsidian's class, which the rest of this stylesheet is careful never to name — the
+ * surface a widget is on is decided in properties/host.ts, once, in TypeScript. There is no such
+ * choice to make here: Obsidian draws these icons itself, into DOM this plugin never sees and out
+ * of a name it was handed at registration, so which surface an icon is on is knowable only from
+ * what it is drawn inside. The failure is a soft one — should that class ever be renamed, the tell
+ * simply goes away and the icons draw like any other. */
+.menu .numbat-type-icon {
+  stroke: var(--color-green);
+}
+
 /* --- The same widgets in a Bases cell (see properties/host.ts) ------------- */
 
 /* A property row is a line of its own; a Base cell is a box in a grid. Everything above lays a

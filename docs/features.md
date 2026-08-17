@@ -373,7 +373,9 @@ Frontmatter properties can feed the note's Numbat scope, in two ways:
   like Obsidian's own types). A Numbat property holds an **expression as text** (`5 km + 3 mi`,
   `40 EUR / 1 h`, `2 * pi`), edited in a monospace input that shows a live, muted `= value` right
   next to it — or the error, or a `⟨Type⟩` placeholder while the expression is incomplete, exactly
-  like inline evaluation.
+  like inline evaluation. It sits in its alphabetical place in the type menu rather than after
+  Obsidian's own types, and in that menu its icon is green: that is how a type this plugin added is
+  told from one Obsidian came with.
 - **Plain Values:** A property without the Numbat type still binds the value it holds — a number
   (`hours: 3`) as a dimensionless scalar, text as a Numbat `String`, a date as a `DateTime`, a
   checkbox as a `Bool`. Each kind is its own toggle, since they differ in how much of a note's
@@ -790,7 +792,9 @@ own zone. A named zone follows daylight saving, so a date in January and one in 
 at the offset that zone actually had, rather than at one snapshot of it.
 
 The Symbat-provided **Zoned Date and Zoned Datetime** property types provide a fix to this. You can
-assign either from a property's type menu and doing so will allow its values to gain a zone.
+assign either from a property's type menu — both sit in their alphabetical place there, with the
+green icon that marks a type in that menu as one this plugin added — and doing so will allow its
+values to gain a zone.
 
 ```yaml
 due:  2026-07-27                                 # read in the default zone above

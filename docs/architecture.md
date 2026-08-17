@@ -98,7 +98,9 @@ one it had on a given date — `Intl` is a platform built-in, so this stays pure
 `scope/search.ts`, `syntax/identifier.ts`, `interpreter/markup.ts`, `interpreter/nullable.ts` (the
 injected nullable vocabulary and the two literals written with it),
 `interpreter/nullable-display.ts` (reading one back out of formatter output),
-`document/frontmatter.ts`, `views/fuzzy.ts`, `settings/defs.ts`.
+`properties/type-order.ts` (where this plugin's types sit in the type menu),
+`properties/icon-svg.ts` (the markup of its copies of Obsidian's icons), `document/frontmatter.ts`,
+`views/fuzzy.ts`, `settings/defs.ts`.
 
 The rule is not a convention that could quietly rot, but instead is **self-enforcing**. `test/unit/`
 runs under **plain Node** with no access to Obsidian, so a unit test can only load its module if
@@ -259,7 +261,7 @@ test, so it keeps the leaf helpers in `views/mobile-keyboard.ts` and none of the
 
 ## Things Obsidian Does not Officially Support
 
-Five features **reach past the public API**. They are defensive where they have to be, and each
+Six features **reach past the public API**. They are defensive where they have to be, and each
 carries a comment saying what it depends on:
 
 - **Syntax Highlighting Inside a Fence:** Obsidian exposes no way to bind a CodeMirror 6 language to
@@ -279,6 +281,23 @@ carries a comment saying what it depends on:
   built-in that drew none of its own would otherwise have a zone _label_ written back as the value's
   wall clock. All three registrations are removed on unload **only if the entry is still the one
   they installed**, so a plugin that wrapped one of ours keeps its wrapper.
+- **The Type Menu's Order and Its Icons:** Obsidian builds the property-type menu by iterating that
+  same registry, so its **key order is the menu's order** — and everything registered during
+  `onload` lands after everything Obsidian ships. `properties/registry.ts` rewrites that key order
+  in place (the same object, since Obsidian and every other plugin hold the reference), sorting
+  every entry by the name it shows under, which is what Better Properties does to the same record;
+  it re-sorts when the manager announces a change, deliberately never announces one itself (two
+  plugins sorting on each other's event would hand it back and forth forever), and restores the
+  order it found on unload. The types' icons are the plugin's own `addIcon` copies of Obsidian's
+  Lucide glyphs, scaled out of Lucide's 24-unit box into the 100-unit one `addIcon` wraps them in
+  and marked with a class of the plugin's, so `styles.css` can tint them green — the "not a built-in
+  type" tell. That tint applies **inside a menu only**, which is worth saying while a type is being
+  chosen and is noise once one has been: in a property row or a Bases cell the icon draws like any
+  other. Scoping it is also the one rule in the stylesheet that names a class of Obsidian's, because
+  Obsidian draws these icons itself, into DOM the plugin never sees — so unlike a widget of its own,
+  which is told which surface it is on in TypeScript, an icon can be told only by what it sits
+  inside. `addIcon` has no counterpart, so those three ids are the one thing here that outlives
+  unload; with the stylesheet gone they draw in the same colour as any other icon.
 - **No Monkey-Patching of Property Widgets:** An earlier version replaced the `datetime` registry
   entry outright, behind a setting, to add the same zone field to Obsidian's own widget. It was
   removed in favour of the `Zoned Datetime` type, which covers the same ground: a patch inherits

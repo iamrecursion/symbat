@@ -115,8 +115,10 @@ export function windowFor(el: HTMLElement): Window | null {
   return el.ownerDocument.defaultView;
 }
 
-/** The class a compact widget carries, and the only thing styles.css keys off. The stylesheet
- *  never names an Obsidian DOM class: everything it needs to know is decided here. */
+/** The class a compact widget carries, and the only thing styles.css keys off. The stylesheet never
+ *  names an Obsidian DOM class to style a widget of ours: everything it needs to know is decided
+ *  here. (The type-menu icon tint is the one rule that must, because the element it colors is one
+ *  Obsidian draws itself — see properties/icon-svg.ts.) */
 export const COMPACT_CLASS = "numbat-property-compact";
 
 /** The class a compact widget carries *while it holds a live editor* — the "clicked into" state.

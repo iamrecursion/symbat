@@ -52,8 +52,19 @@ import type { VimMode } from "./vim-mode";
  *  the `numbat-` prefix for that reason alone. */
 export const VIEW_TYPE_NUMBAT_FILE = "numbat-file";
 
-/** How long after the last edit the prelude banner re-checks the file. */
-const BANNER_DEBOUNCE_MS = 400;
+/**
+ * How long the prelude banner waits when the cause was not typing.
+ *
+ * Short, and deliberately not the configured delay: the reader is not mid-line, so there is no
+ * half-written state to avoid reporting and no jump to spare them. The two cases are a file
+ * arriving in the view, where nothing is on screen to disturb yet and a prelude file that will not
+ * load should say so as the reader arrives; and the prelude configuration moving underneath a file
+ * that has not itself changed, where the banner is answering a question the reader just asked
+ * somewhere else.
+ *
+ * The configured delay is about typing, which is the only time the banner's height is disruptive.
+ */
+const BANNER_PROMPT_DELAY_MS = 400;
 
 /**
  * Give `el` Obsidian's `icon`, falling back to the `text` glyph when there is no such icon.
@@ -232,7 +243,9 @@ export class NumbatFileView extends TextFileView {
       this.input.setDocument(data);
     }
 
-    this.scheduleBanner();
+    // A different file has just arrived and its banner is whatever the previous file left; report
+    // on the new one promptly. A same-file reload is an edit landing from elsewhere, and waits.
+    this.scheduleBanner(clear ? BANNER_PROMPT_DELAY_MS : undefined);
   }
 
   /** Empty the view, as Obsidian does before loading a different file. */
@@ -271,6 +284,12 @@ export class NumbatFileView extends TextFileView {
     this.input?.setInlayHoles(this.plugin.settings.inlayHints);
   }
 
+  /** Recompute this file's inlay hints because what they *mean* changed (e.g. a change to a prelude
+   * or the exchange rates) rather than because the file did. */
+  refreshInlays(): void {
+    this.input?.refreshInlays();
+  }
+
   /** Reflect Obsidian's own Vim setting, which this editor follows. */
   applyVim(): void {
     const on = this.plugin.vimModeEnabled();
@@ -298,9 +317,10 @@ export class NumbatFileView extends TextFileView {
     }
   }
 
-  /** Re-check the prelude banner (the prelude files, or their contents, changed). */
+  /** Re-check the prelude banner (the prelude files, or their contents, changed). Not typing, so
+   *  it reports promptly — see {@link BANNER_PROMPT_DELAY_MS}. */
   refreshBanner(): void {
-    this.scheduleBanner();
+    this.scheduleBanner(BANNER_PROMPT_DELAY_MS);
   }
 
   // THE EDITOR
@@ -614,14 +634,26 @@ export class NumbatFileView extends TextFileView {
     }
   }
 
-  /** Debounce the prelude check, restarting the wait on each call so a burst of typing costs one
-   *  pass. */
-  private scheduleBanner(): void {
+  /**
+   * Debounce the prelude check, restarting the wait on each call so a burst of typing costs one
+   * pass.
+   *
+   * Restarting is what makes one interval enough for what look like two decisions. The banner takes
+   * vertical space, so it must not appear while a half-written line is momentarily invalid but it
+   * must not flicker away and back either, and a wait that restarts does both. While the file is
+   * being typed nothing changes at all, and what is on screen when the typing stops is what the
+   * file says once it is still. Showing and hiding cannot be given different delays without
+   * evaluating more often than the banner changes, and each evaluation is a standard-library load.
+   *
+   * `delayMs` defaults to the configured one because typing is the case that matters; the callers
+   * that are not typing pass {@link BANNER_PROMPT_DELAY_MS} instead.
+   */
+  private scheduleBanner(delayMs = this.plugin.settings.preludeErrorDelaySeconds * 1000): void {
     this.clearBannerTimer();
     this.bannerTimer = window.setTimeout(() => {
       this.bannerTimer = null;
       void this.checkPrelude();
-    }, BANNER_DEBOUNCE_MS);
+    }, delayMs);
   }
 
   /**

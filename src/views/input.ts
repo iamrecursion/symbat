@@ -60,7 +60,7 @@ import {
   typeVariableCompletions,
 } from "../completion/expressions";
 import { buildDocPopupContent, DocPopup, renderCategoryTag, renderSignature } from "../completion/render";
-import { numbatDocumentInlays, numbatReplHoleHint } from "../evaluation/inlay";
+import { numbatDocumentInlays, numbatReplHoleHint, refreshNumbatInlays } from "../evaluation/inlay";
 import { type HoverOutcome, numbatHover } from "../hover/hover";
 import { type HoverSymbol, hoverSymbolAt } from "../hover/parse";
 import { listUnicodeCompletions, primeUnicodeCompletion } from "../interpreter/numbat";
@@ -1016,6 +1016,19 @@ export class NumbatInput {
     return this.documentMode
       ? numbatDocumentInlays(this.plugin, () => this.host.filePath?.() ?? null)
       : numbatReplHoleHint(this.plugin, (input) => this.host.holeType(input));
+  }
+
+  /**
+   * Nudge this editor's inlay hints to recompute, without rebuilding the extension.
+   *
+   * The document-mode plugin caches by text *and* interpreter generation, so this is what a prelude
+   * edit or a rate refresh needs: the key has moved, and this triggers another look. There's
+   * nothing for an expression-mode input to do as its hole hint is evaluated live on every build.
+   */
+  refreshInlays(): void {
+    if (this.documentMode) {
+      refreshNumbatInlays(this.view);
+    }
   }
 
   /** Toggle the inlay hints without rebuilding the editor. */

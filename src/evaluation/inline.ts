@@ -27,6 +27,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import { type Editor, type EditorPosition } from "obsidian";
+import { frontmatterBodyOf, scannedNote } from "../document/doc-cache";
 import { sourcePathOf } from "../document/editor-file";
 import { escapeHtmlStrict } from "../interpreter/markup";
 import {
@@ -42,7 +43,6 @@ import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
 import {
   EMPTY_PREAMBLE,
-  frontmatterBody,
   type NotePreamble,
   notePreamble,
   primeReservedNames,
@@ -63,7 +63,6 @@ import {
   MAX_DECIMAL_PLACES,
   noteSignature,
   type NoteUnit,
-  scanNote,
   spanAtColumn,
   spanDecimalPlaces,
 } from "./inline-parse";
@@ -482,12 +481,12 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
 
         const config = inlineConfig(plugin);
         const { doc } = view.state;
-        const units = scanNote(doc.iterLines(1, doc.lines + 1), config);
+        const units = scannedNote(doc, config);
         if (!units.some((unit) => unit.kind === "inline")) {
           return Decoration.none;
         }
 
-        const preamble = notePreamble(plugin, frontmatterBody(doc.iterLines(1, doc.lines + 1)), sourcePathOf(view));
+        const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
         const signature = noteSignature(interpreterGeneration(), preamble.source, units, config);
         const results = this.cache.get(signature);
         if (results === undefined) {
@@ -591,8 +590,8 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
 
         const config = inlineConfig(plugin);
         const { doc } = view.state;
-        const units = scanNote(doc.iterLines(1, doc.lines + 1), config);
-        const preamble = notePreamble(plugin, frontmatterBody(doc.iterLines(1, doc.lines + 1)), sourcePathOf(view));
+        const units = scannedNote(doc, config);
+        const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
         const results = this.cache.get(noteSignature(interpreterGeneration(), preamble.source, units, config));
         if (results === undefined) {
           return;
@@ -631,8 +630,8 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
         const { doc } = view.state;
         primeReservedNames(plugin.settings.fetchExchangeRates);
 
-        const units = scanNote(doc.iterLines(1, doc.lines + 1), config);
-        const preamble = notePreamble(plugin, frontmatterBody(doc.iterLines(1, doc.lines + 1)), sourcePathOf(view));
+        const units = scannedNote(doc, config);
+        const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
         const signature = noteSignature(interpreterGeneration(), preamble.source, units, config);
         if (this.cache.has(signature)) {
           return; // Raced with another pass; nothing to do.

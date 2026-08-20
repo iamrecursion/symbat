@@ -19,17 +19,13 @@ import {
   expressionCompletions,
 } from "../completion/expressions";
 import { holeForm, parseHoleType } from "../evaluation/inlay-parse";
-import { inlineResultFor } from "../evaluation/inline-parse";
 import { symbolCard } from "../hover/content";
 import type { HoverSymbol } from "../hover/parse";
 import {
   completionInfo,
   completionSignature,
-  createContext,
   ensureBlockCompletion,
-  ensureNumbatReady,
   expressionCompletionCandidates,
-  freeQuietly,
   interpret,
   isNumbatReady,
   structFields,
@@ -43,17 +39,14 @@ import { type DisplayMode, displayPlan, type PropertyDisplay } from "./display";
 import { deferFocusCheck } from "./focus-guard";
 import { ACTIVE_CLASS, COMPACT_CLASS, resolveHost, windowFor } from "./host";
 import {
-  bindingKey,
-  type NotePreamble,
   NUMBAT_PROPERTY_TYPE,
   preambleForFile,
   primeReservedNames,
   propertyTypeManager,
   type PropertyWidgetContext,
-  replayScopeAbove,
   scopeChunksAbove,
 } from "./note";
-import { isBareZero } from "./parse";
+import { evaluateLiveOutcome, outcomeEpoch, requestNoteOutcomes, resolveOutcome } from "./note-outcomes";
 import { tintedIcon } from "./registry";
 
 // REGISTERING THE TYPE
@@ -142,6 +135,10 @@ interface LiveEditor {
    *  in the render closure so the sweep can reach it: a timer left to fire after unload rebuilds —
    *  and re-*initialises* — the wasm module that `onunload` has just released. */
   cancelPending: () => void;
+
+  /** Start the row's evaluation over: disown whatever is in flight and schedule a fresh round. What
+   *  {@link refreshPropertyEditors} reaches every row through. */
+  refresh: () => void;
 }
 
 // Every property editor currently alive. Module-level because Obsidian gives the widget no teardown
@@ -219,18 +216,40 @@ function renderWidget(
   let outcome: PropertyDisplay = { kind: "empty" };
 
   let timer: number | null = null;
+
+  // Stops waiting on the note's batch, where this row is waiting on one. Held because the batch
+  // outlives the row: a swept editor that stays in the waiter set is a callback into a DOM that is
+  // gone (properties/outcome-cache.ts).
+  let unwait: (() => void) | null = null;
+
   let generation = 0;
   const cancelPending = () => {
     if (timer !== null) {
       window.clearTimeout(timer);
       timer = null;
     }
+
+    unwait?.();
+    unwait = null;
+
     // Also disowns any evaluation already in flight: `pass === generation` can no longer hold, so a
     // resolved outcome is dropped rather than written.
     generation += 1;
   };
 
-  const entry: LiveEditor = { el, input: null, attached: el.isConnected, cancelPending };
+  const entry: LiveEditor = {
+    el,
+    input: null,
+    attached: el.isConnected,
+    cancelPending,
+    // Through `cancelPending` rather than straight to the debounce: a refresh means something the
+    // row cannot see has moved, so a round already in flight is answering the old question and is
+    // disowned rather than raced.
+    refresh: () => {
+      cancelPending();
+      scheduleEvaluate();
+    },
+  };
   liveEditors.add(entry);
 
   // With no editor beside it the result *is* the cell's content, so it shows the bare value rather
@@ -240,16 +259,83 @@ function renderWidget(
     showOutcome(resultEl, outcome, { bare: entry.input === null, fallback: text });
   };
 
+  /**
+   * Learn this row's outcome, by whichever path can produce it (properties/note-outcomes.ts).
+   *
+   * The mode is resolved *here* rather than when the evaluation was scheduled, because the debounce
+   * is exactly the window in which it changes: a keystroke puts the row on the live path, and the
+   * commit that follows puts it back on the note's.
+   */
   const evaluate = () => {
+    // Any earlier round is superseded, including one still waiting on a batch: two waiters for one
+    // row would both fire, and the second's cancel would be the only one this closure still held.
+    unwait?.();
+    unwait = null;
+
     const pass = ++generation;
-    void propertyOutcome(plugin, ctx, text).then((next) => {
+    const apply = (next: PropertyDisplay | null) => {
       // Stale passes and torn-down rows (the metadata editor re-renders liberally) must not write
-      // into the DOM.
-      if (pass === generation && resultEl.isConnected) {
-        outcome = next;
-        paint();
+      // into the DOM, and a path that learned nothing leaves the row showing what it had.
+      if (next === null || pass !== generation || !resultEl.isConnected) {
+        return;
       }
-    });
+
+      outcome = next;
+      paint();
+    };
+
+    // Resolved again rather than trusted from the render: the note may have been evaluated by
+    // another row's batch while this row's debounce was running, in which case there is nothing
+    // left to ask for.
+    const resolved = resolveOutcome(plugin, ctx, text);
+    if (resolved.mode === "none" || resolved.fresh) {
+      apply(resolved.display);
+      return;
+    }
+
+    // The note's committed value: one pass answers this row and every other row of the note, so
+    // this waits on that pass rather than starting an evaluation of its own.
+    if (resolved.mode === "note") {
+      const asked = preambleForFile(plugin, ctx.sourcePath ?? "");
+      const askedEpoch = outcomeEpoch();
+      unwait = requestNoteOutcomes(plugin, asked, () => {
+        if (pass === generation) {
+          unwait = null;
+        }
+
+        apply(resolveOutcome(plugin, ctx, text).display);
+        if (pass !== generation) {
+          return;
+        }
+
+        // A pass answers one scope, out of one set of caches. Two things leave what finished not an
+        // answer to what is being asked, and neither comes back around on its own:
+        //
+        //   - **The note moved.** A property *above* this row was edited, which changes this row's
+        //     key without re-rendering this row.
+        //   - **The caches were emptied while the pass was booting** (e.g. a new prelude, refetched
+        //     exchange rates) so it abandoned itself rather than file answers about a world that
+        //     had moved. That is not rare: the first batch of a session is usually the caller that
+        //     triggers the initial rate load, and so is usually the one it happens to.
+        //
+        // {@link refreshPropertyEditors} normally reaches the second case first, since the same
+        // call that empties the caches sweeps these rows. This is the local guarantee, so that a
+        // row waiting on a pass never depends on someone else having noticed.
+        //
+        // Gated on one of the two having happened rather than on the answer being unsatisfying: a
+        // pass that simply *failed* must not turn into a retry every debounce for the rest of the
+        // session. Both of these are events, so both stop.
+        if (
+          preambleForFile(plugin, ctx.sourcePath ?? "").source !== asked.source
+          || outcomeEpoch() !== askedEpoch
+        ) {
+          scheduleEvaluate();
+        }
+      });
+      return;
+    }
+
+    void evaluateLiveOutcome(plugin, ctx, text).then(apply);
   };
 
   const scheduleEvaluate = () => {
@@ -396,26 +482,25 @@ function renderWidget(
 
   // A value already evaluated in this scope paints immediately rather than after the debounce, so a
   // Base column that has been scrolled past once does not go back to raw expressions every time it
-  // scrolls back into view.
-  const cached = cachedOutcome(plugin, ctx, text);
-  if (cached !== null) {
-    outcome = cached.outcome;
+  // scrolls back into view. A property the frontmatter alone can answer (a reserved name, a
+  // warned-about zero) is answered here too, rather than after awaiting an interpreter to be told
+  // what the derivation already knew.
+  const resolved = resolveOutcome(plugin, ctx, text);
+  if (resolved.display !== null) {
+    outcome = resolved.display;
   }
 
   paint();
 
   // Debounced rather than immediate. Obsidian re-renders a whole object's rows in one pass and does
-  // so liberally, and `propertyOutcome` builds a fresh interpreter context — the entire standard
-  // library, synchronously. A note with four Numbat properties would otherwise pay for four of
-  // those on the main thread every time the frontmatter changed; coalescing collapses the pass into
-  // one round of work per row.
+  // so liberally, so this collapses the pass into one round of work per row and the note batch
+  // behind it then collapses those rounds into one evaluation for the whole note.
   //
-  // Skipped outright on a *recent* hit: the key covers everything the evaluation would read except
-  // the clock, so within {@link OUTCOME_FRESH_MS} re-running it could only reproduce the value
-  // already painted above. That is what keeps a scrolled Base column from paying an interpreter
-  // context per row per pass; an older hit is painted but re-evaluated, so nothing reading the
-  // clock stays still.
-  if (cached === null || !cached.fresh) {
+  // Skipped outright on a *fresh* hit: the key covers everything the evaluation would read except
+  // the clock, so within `OUTCOME_FRESH_MS` re-running it could only reproduce the value already
+  // painted above. That is what keeps a scrolled Base column from evaluating at all; an older hit
+  // is painted but re-evaluated, so nothing reading the clock stays still.
+  if (!resolved.fresh) {
     scheduleEvaluate();
   }
 
@@ -425,6 +510,32 @@ function renderWidget(
 /** Release every property editor (plugin unload). */
 export function disposePropertyEditors(): void {
   sweepEditors(true);
+}
+
+/**
+ * Ask every property row on screen to evaluate again.
+ *
+ * The counterpart to `nudgeOpenEditors` for the one surface it cannot reach. Obsidian owns these
+ * rows and offers no way to re-render one, so a change that no cache key can see (a new prelude,
+ * refetched rates, the reset command) reaches every CodeMirror surface and none of these. The row
+ * goes on painting the outcome held in its render closure, which is the answer to a question nobody
+ * is asking any more; and if it happened to be waiting on a property batch when the caches were
+ * emptied, it is waiting on a pass that will abandon itself and tell it nothing.
+ *
+ * Cheap in the ordinary case, and cheap *because* the keys are honest: a row that asks again
+ * re-reads the cache first, so all this costs for a property whose answer did not move is a map
+ * lookup. That is what lets it be called from the narrow invalidation (`refreshPropertyTypes`) as
+ * well as the wide one.
+ *
+ * Rows that have left the document are swept rather than refreshed, so this cannot resurrect work
+ * for a row Obsidian has discarded.
+ */
+export function refreshPropertyEditors(): void {
+  sweepEditors();
+
+  for (const entry of [...liveEditors]) {
+    entry.refresh();
+  }
 }
 
 // COMPLETION
@@ -509,225 +620,6 @@ function propertyCompletions(plugin: SymbatPlugin, ctx: PropertyWidgetContext): 
       return hole === null ? null : parseHoleType(interpret(scope.context, hole).output);
     },
   };
-}
-
-// EVALUATING THE VALUE
-// ================================================================================================
-
-/**
- * What the note's frontmatter says about a property, without the interpreter: the scope its value
- * evaluates in, and any problem to report instead of evaluating.
- *
- * Split out because every part of it is derivable synchronously and cheaply, which is what makes
- * {@link outcomeKey} — and so the outcome cache — possible: two renders that agree on all of this
- * and on the text cannot disagree on the outcome.
- */
-interface PropertyScope {
-  /** The bindings replayed before the value: the note's imports, then the properties written
-   *  *above* this one (never those below, and never the note's shared blocks). */
-  chunks: string[];
-
-  /** A key-level skip (a reserved or unusable name, a duplicate) — reported as the same error the
-   *  binding side skips it with, in place of any evaluation. */
-  skip: string | null;
-
-  /** A derivation advisory attached to this binding (today: a bare `0` read as a `Scalar`). */
-  warning: string | null;
-}
-
-/** {@link PropertyScope} for one widget context. Pure frontmatter reading — no wasm, no awaits. */
-function propertyScope(preamble: NotePreamble, key: string): PropertyScope {
-  // Key-level skips are stable while typing the value; value-shaped ones (empty / unsupported) are
-  // judged from the live text instead. An array item is shown its array's skip (`rates.#` reads
-  // `rates`'s) unless the item's own position has one of its own, since the item is only bound
-  // through the list.
-  const owner = bindingKey(key);
-  const keyLevel = preamble.skips.filter(
-    (entry) => entry.reason === "reserved" || entry.reason === "invalid-name" || entry.reason === "duplicate",
-  );
-
-  // The item's own position first, so the more specific message wins wherever both exist.
-  const skip = keyLevel.find((entry) => entry.key === key) ?? keyLevel.find((entry) => entry.key === owner);
-
-  return {
-    chunks: scopeChunksAbove(preamble, key),
-    skip: skip?.message ?? null,
-    warning: preamble.bindings.find((entry) => entry.key === key)?.warning ?? null,
-  };
-}
-
-/**
- * Evaluate the widget's current expression text in its note's property scope: the bindings of the
- * properties *above* this one replay first (never those below, and never the note's shared blocks —
- * the preamble evaluates before them). A key-level problem (a reserved or unusable name, a
- * duplicate) shows as the same error the binding side skips it with.
- */
-async function propertyOutcome(
-  plugin: SymbatPlugin,
-  ctx: PropertyWidgetContext,
-  text: string,
-): Promise<PropertyDisplay> {
-  if (!plugin.settings.noteProperties || text.trim() === "") {
-    return { kind: "empty" };
-  }
-
-  try {
-    await ensureNumbatReady();
-    await plugin.ensureExchangeRates();
-    await plugin.ensurePrelude();
-  } catch (error) {
-    console.error("Symbat: the property widget could not initialize the interpreter", error);
-    return { kind: "empty" };
-  }
-
-  if (!isNumbatReady()) {
-    return { kind: "empty" };
-  }
-
-  primeReservedNames(plugin.settings.fetchExchangeRates);
-
-  const key = ctx.key ?? "";
-  const preamble = preambleForFile(plugin, ctx.sourcePath ?? "");
-  const scope = propertyScope(preamble, key);
-  const remember = (outcome: PropertyDisplay): PropertyDisplay => {
-    rememberOutcome(outcomeKey(plugin, key, scope, text), outcome);
-    return outcome;
-  };
-
-  if (scope.skip !== null) {
-    return remember({ kind: "error", text: scope.skip });
-  }
-
-  // A derivation advisory is shown only while the live text is still the value it was raised about
-  // — it is value-shaped, so it is judged from the text like the other value-shaped outcomes rather
-  // than from the binding, which is a keystroke behind.
-  if (scope.warning !== null && isBareZero(text)) {
-    return remember({ kind: "warning", text: scope.warning });
-  }
-
-  const context = createContext(plugin.settings.fetchExchangeRates);
-  try {
-    // Imports, then only the properties written above this one.
-    replayScopeAbove(context, preamble, key);
-
-    const result = inlineResultFor((code) => interpret(context, code), text);
-    if (result.kind === "error") {
-      return remember({ kind: "error", text: result.errorText ?? "evaluation failed" });
-    }
-    if (result.kind === "hole" && result.holeType !== null) {
-      return remember({ kind: "hole", type: result.holeType });
-    }
-    if ((result.kind === "value" || result.kind === "binding") && result.resultHtml !== null) {
-      return remember({
-        kind: result.kind,
-        resultHtml: result.resultHtml,
-        valueHtml: result.valueHtml ?? result.resultHtml,
-      });
-    }
-
-    return remember({ kind: "empty" });
-  } finally {
-    freeQuietly(context);
-  }
-}
-
-// THE OUTCOME CACHE
-// ================================================================================================
-
-/**
- * Evaluated outcomes, by everything they depend on.
- *
- * An evaluation costs a fresh interpreter context — the entire standard library, synchronously, and
- * a Numbat column in a Base pays one per visible row. Rows are re-rendered from scratch as they
- * scroll back into view, so without this the same handful of values would be recomputed for as long
- * as the reader kept scrolling, and each row would show its raw expression until its debounce
- * elapsed.
- *
- * **Entries carry their age**, because a key built from the frontmatter cannot see the one input
- * that is not in it: the clock. A property that says `now()` would freeze at whatever it read when
- * the reader first scrolled past it, and no invalidation hook could catch that, because nothing
- * *happened*. So a hit is used two different ways — see {@link OUTCOME_FRESH_MS}.
- *
- * Bounded, and cleared wholesale on overflow rather than evicted one at a time (the same policy
- * properties/zone.ts's zone caches use): the cost of a miss is one evaluation, so a cheap
- * approximation of recency is worth more than an accurate one.
- */
-const outcomes = new Map<string, { outcome: PropertyDisplay; at: number; }>();
-
-/** How many outcomes are kept. A screenful of Base rows and then some. */
-const OUTCOME_CACHE_LIMIT = 256;
-
-/**
- * How long an outcome stands in for the evaluation that produced it.
- *
- * Inside it, a hit is the whole answer and {@link renderWidget} schedules no evaluation at all —
- * which is what makes scrolling back and forth over the same rows free rather than merely
- * flicker-free. Outside it, the hit is still painted (it is the best thing to show, and far better
- * than a raw expression) but the evaluation runs anyway, so anything reading the clock moves again.
- *
- * Ten seconds is chosen against the gesture, not the value: it comfortably covers scrolling a
- * column and coming back, and it is short enough that a `now()` property in a Base reads as live.
- */
-const OUTCOME_FRESH_MS = 10_000;
-
-/**
- * The identity of an evaluation: the settings that change what an expression means, the property's
- * own key and its key-level problems, the scope replayed before it, and the text itself. Everything
- * here is read from the frontmatter, so the key costs no interpreter work — which is the point,
- * since it is computed to *avoid* interpreter work.
- *
- * `noteProperties` is deliberately absent even though it changes everything: both sides return
- * before they reach this while it is off, so no key built here can ever describe a world without
- * it. The rest of the invalidation is not this key's job either — a moved prelude or a refetched
- * exchange rate goes through `refreshNoteScope`, which empties the map wholesale.
- */
-function outcomeKey(plugin: SymbatPlugin, key: string, scope: PropertyScope, text: string): string {
-  return [
-    plugin.settings.fetchExchangeRates ? "1" : "0",
-    key,
-    scope.skip ?? "",
-    scope.warning ?? "",
-    ...scope.chunks,
-    text,
-  ].join("\0");
-}
-
-/** Record an outcome, stamped with when it was true. Called on the way out of every evaluation,
- *  including for a row whose element has since gone: the value is still true, and the next render
- *  of that row wants it. */
-function rememberOutcome(key: string, outcome: PropertyDisplay): void {
-  if (outcomes.size >= OUTCOME_CACHE_LIMIT) {
-    outcomes.clear();
-  }
-
-  outcomes.set(key, { outcome, at: performance.now() });
-}
-
-/** A cache hit: what to paint, and whether it is recent enough to be the whole answer. */
-interface CachedOutcome {
-  outcome: PropertyDisplay;
-
-  /** Whether the caller may skip evaluating. See {@link OUTCOME_FRESH_MS}. */
-  fresh: boolean;
-}
-
-/** The outcome already known for this text in this scope, or `null`. Synchronous and wasm-free, so
- *  a re-rendered row can paint its value in the same tick it is built. */
-function cachedOutcome(plugin: SymbatPlugin, ctx: PropertyWidgetContext, text: string): CachedOutcome | null {
-  if (!plugin.settings.noteProperties || text.trim() === "") {
-    return null;
-  }
-
-  const key = ctx.key ?? "";
-  const scope = propertyScope(preambleForFile(plugin, ctx.sourcePath ?? ""), key);
-  const hit = outcomes.get(outcomeKey(plugin, key, scope, text));
-  return hit === undefined ? null : { outcome: hit.outcome, fresh: performance.now() - hit.at <= OUTCOME_FRESH_MS };
-}
-
-/** Forget every cached outcome — the prelude, the note scope or the settings moved under them, and
- *  on unload. */
-export function clearPropertyOutcomes(): void {
-  outcomes.clear();
 }
 
 // SHOWING AN OUTCOME

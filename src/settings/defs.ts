@@ -200,6 +200,10 @@ export interface SymbatSettings {
   /** Maximum number of visible lines kept in the REPL output log. */
   replMaxLines: number;
 
+  /** Seconds of stillness before the `.nbt` prelude banner re-checks the file and appears or
+   *  disappears (0 checks as soon as the edit lands). */
+  preludeErrorDelaySeconds: number;
+
   /** Seconds of completion inactivity before the cached interpreters are freed (0 keeps them
    *  loaded). */
   completionIdleSeconds: number;
@@ -263,6 +267,7 @@ export const DEFAULT_SETTINGS: SymbatSettings = {
   replInputFontSize: DEFAULT_REPL_FONT_SIZE,
   replHistoryLimit: 100,
   replMaxLines: 200,
+  preludeErrorDelaySeconds: 2,
   completionIdleSeconds: 60,
   notePropertyDefaultZone: "",
 };
@@ -631,6 +636,14 @@ export const SETTING_BLOCKS: readonly SettingBlock[] = [
           + "`Esc` and then `Tab`.",
         control: { type: "number", key: "nbtIndentWidth", min: MIN_INDENT_WIDTH, max: MAX_INDENT_WIDTH },
         effects: ["refreshIndentWidth"],
+      },
+      {
+        name: "Prelude error delay (seconds)",
+        desc: "How long a prelude `.nbt` file must sit still before the banner above it reports — or stops "
+          + "reporting — that it will not load. The banner takes vertical space, so a shorter delay makes the "
+          + "file jump about while you type through a half-written line. Set to 0 to report as soon as you pause.",
+        visibleWhen: "customPrelude",
+        control: { type: "number", key: "preludeErrorDelaySeconds", min: 0 },
       },
       {
         name: "Vim mode",

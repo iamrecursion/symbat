@@ -92,6 +92,8 @@ const EXPECTED_EFFECTS: Record<string, readonly SettingEffect[]> = {
   replHistoryLimit: [],
   replMaxLines: [],
 
+  // Read when the banner is next scheduled, which the next keystroke does.
+  preludeErrorDelaySeconds: [],
   completionIdleSeconds: [],
 };
 
@@ -212,6 +214,9 @@ const EXPECTED_MINIMUMS: Record<string, number> = {
   nbtIndentWidth: 1,
   replHistoryLimit: 1,
   replMaxLines: 1,
+  // Zero is a real choice here rather than a degenerate one: it means "report as soon as I pause",
+  // which is what the banner did before it was configurable.
+  preludeErrorDelaySeconds: 0,
   completionIdleSeconds: 0,
 };
 

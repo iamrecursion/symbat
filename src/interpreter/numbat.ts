@@ -17,7 +17,7 @@ import { type PreludePart, preludeSourceBefore } from "../settings/util";
 import { forgetSemanticNames, recordSemanticNames } from "../syntax/type-names";
 import { buildUnicodeCodeList, codesMatching, type UnicodeCode, unicodePrefixAt } from "../unicode/codes";
 import init, { __numbat_reset, FormatType, Numbat, setup_panic_hook } from "../wasm/pkg/numbat_wasm.js";
-import wasmBinary from "../wasm/pkg/numbat_wasm_bg.wasm";
+import wasmBase64 from "../wasm/pkg/numbat_wasm_bg.wasm";
 import { escapeHtml } from "./markup";
 import { NULLABLE_PRELUDE } from "./nullable";
 import { readableNullables } from "./nullable-display";
@@ -109,6 +109,21 @@ export function interpreterGeneration(): number {
 }
 
 /**
+ * Declare that every cached evaluation is out of date, whether or not anything actually changed.
+ *
+ * Deliberately a *claim* rather than an observation, and the only caller is the reset command.
+ * Every surface that caches an evaluation folds {@link interpreterGeneration} into its key, so
+ * moving it is the one action that reaches all of them at once — including the per-view caches this
+ * module has no reference to and could not empty if it wanted to.
+ *
+ * Nothing is freed here: the entries are not deleted, they simply stop being found, and are evicted
+ * in the ordinary way as new ones arrive.
+ */
+export function invalidateCachedEvaluations(): void {
+  generation += 1;
+}
+
+/**
  * A stamp for the interpreter contexts this module hands out ({@link ensureExpressionContext},
  * {@link ensureBlockCompletion}). It moves whenever they are freed — the idle release, a prelude
  * change, a wasm restart.
@@ -164,13 +179,31 @@ export function ensureNumbatReady(): Promise<void> {
 
   if (!readyPromise) {
     readyPromise = (async () => {
-      await init({ module_or_path: wasmBinary });
+      await init({ module_or_path: wasmBytes() });
       setup_panic_hook();
       wasmReady = true;
     })();
   }
 
   return readyPromise;
+}
+
+/**
+ * Decode the inlined module (see `src/wasm.d.ts`) into the bytes `init` instantiates from.
+ *
+ * Deliberately not memoized, and deliberately called only from inside {@link ensureNumbatReady}'s
+ * promise. `WebAssembly.instantiate` copies what it needs, so holding the 1.9 MB array afterwards
+ * would keep a compiled-and-discarded buffer alive for the session to save a decode that happens at
+ * most twice (at first use and if a panic forces a reinit).
+ */
+function wasmBytes(): Uint8Array {
+  const binary = atob(wasmBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return bytes;
 }
 
 /**
@@ -467,10 +500,6 @@ export function createContext(applyRates: boolean, options: { preludeBefore?: st
   return context;
 }
 
-/**
- * Interpret a snippet, returning plain data and freeing the wasm result. A wasm panic is caught,
- * returned as an error result, and schedules a restart.
- */
 /** The struct types a nested frontmatter property generates (properties/parse.ts's
  *  `_Nb_<Label>_<hash>_<generation>_<index>`). Numbat prints the type name in front of every struct
  *  value, so `costs` would otherwise show as `_Nb_CostsStruct_1uy683r_4_1 { materials: 500 € }`. */

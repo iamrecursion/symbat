@@ -16,6 +16,7 @@ import {
   resultValueHtml,
   splitInterpretOutput,
   stripLineComment,
+  wholeScopeKey,
 } from "../../../src/evaluation/inlay-parse.ts";
 
 // HTML shapes below are copied from Numbat's real HtmlFormatter output (see the integration probe /
@@ -551,4 +552,21 @@ test("blockKey cannot confuse a body with the preamble", () => {
   const a = block(0, false, "b");
   const b = block(0, false, "");
   assert.notEqual(blockKey(1, "a", a, [a]), blockKey(1, "ab", b, [b]));
+});
+
+// --- wholeScopeKey ------------------------------------------------------------
+
+test("wholeScopeKey covers the generation as well as the source", () => {
+  // Why it exists: the frontmatter-hint cache and the `.nbt` document cache were keyed on their
+  // source alone, and were refreshed only because `refreshNoteScope` destroyed the view plugin
+  // holding them. Nothing invalidates by destruction any more, so a prelude edit — which changes
+  // what a file means without changing a character of it — has to move the key.
+  const base = wholeScopeKey(1, "let p = 1");
+  assert.notEqual(base, wholeScopeKey(2, "let p = 1"), "a prelude or rate change");
+  assert.notEqual(base, wholeScopeKey(1, "let p = 2"), "an edit");
+  assert.equal(base, wholeScopeKey(1, "let p = 1"), "and is stable");
+});
+
+test("wholeScopeKey cannot confuse the generation with the source", () => {
+  assert.notEqual(wholeScopeKey(1, "1source"), wholeScopeKey(11, "source"));
 });

@@ -20,8 +20,17 @@ import { plainText } from "../../../src/evaluation/inlay-parse.ts";
 import { inlineResultFor } from "../../../src/evaluation/inline-parse.ts";
 import { readableNullables } from "../../../src/interpreter/nullable-display.ts";
 import { NULLABLE_NAMES, NULLABLE_STRUCT } from "../../../src/interpreter/nullable.ts";
-import { frontmatterHints } from "../../../src/properties/frontmatter-inlay.ts";
-import { derivePreamble, type NotePreamble, PLAIN_ALL } from "../../../src/properties/parse.ts";
+import type { PropertyDisplay } from "../../../src/properties/display.ts";
+import { frontmatterHints, hintFromOutcome } from "../../../src/properties/frontmatter-inlay.ts";
+import {
+  clearPropertyOutcomes,
+  firstStale,
+  knownOutcomes,
+  outcomeKeys,
+  rememberNoteOutcome,
+} from "../../../src/properties/outcome-cache.ts";
+import { type BindingOutcome, displayFromOutcome, evaluateBindings } from "../../../src/properties/outcomes.ts";
+import { derivePreamble, type NotePreamble, PLAIN_ALL, type PropertyBinding } from "../../../src/properties/parse.ts";
 import { loadNumbat, newContext, skip } from "../wasm-pkg.ts";
 
 // The LineInterpret shape over a live wasm context.
@@ -1067,6 +1076,243 @@ test("a zero field of an object inside a list: its siblings still read", { skip 
     assert.equal(inlineResultFor(run, "head(crew).name").plain, "\"a\"");
     assert.equal(inlineResultFor(run, "head(crew).score").plain, "0");
     assert.equal(frontmatterHints(run, preamble).some((hint) => hint.kind === "error"), false);
+  } finally {
+    nb.free();
+  }
+});
+
+// THE BATCHED PATH IS THE OLD PATH
+// ================================================================================================
+//
+// The property widget used to evaluate one property at a time, each in a *fresh* interpreter
+// context that replayed the properties above it — N stdlib loads and O(N²) replayed chunks for a
+// note with N properties. The batched path evaluates the whole note in one accumulating context
+// instead. These two tests are what licenses that: they assert the answers are the same ones, over
+// a note holding every shape that could plausibly make them differ.
+//
+// What is *not* claimed here is that the widget's live text always reaches its binding. A grounded
+// zero evaluates as the rewritten expression while the reader still sees `0`, so a batched outcome
+// is only the widget's answer while the two agree — which is why the outcome cache keys on the
+// committed text and treats a disagreement as a miss rather than as a hit.
+
+/** properties/note.ts's scopeChunksAbove: the imports, then the bindings written above `key`. */
+function scopeAbove(preamble: NotePreamble, key: string): string[] {
+  const chunks = [...(preamble.imports ?? [])];
+  for (const entry of preamble.bindings) {
+    if (entry.key === key) {
+      break;
+    }
+    chunks.push(...entry.defs, entry.code);
+  }
+  return chunks;
+}
+
+// properties/type.ts's propertyOutcome, from `createContext` down: a context of its own, the scope
+// above replayed into it, the expression evaluated, and the result read as a display. Kept as a
+// transcription rather than an import because it is the thing being replaced — if it drifts to
+// match the new path, the test stops testing anything.
+function perPropertyDisplay(mod: any, preamble: NotePreamble, binding: PropertyBinding): PropertyDisplay {
+  const nb = newContext(mod);
+  try {
+    const run = runnerFor(nb);
+    for (const chunk of scopeAbove(preamble, binding.key)) {
+      nb.interpret(chunk).free();
+    }
+
+    const result = inlineResultFor(run, binding.expr);
+    if (result.kind === "error") {
+      return { kind: "error", text: result.errorText ?? "evaluation failed" };
+    }
+    if (result.kind === "hole" && result.holeType !== null) {
+      return { kind: "hole", type: result.holeType };
+    }
+    if ((result.kind === "value" || result.kind === "binding") && result.resultHtml !== null) {
+      return { kind: result.kind, resultHtml: result.resultHtml, valueHtml: result.valueHtml ?? result.resultHtml };
+    }
+    return { kind: "empty" };
+  } finally {
+    nb.free();
+  }
+}
+
+// Every shape that could make a batched pass differ from a per-property one: a reserved name that
+// contributes no binding at all (so the scope shifts under everything below it), a nested object
+// whose leaf reads its own sibling, a list, a grounded zero, a chain, an error and a typed hole.
+const equivalenceNote = (): NotePreamble =>
+  derivePreamble(
+    {
+      m: 5, // a prelude unit: skipped, and the properties below must not notice
+      weight: 80.5,
+      costs: { materials: 20, total: "costs.materials * 1.2" },
+      rates: [5, 3],
+      zero: 0,
+      doubled: "weight * 2",
+      incomplete: "3 m +",
+      bad: "abs(-5",
+    },
+    {
+      isNumbatTyped: (key) =>
+        key === "m" || key === "costs.total" || key === "zero" || key === "doubled"
+        || key === "incomplete" || key === "bad",
+      isReserved: (name) => name === "m",
+      assignedType: () => null,
+      plain: PLAIN_ALL,
+      plainNested: PLAIN_ALL,
+    },
+  );
+
+test("batched evaluation answers exactly what one-context-per-property answered", { skip }, async () => {
+  const mod = await loadNumbat();
+  const preamble = equivalenceNote();
+  assert.equal(preamble.skips.some((entry) => entry.key === "m"), true, "the fixture's skip is real");
+
+  const nb = newContext(mod);
+  let batched: BindingOutcome[] = [];
+  try {
+    batched = evaluateBindings(runnerFor(nb), preamble);
+  } finally {
+    nb.free();
+  }
+
+  assert.equal(batched.length, preamble.bindings.length, "one outcome per binding, none dropped");
+
+  for (const [index, binding] of preamble.bindings.entries()) {
+    const outcome = batched[index];
+    assert.equal(outcome.key, binding.key);
+    assert.deepEqual(
+      displayFromOutcome(outcome),
+      perPropertyDisplay(mod, preamble, binding),
+      `the two paths disagree about '${binding.key}'`,
+    );
+  }
+
+  // And the fixture actually exercised the interesting outcomes rather than a column of empties.
+  const kinds = new Map(batched.map((entry) => [entry.key, displayFromOutcome(entry).kind]));
+  assert.equal(kinds.get("costs.total"), "value", "the nested leaf read its sibling");
+  assert.equal(kinds.get("doubled"), "value", "the chain saw the property above it");
+  assert.equal(kinds.get("incomplete"), "hole");
+  assert.equal(kinds.get("bad"), "error");
+});
+
+test("a suffix pass answers what the same properties answered in a full pass", { skip }, async () => {
+  const mod = await loadNumbat();
+  const preamble = equivalenceNote();
+  const from = preamble.bindings.length - 3;
+
+  const full = newContext(mod);
+  let whole: BindingOutcome[] = [];
+  try {
+    whole = evaluateBindings(runnerFor(full), preamble);
+  } finally {
+    full.free();
+  }
+
+  const partial = newContext(mod);
+  let suffix: BindingOutcome[] = [];
+  try {
+    suffix = evaluateBindings(runnerFor(partial), preamble, from);
+  } finally {
+    partial.free();
+  }
+
+  // The properties above `from` still replayed — that is what the ones below them see — so their
+  // values are unchanged; only the work of *probing* them was skipped.
+  assert.deepEqual(suffix, whole.slice(from));
+  assert.equal(suffix.length, 3);
+});
+
+// Step 7's equivalence: the Source-mode frontmatter inlays no longer evaluate anything. They read
+// the outcomes the property batch filed and project them, so what they show has to be exactly what
+// evaluating the note would have shown — and the whole point of storing the outcome rather than a
+// projection of it is that both readers can take their own view of the same entry.
+test("frontmatter hints read from the cache are the hints a fresh evaluation produces", { skip }, async () => {
+  const mod = await loadNumbat();
+  const preamble = equivalenceNote();
+  clearPropertyOutcomes();
+
+  const fresh = newContext(mod);
+  let expected;
+  try {
+    expected = frontmatterHints(runnerFor(fresh), preamble);
+  } finally {
+    fresh.free();
+  }
+
+  // What the batch does: one context, one pass, one entry per binding under the shared key.
+  const keys = outcomeKeys(true, preamble);
+  const batch = newContext(mod);
+  try {
+    for (const [index, outcome] of evaluateBindings(runnerFor(batch), preamble).entries()) {
+      rememberNoteOutcome(keys[index], preamble.bindings[index].expr, outcome);
+    }
+  } finally {
+    batch.free();
+  }
+
+  const served = knownOutcomes(keys, preamble.bindings);
+  assert.notEqual(served, null, "every binding of the note is answered");
+  assert.deepEqual((served ?? []).map(hintFromOutcome).filter((hint) => hint !== null), expected);
+  assert.equal(expected.length > 0, true, "the fixture produces hints to compare");
+  assert.equal(firstStale(keys, preamble.bindings), null, "and freshly written entries are fresh");
+});
+
+// The half that makes an edit cheap: a pass that refilled only the properties from `from` down
+// leaves the ones above it exactly as they were, and the inlays still read the whole note.
+test("a suffix refill leaves the hints above it untouched", { skip }, async () => {
+  const mod = await loadNumbat();
+  const preamble = equivalenceNote();
+  const keys = outcomeKeys(true, preamble);
+  const from = preamble.bindings.length - 3;
+  clearPropertyOutcomes();
+
+  const first = newContext(mod);
+  let expected;
+  try {
+    const outcomes = evaluateBindings(runnerFor(first), preamble);
+    for (const [index, outcome] of outcomes.entries()) {
+      rememberNoteOutcome(keys[index], preamble.bindings[index].expr, outcome);
+    }
+    expected = outcomes.map(hintFromOutcome).filter((hint) => hint !== null);
+  } finally {
+    first.free();
+  }
+
+  const above = (knownOutcomes(keys, preamble.bindings) ?? []).slice(0, from);
+
+  const second = newContext(mod);
+  try {
+    for (const [offset, outcome] of evaluateBindings(runnerFor(second), preamble, from).entries()) {
+      rememberNoteOutcome(keys[from + offset], preamble.bindings[from + offset].expr, outcome);
+    }
+  } finally {
+    second.free();
+  }
+
+  const served = knownOutcomes(keys, preamble.bindings) ?? [];
+  assert.deepEqual(served.slice(0, from), above, "the properties above the refill did not move");
+  assert.deepEqual(served.map(hintFromOutcome).filter((hint) => hint !== null), expected);
+});
+
+test("a borrowed context: an expression leaves it as it was, a declaration does not", { skip }, async () => {
+  // What lets the live property path evaluate into the completer's context instead of building one
+  // of its own — a standard-library load per keystroke, saved (properties/note-outcomes.ts).
+  const nb = newContext(await loadNumbat());
+  try {
+    const run = runnerFor(nb);
+    run("let a = 21");
+
+    const first = inlineResultFor(run, "a * 2");
+    assert.equal(first.plain, "42");
+    // Including the probes: `inlineResultFor` evaluates a typed hole to recover its type, which is
+    // a type error by construction and so must leave nothing behind either.
+    assert.equal(inlineResultFor(run, "3 m +").kind, "hole");
+    assert.deepEqual(inlineResultFor(run, "a * 2"), first, "the context still answers as it did");
+
+    // And the reason a declaration is refused rather than merely discouraged: Numbat accepts a
+    // redefinition *silently*, so a `let` evaluated into a shared context is not an error anyone
+    // sees — it is every later reader of that context quietly getting a different answer.
+    assert.equal(run("let a = 1").isError, false, "no complaint");
+    assert.equal(inlineResultFor(run, "a * 2").plain, "2", "and the borrowed context now lies");
   } finally {
     nb.free();
   }

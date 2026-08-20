@@ -3,12 +3,15 @@
 // line — the same `= value` the property-editor widget shows in Live Preview, so the two surfaces
 // agree.
 //
+// The evaluation itself lives in properties/outcomes.ts, shared with the property widget so the two
+// surfaces cannot disagree about what a value is; this file is the inlay's own reading of it.
+//
 // No Obsidian, CodeMirror, or wasm imports (like evaluation/inlay-parse.ts / properties/parse.ts),
 // so it is unit-testable against the real wasm in isolation; the editor-coupled pieces (locating
 // the property's line, placing the widget) stay in evaluation/inlay.ts.
 
 import type { LineInterpret } from "../evaluation/inlay-parse";
-import { inlineResultFor } from "../evaluation/inline-parse";
+import { type BindingOutcome, evaluateBindings } from "./outcomes";
 import type { NotePreamble } from "./parse";
 
 /** One frontmatter property's evaluated inlay — its `= value` (or a typed-hole / error
@@ -33,52 +36,67 @@ export interface FmHint {
 }
 
 /**
- * Evaluate a note's property bindings in order, in one accumulating context, returning the inlay to
- * show on each: the `= value` an expression produces, a typed-hole placeholder for an incomplete
- * one, or its error summary. A binding whose value merely restates its source (an untyped number,
- * or an expression that evaluates to itself) contributes none — the raw YAML already shows it.
- * `run` must carry interpreter state across calls, so a later property sees the earlier lets.
+ * The inlays to show for a note's evaluated bindings: the `= value` an expression produces, a
+ * typed-hole placeholder for an incomplete one, or its error summary. A binding whose value merely
+ * restates its source (an untyped number, or an expression that evaluates to itself) contributes
+ * none as it's already visible in the raw YAML.
+ *
+ * What evaluation/inlay.ts calls, over the outcomes the property batch cached
+ * (properties/outcome-cache.ts). The drop is here rather than at the call site so that the surface
+ * reading cached outcomes and {@link frontmatterHints}, which evaluates them, cannot come to
+ * disagree about which lines get an inlay at all.
+ */
+export function hintsFromOutcomes(outcomes: readonly BindingOutcome[]): FmHint[] {
+  return outcomes
+    .map(hintFromOutcome)
+    .filter((hint): hint is FmHint => hint !== null);
+}
+
+/**
+ * {@link hintsFromOutcomes} over a note evaluated from scratch, in order, in one accumulating
+ * context. `run` must carry interpreter state across calls, so a later property sees the earlier
+ * lets.
+ *
+ * Nothing in the plugin takes this route any more: the shipping surface reads outcomes the batch
+ * already computed, and evaluating a whole note to paint one is exactly the cost that work removed.
+ * It stays because it is the composition the integration tests drive against the real wasm — which
+ * is worth having as long as it is *this* composition, of the two functions that do ship, rather
+ * than a second implementation of them.
  */
 export function frontmatterHints(run: LineInterpret, preamble: NotePreamble): FmHint[] {
-  const hints: FmHint[] = [];
+  return hintsFromOutcomes(evaluateBindings(run, preamble));
+}
 
-  // Cross-note imports open the scope, so a property can reference an import.
-  for (const chunk of preamble.imports ?? []) {
-    run(chunk);
+/**
+ * The inlay to show for one evaluated binding, or `null` where the line is better left alone.
+ *
+ * The order is the whole of the rule. A binding the derivation has something to say about outranks
+ * its own value, which is why the warning comes first rather than filling in behind a missing
+ * result: the one case today is a bare `0`, whose value would in any case be dropped just below as
+ * merely restating its source.
+ */
+export function hintFromOutcome(outcome: BindingOutcome): FmHint | null {
+  if (outcome.warning !== null) {
+    return { key: outcome.key, kind: "warning", content: outcome.warning };
   }
 
-  for (const binding of preamble.bindings) {
-    // The expression's own definitions (an array of objects' element type) must exist before it can
-    // be evaluated, and are kept out of `code` so they are declared exactly once.
-    for (const def of binding.defs) {
-      run(def);
-    }
-
-    const result = inlineResultFor(run, binding.expr);
-    if (binding.warning !== undefined) {
-      // A binding the derivation has something to say about outranks its own value, which is why
-      // this comes first rather than filling in behind a missing result. The one case today is a
-      // bare `0`, whose value would in any case be dropped just below as merely restating its
-      // source — so without this the property it was done to is the one line in the note showing
-      // nothing at all.
-      hints.push({ key: binding.key, kind: "warning", content: binding.warning });
-    } else if ((result.kind === "value" || result.kind === "binding") && result.resultHtml !== null) {
-      // Against the value as *written*, not as evaluated: a property the derivation rewrote (a
-      // grounded `0`) is still restating itself on the page, whatever name it was given underneath.
-      if (!valueRepeatsExpr(result.plain, binding.written ?? binding.expr)) {
-        hints.push({ key: binding.key, kind: "result", content: result.resultHtml });
-      }
-    } else if (result.kind === "hole" && result.holeType !== null) {
-      hints.push({ key: binding.key, kind: "hole", content: result.holeType });
-    } else if (result.kind === "error" && result.errorText !== null) {
-      hints.push({ key: binding.key, kind: "error", content: result.errorText });
-    }
-
-    // Define the binding so a later property in the note can reference it.
-    run(binding.code);
+  if ((outcome.kind === "value" || outcome.kind === "binding") && outcome.resultHtml !== null) {
+    // Against the value as *written*, not as evaluated: a property the derivation rewrote (a
+    // grounded `0`) is still restating itself on the page, whatever name it was given underneath.
+    return valueRepeatsExpr(outcome.plain, outcome.written)
+      ? null
+      : { key: outcome.key, kind: "result", content: outcome.resultHtml };
   }
 
-  return hints;
+  if (outcome.kind === "hole" && outcome.holeType !== null) {
+    return { key: outcome.key, kind: "hole", content: outcome.holeType };
+  }
+
+  if (outcome.kind === "error" && outcome.errorText !== null) {
+    return { key: outcome.key, kind: "error", content: outcome.errorText };
+  }
+
+  return null;
 }
 
 /** Whether an evaluated value merely restates its source expression (`80.5` → `80.5`), so showing

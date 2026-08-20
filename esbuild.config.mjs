@@ -10,7 +10,11 @@ If you want to view the source, please visit the repository of this plugin.
 */
 `;
 
-// Inline any imported `.wasm` file into the bundle as a Uint8Array.
+// Inline any imported `.wasm` file into the bundle as a base64 string.
+//
+// Not the `binary` loader: that emits this same base64 literal wrapped in esbuild's `__toBinary`
+// helper and bound to a top-level `var`, so the whole 1.9 MB module is decoded synchronously at
+// plugin load rather than when (or if) the interpreter is first used. See `src/wasm.d.ts`.
 const wasmPlugin = {
   name: "wasm",
   setup(build) {
@@ -25,7 +29,7 @@ const wasmPlugin = {
     });
     build.onLoad({ filter: /.*/, namespace: "numbat-wasm-binary" }, async (args) => ({
       contents: await fs.promises.readFile(args.path),
-      loader: "binary",
+      loader: "base64",
     }));
   },
 };

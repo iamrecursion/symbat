@@ -17,7 +17,7 @@
 // numbat code" is the whole contract.
 
 import { StateField, type Transaction } from "@codemirror/state";
-import { numbatBlockRanges } from "./fences";
+import { blockRangesOf } from "./doc-cache";
 
 /** One block's extent, without its text. Lines are 0-indexed, as elsewhere. */
 export interface FenceSpan {
@@ -43,7 +43,7 @@ const FENCE_ISH = /^\s*(?:`|~|---|\.\.\.)/;
  * sequential cursor, as opposed to `line(n)`'s per-call B-tree descent.
  */
 function scan(doc: { lines: number; iterLines: (from: number, to: number) => Iterable<string>; }): FenceSpan[] {
-  return numbatBlockRanges(doc.iterLines(1, doc.lines + 1)).map((block) => ({
+  return blockRangesOf(doc).map((block) => ({
     shared: block.shared,
     bodyStartLine: block.bodyStartLine,
     closeLine: block.closeLine,

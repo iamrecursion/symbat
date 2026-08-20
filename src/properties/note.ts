@@ -25,12 +25,21 @@ import {
   PLAIN_ALL,
   PLAIN_NONE,
   type PlainBindings,
-  type PropertyBinding,
   quoteZonedTimestamps,
+  scopeChunksAbove,
 } from "./parse";
+import {
+  bumpReservedEpoch,
+  cachedExports,
+  cachedForBody,
+  cachedForRecord,
+  cachedImportWalk,
+  type ExportedProps,
+  preambleStamp,
+} from "./preamble-cache";
 import { localZoneName, normalizeOffset, offsetForWallClock } from "./zone";
 
-export { bindingKey, EMPTY_PREAMBLE, frontmatterBody, type NotePreamble };
+export { bindingKey, EMPTY_PREAMBLE, frontmatterBody, type NotePreamble, scopeChunksAbove };
 
 // THE NUMBAT PROPERTY TYPE
 // ================================================================================================
@@ -176,12 +185,17 @@ export function primeReservedNames(applyRates: boolean): void {
   }
 
   reservedNames = new Set([...vocab.functions, ...vocab.units, ...vocab.variables, ...vocab.dimensions]);
+
+  // Nothing else announces this: the set arrives from whichever evaluation happened to run first,
+  // and every preamble derived before it read no name as reserved.
+  bumpReservedEpoch();
 }
 
 /** Drop the cached reserved names (the prelude or exchange-rate settings changed — the set bakes
  *  both in). Rebuilt on the next evaluation. */
 export function invalidateReservedNames(): void {
   reservedNames = null;
+  bumpReservedEpoch();
 }
 
 /** Whether the identifier is a prelude name (per the primed set). */
@@ -298,14 +312,21 @@ function importChunksFor(plugin: SymbatPlugin, sourcePath: string, record: Recor
     return [];
   }
 
-  return collectImports(rootUses, sourcePath, buildImportResolver(plugin).resolver).chunks;
+  // Memoized on the targets alone, because they are the only part of the note this reads. Typing in
+  // any *other* property re-derives the note's own bindings without re-walking its imports. The
+  // resolver is built inside the closure so a hit costs nothing.
+  return cachedImportWalk(
+    sourcePath,
+    rootUses,
+    preambleStamp(plugin.settings),
+    () => collectImports(rootUses, sourcePath, buildImportResolver(plugin).resolver),
+  ).chunks;
 }
 
 /** The note's cross-note imports grouped by source note, in the same dependency order {@link
- *  importChunksFor} flattens — each note's contributed chunks (typed properties then
- *  `numbat-shared` blocks) kept under its own path. For the note scope inspector, which lists
- *  imported bindings under the note they came from. Empty when imports are off, none are named, or
- *  none resolve. */
+ *  importChunksFor} flattens — each note's contributed chunks (typed properties and `numbat-shared`
+ *  blocks) kept under its own path. For the note scope inspector, which lists imported bindings
+ *  under the note they came from. Empty when imports are off, none are named, or none resolve. */
 export function importGroups(
   plugin: SymbatPlugin,
   sourcePath: string,
@@ -347,7 +368,21 @@ function importedPropsChunks(
   plugin: SymbatPlugin,
   frontmatter: Record<string, unknown>,
   notePath: string,
-): { chunks: string[]; bindings: PropertyBinding[]; } {
+): ExportedProps {
+  return cachedExports(
+    notePath,
+    frontmatter,
+    preambleStamp(plugin.settings),
+    () => deriveExports(plugin, frontmatter, notePath),
+  );
+}
+
+/** {@link importedPropsChunks} without the memo. */
+function deriveExports(
+  plugin: SymbatPlugin,
+  frontmatter: Record<string, unknown>,
+  notePath: string,
+): ExportedProps {
   const record = Object.fromEntries(
     Object.entries(frontmatter).filter(([key]) => !NON_PROPERTY_KEYS.has(key)),
   );
@@ -411,6 +446,22 @@ export function notePreamble(
     return EMPTY_PREAMBLE;
   }
 
+  // Memoized on the frontmatter text: one keystroke asks the inlay plugin, the inline-eval plugin
+  // (three times) and the scope inspector for the same note, all with the same body.
+  return cachedForBody(
+    sourcePath ?? "",
+    body,
+    preambleStamp(plugin.settings),
+    () => deriveNotePreamble(plugin, body, sourcePath),
+  );
+}
+
+/** {@link notePreamble} without the memo, past the gates it has already applied. */
+function deriveNotePreamble(
+  plugin: SymbatPlugin,
+  body: string[],
+  sourcePath: string | null,
+): NotePreamble {
   let parsed: unknown;
   try {
     // Zoned timestamps are quoted first, so the parser hands them back as written instead of as
@@ -463,7 +514,14 @@ export function preambleForFile(plugin: SymbatPlugin, sourcePath: string): NoteP
     return EMPTY_PREAMBLE;
   }
 
-  return attachImports(plugin, preambleFromRecord(plugin, record, sourcePath), sourcePath, record);
+  // Memoized while Obsidian keeps handing back the same parsed record — the property widget asks
+  // once per property, and a Bases table once per numbat cell (properties/preamble-cache.ts).
+  return cachedForRecord(
+    sourcePath,
+    record,
+    preambleStamp(plugin.settings),
+    () => attachImports(plugin, preambleFromRecord(plugin, record, sourcePath), sourcePath, record),
+  );
 }
 
 // REPLAY
@@ -488,34 +546,6 @@ export function replayPreamble(context: Numbat, preamble: NotePreamble): void {
     }
     interpret(context, binding.code);
   }
-}
-
-/**
- * The code that is in scope *at* one property: the note's cross-note imports, then the bindings of
- * the properties written above it — never the ones below, and never the note's blocks (the preamble
- * evaluates before them). One chunk per statement, matching how every other replay absorbs a broken
- * one.
- *
- * `key` is the property's dotted path (`costs.total`), the form both {@link PropertyBinding.key}
- * and Obsidian's property UI use, so the stop applies to a nested property as exactly as to a
- * top-level one. An array *item*'s key (`rates.#`) stops at its array, which is the binding it is
- * part of — so an item is written against the scope its whole list has, not against the list's own
- * previous value.
- *
- * Shared by the three surfaces that must agree on what a property can see: the widget's evaluation,
- * the widget's completer, and the Source-mode completer.
- */
-export function scopeChunksAbove(preamble: NotePreamble, key: string): string[] {
-  const stop = bindingKey(key);
-  const chunks = [...(preamble.imports ?? [])];
-  for (const binding of preamble.bindings) {
-    if (binding.key === stop) {
-      break;
-    }
-    chunks.push(...binding.defs, binding.code);
-  }
-
-  return chunks;
 }
 
 /** {@link scopeChunksAbove}, replayed into `context`. */

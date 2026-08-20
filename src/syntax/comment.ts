@@ -12,7 +12,8 @@
 // the transaction inspection/rewrite depends on CodeMirror.
 
 import { EditorState, type Transaction, type TransactionSpec } from "@codemirror/state";
-import { type NumbatBlockRange, numbatBlockRanges } from "../document/fences";
+import { blockRangesOf } from "../document/doc-cache";
+import { type NumbatBlockRange } from "../document/fences";
 
 /** Obsidian's Markdown comment marker, inserted by its Toggle comment command. */
 const OBSIDIAN_COMMENT_MARKER = "%%";
@@ -133,7 +134,7 @@ function obsidianCommentTarget(tr: Transaction): NumbatBlockRange | null {
   }
 
   const { doc } = tr.startState;
-  const blocks = numbatBlockRanges(doc.iterLines(1, doc.lines + 1));
+  const blocks = blockRangesOf(doc);
   const index = doc.lineAt(insertPos).number - 1; // 0-indexed for the block ranges.
 
   return blocks.find((block) => index >= block.bodyStartLine && index < block.closeLine) ?? null;

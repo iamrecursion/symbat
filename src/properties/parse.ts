@@ -2405,18 +2405,9 @@ export function derivePreamble(frontmatter: Record<string, unknown>, rules: Prea
   };
 }
 
-// YAML frontmatter delimiters, exactly as NoteWalk (evaluation/inline-parse.ts) tracks them: a
-// `---` line at the very top, closed by `---` or `...`.
-
 // LOCATING KEYS IN THE SOURCE
 // ================================================================================================
 
-/**
- * The YAML body of a note's frontmatter — the lines between the opening `---` and its closing
- * delimiter, both excluded — or `null` when the note has none (no opener on the first line, or an
- * opener that never closes). Accepts any iterable of lines and stops reading at the close, so the
- * editor can pass a document's line cursor without walking the whole note.
- */
 /** Where a frontmatter key is written: the 0-indexed line of the `key:` itself, the column the key
  *  starts at (its indent), and the last line its value occupies — for a mapping, the last line of
  *  the block it opens. */
@@ -2808,11 +2799,12 @@ export function quoteZonedTimestamps(body: string[]): string[] {
 }
 
 /**
- * The lines between a note's frontmatter delimiters, or `null` when it has no frontmatter (nothing
- * on line 0 that opens it, or nothing that closes it).
+ * The lines between a note's frontmatter delimiters, both excluded, or `null` when it has no
+ * frontmatter (nothing on line 0 that opens it, or nothing that closes it).
  *
  * Accepts any iterable so the editor can pass a CodeMirror line cursor straight through, as
- * elsewhere in the plugin.
+ * elsewhere in the plugin, and returns at the closing delimiter rather than draining it, so a
+ * whole-document cursor costs the frontmatter rather than the note.
  */
 export function frontmatterBody(lines: Iterable<string>): string[] | null {
   const body: string[] = [];
@@ -2834,4 +2826,33 @@ export function frontmatterBody(lines: Iterable<string>): string[] | null {
     body.push(text);
   }
   return null; // no opener, or an opener that never closed
+}
+
+/**
+ * The code that is in scope *at* one property: the note's cross-note imports, then the bindings of
+ * the properties written above it.
+ *
+ * This is never the properties below it, and never the note's blocks (as the preamble evaluates
+ * before them). One chunk per statement, matching how every other replay absorbs a broken one.
+ *
+ * `key` is the property's dotted path (`costs.total`), the form both {@link PropertyBinding.key}
+ * and Obsidian's property UI use, so the stop applies to a nested property as exactly as to a
+ * top-level one. An array *item*'s key (`rates.#`) stops at its array, which is the binding it is
+ * part of so an item is written against the scope its whole list has, not against the list's own
+ * previous value.
+ *
+ * Shared by the three surfaces that must agree on what a property can see: the widget's evaluation,
+ * the widget's completer, and the Source-mode completer.
+ */
+export function scopeChunksAbove(preamble: NotePreamble, key: string): string[] {
+  const stop = bindingKey(key);
+  const chunks = [...(preamble.imports ?? [])];
+  for (const binding of preamble.bindings) {
+    if (binding.key === stop) {
+      break;
+    }
+    chunks.push(...binding.defs, binding.code);
+  }
+
+  return chunks;
 }

@@ -33,6 +33,31 @@ test("loads once, then not again until invalidated", async () => {
   assert.equal(runs, 2);
 });
 
+// Load-bearing for main.ts: `invalidate()` is a *claim*, not a trigger. Everything a reload
+// announces — `setUserPrelude`'s interpreter-generation bump above all — happens when someone
+// awaits `ensure()`, so an invalidation whose whole point is to make the open editors re-evaluate
+// has to move the generation itself. Leaving it to the reload inverts the order: the editors
+// rebuild first, hit their caches against the old generation, schedule nothing, and so never reach
+// the `ensure()` that would have moved it.
+test("invalidate alone runs nothing", async () => {
+  let runs = 0;
+  const guard = new VersionedLoad(() => {
+    runs += 1;
+    return Promise.resolve();
+  });
+
+  guard.invalidate();
+  await flush();
+  assert.equal(runs, 0, "no load without an ensure");
+
+  await guard.ensure();
+  assert.equal(runs, 1);
+
+  guard.invalidate();
+  await flush();
+  assert.equal(runs, 1, "and none after one, either");
+});
+
 test("stale reports whether a reload is outstanding", async () => {
   const guard = new VersionedLoad(() => Promise.resolve());
   assert.equal(guard.stale, true, "nothing loaded yet");

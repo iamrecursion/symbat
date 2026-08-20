@@ -12,6 +12,7 @@ import {
   type WorkspaceLeaf,
 } from "obsidian";
 import { NumbatExprEditorSuggest } from "./completion/suggest";
+import { frontmatterBodyOf, scannedNote } from "./document/doc-cache";
 import { sourcePathOf } from "./document/editor-file";
 import { numbatFenceState } from "./document/fence-state";
 import { numbatMarkdownPairGuard } from "./document/markdown-pair";
@@ -24,7 +25,6 @@ import {
   numbatInlineEval,
   refreshNumbatInline,
 } from "./evaluation/inline";
-import { scanNote } from "./evaluation/inline-parse";
 import { registerInlineEvalReading } from "./evaluation/inline-reading";
 import { invalidateDefinitions } from "./hover/definition";
 import { dismissHover, showHoverAtCursor } from "./hover/hover";
@@ -36,6 +36,7 @@ import {
   disposeCompletionContexts,
   ensureNumbatReady,
   interpreterGeneration,
+  invalidateCachedEvaluations,
   invalidateExpressionCompletion,
   isNumbatReady,
   loadExchangeRates,
@@ -47,21 +48,18 @@ import {
 import { VersionedLoad } from "./interpreter/versioned-load";
 import { registerZonedDateTypes } from "./properties/date-type";
 import { watchPointerDown } from "./properties/focus-guard";
-import {
-  frontmatterBody,
-  invalidateReservedNames,
-  notePreamble,
-  primeReservedNames,
-  propertyTypeManager,
-} from "./properties/note";
+import { invalidateReservedNames, notePreamble, primeReservedNames, propertyTypeManager } from "./properties/note";
+import { cancelBatches, clearPropertyOutcomes } from "./properties/note-outcomes";
+import { invalidateAllPreambles, invalidatePreamblesFor } from "./properties/preamble-cache";
 import { installTypeOrder } from "./properties/registry";
-import { clearPropertyOutcomes, disposePropertyEditors, registerNumbatPropertyType } from "./properties/type";
+import { disposePropertyEditors, refreshPropertyEditors, registerNumbatPropertyType } from "./properties/type";
 import { disposeZoneEditors, sweepZoneUnclips } from "./properties/zone-editor";
 import { setCaretTarget } from "./scope/goto-definition";
 import { normalizeSettings, type SymbatSettings, SymbatSettingTab } from "./settings/tab";
 import { normalizePreludeFiles } from "./settings/util";
 import { numbatCommentFilter } from "./syntax/comment";
 import { registerHighlighting } from "./syntax/highlight";
+import { TYPE_CHANGE_COALESCE_MS } from "./tuning";
 import { numbatUnicodeInput } from "./unicode/input";
 import { NumbatUnicodeEditorSuggest } from "./unicode/suggest";
 import { focusNumbatFile, NumbatFileView, VIEW_TYPE_NUMBAT_FILE } from "./views/nbt";
@@ -115,6 +113,10 @@ export default class SymbatPlugin extends Plugin {
    *  "Hover information" settings apply live. */
   private readonly hoverExtension: Extension[] = [];
 
+  /** The pending coalesced property-type refresh, or `null` when none is scheduled. See
+   *  {@link schedulePropertyTypeRefresh}. */
+  private typeChangeTimer: number | null = null;
+
   // LIFECYCLE
   // ==============================================================================================
 
@@ -149,7 +151,10 @@ export default class SymbatPlugin extends Plugin {
     // light effect dispatch, not an extension rebuild, so only the notes whose imports moved
     // re-evaluate — and background panes still repaint) and refreshes any open scope inspector.
     this.moduleGraph = new ModuleGraph(this, () => {
-      this.refreshImportDependents();
+      // An imported note's shared blocks arrived or moved. Which importers that touches is exactly
+      // what this callback does not say, and it is coalesced and rare, so drop the lot.
+      invalidateAllPreambles();
+      this.nudgeOpenEditors();
       this.refreshScopeViews();
     });
 
@@ -176,7 +181,8 @@ export default class SymbatPlugin extends Plugin {
 
     // A type (re)assignment changes which properties bind — re-evaluate open editors. The event is
     // undocumented (like the registry); a missing `on` just means stale hints until the next edit.
-    const typeEvents = propertyTypeManager(this.app)?.on?.("changed", () => this.refreshNoteScope());
+    // Coalesced, because one user action is several events (see schedulePropertyTypeRefresh).
+    const typeEvents = propertyTypeManager(this.app)?.on?.("changed", () => this.schedulePropertyTypeRefresh());
     if (typeEvents !== undefined && typeEvents !== null) {
       this.registerEvent(typeEvents);
     }
@@ -291,6 +297,16 @@ export default class SymbatPlugin extends Plugin {
         });
       });
     }));
+    // The escape hatch. Every cache here is invalidated by something, and the point of this command
+    // is that it needs no theory about which something was missed.
+    this.addCommand({
+      id: "clear-caches",
+      name: "Clear all caches and re-evaluate",
+      callback: () => {
+        this.clearCaches();
+        new Notice("Symbat: caches cleared. Everything on screen will re-evaluate.");
+      },
+    });
     this.addCommand({
       id: "search-scope",
       name: "Search the note scope and prelude",
@@ -355,15 +371,17 @@ export default class SymbatPlugin extends Plugin {
     );
 
     // Re-read an imported note whose content or frontmatter changed, so notes that `numbat-use` it
-    // re-evaluate. Both events are wired: `vault.modify` fires on every content save (including
-    // edits confined to a code block, which the metadata cache does not treat as a change) with a
-    // fresh `cachedRead`, and `metadataCache.changed` fires after a re-parse (so a typed-property
-    // change is reflected). Rename/delete can change link resolution anywhere, so those clear the
-    // whole import cache.
-    this.registerEvent(this.app.vault.on("modify", (file) => this.moduleGraph?.noteChanged(file.path)));
-    this.registerEvent(this.app.metadataCache.on("changed", (file) => this.moduleGraph?.noteChanged(file.path)));
-    this.registerEvent(this.app.vault.on("delete", () => this.moduleGraph?.reset()));
-    this.registerEvent(this.app.vault.on("rename", () => this.moduleGraph?.reset()));
+    // re-evaluate, and drop what was derived from it. Both events are wired: `vault.modify` fires
+    // on every content save (including edits confined to a code block, which the metadata cache
+    // does not treat as a change) with a fresh `cachedRead`, and `metadataCache.changed` fires
+    // after a re-parse (so a typed-property change is reflected).
+    this.registerEvent(this.app.vault.on("modify", (file) => this.onNoteChanged(file.path)));
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => this.onNoteChanged(file.path)));
+
+    // Rename and delete can change what any link resolves to, so neither the import cache nor the
+    // preambles built on top of it can be trusted anywhere — both are cleared wholesale.
+    this.registerEvent(this.app.vault.on("delete", () => this.onLinksMoved()));
+    this.registerEvent(this.app.vault.on("rename", () => this.onLinksMoved()));
 
     // A focused zoned property in a Bases cell marks Obsidian's own cell so the picker can overflow
     // it, and puts the mark back when it closes — but a view that goes while a cell is open never
@@ -388,7 +406,17 @@ export default class SymbatPlugin extends Plugin {
     // the plugin unless removed explicitly.
     unmapVimHoverKey();
     invalidateDefinitions();
+
+    // A coalesced refresh left to fire after unload would rebuild and re-init the interpreter this
+    // is in the middle of releasing.
+    if (this.typeChangeTimer !== null) {
+      window.clearTimeout(this.typeChangeTimer);
+      this.typeChangeTimer = null;
+    }
+
+    invalidateAllPreambles();
     disposePropertyEditors();
+    cancelBatches();
     clearPropertyOutcomes();
     disposeZoneEditors();
     this.moduleGraph?.dispose();
@@ -397,6 +425,20 @@ export default class SymbatPlugin extends Plugin {
 
   // VAULT EVENTS
   // ==============================================================================================
+
+  /** A note's content or frontmatter changed: re-read its shared blocks if anything imports it, and
+   *  drop what was derived from it — its own preamble, and the preamble of every note that imported
+   *  it. */
+  private onNoteChanged(path: string): void {
+    invalidatePreamblesFor(path);
+    this.moduleGraph?.noteChanged(path);
+  }
+
+  /** A note was renamed or deleted, so link resolution may have moved anywhere. */
+  private onLinksMoved(): void {
+    invalidateAllPreambles();
+    this.moduleGraph?.reset();
+  }
 
   /** Mark the prelude for reload if the changed vault path is one of its files. */
   private onVaultChange(path: string): void {
@@ -447,15 +489,67 @@ export default class SymbatPlugin extends Plugin {
   // ==============================================================================================
 
   /**
-   * Mark the cached prelude stale — because the prelude settings changed, or because one of its
-   * files was edited — and rebuild everything derived from it.
+   * Throw away everything the plugin has remembered and re-evaluate what is on screen.
+   *
+   * A user-facing reset, and the only one. Every cache in the plugin is invalidated by *something*
+   * — a vault event, a settings change, a key that folds in what it depends on — and each of those
+   * is a claim about what could have gone stale. This command exists because a claim can be wrong,
+   * and when one is, the reader has no way to name which: they can only see that a value looks old.
+   *
+   * The interpreter generation is moved rather than any per-view cache being emptied, because the
+   * generation is folded into every evaluation key and this class cannot reach a ViewPlugin's own
+   * map (interpreter/numbat.ts). Bumping it first and nudging afterwards is what makes the rebuild
+   * that follows miss.
+   *
+   * The exchange rates are deliberately kept. They are a disk cache with a refresh schedule of
+   * their own, and dropping them forces a fetch that can fail — leaving a reader who asked to clear
+   * a cache with no currency conversions at all, which is worse than the position they were in.
+   */
+  clearCaches(): void {
+    cancelBatches();
+    this.moduleGraph?.reset();
+
+    // {@link markPreludeDirty} bumps this too, so this call is deliberately redundant. The point of
+    // this command is that it needs no theory about what its callees happen to do, and the bump is
+    // the one step nothing else here can stand in for.
+    invalidateCachedEvaluations();
+    disposeCompletionContexts();
+
+    // The prelude, the reserved names, the expression completion, the property outcomes, the
+    // preambles, the definitions, the open editors, the property rows, the scope inspectors and the
+    // `.nbt` banners — this is the whole of the rest of it, and going through it rather than
+    // repeating it is what keeps a cache added later from being left out of the reset.
+    //
+    // {@link cancelBatches} above is why the property rows have to be in that list rather than left
+    // to notice for themselves: dropping a pending pass drops its waiters without telling them, so
+    // a row waiting on one would sit there holding what it had. `refreshPropertyTypes` asks every
+    // row again, which is what makes the Notice this command shows true of that surface too.
+    this.markPreludeDirty();
+  }
+
+  /**
+   * Mark the cached prelude stale and rebuild everything derived from it.
    *
    * The prelude is baked into every interpreter context, so this is the widest invalidation the
    * plugin performs: the completion context and vocabulary, the property reserved-name set (without
    * which a note property can silently shadow a newly-declared prelude unit), and every open
    * editor's hints and inline results. `refreshNoteScope` covers the scope inspector too.
+   *
+   * The generation is bumped **here**, before any of that, and not left to the reload to bump.
+   * {@link VersionedLoad.invalidate} only moves a version counter; `setUserPrelude`'s own bump
+   * happens inside the reload, which nothing runs until an evaluation path awaits
+   * {@link ensurePrelude}. Without this the ordering inverts and the invalidation does nothing at
+   * all: `refreshNoteScope` nudges the open editors, they rebuild against the *old* generation, the
+   * block and inline caches all hit (a prelude edit moves neither the note's text nor its preamble
+   * source), so nothing is scheduled, so the reload never runs, so the generation never moves. The
+   * note goes on painting hints computed under the old prelude until the reader happens to type or
+   * scroll.
+   *
+   * The price is that a reload which turns out to change nothing still re-evaluates what is on
+   * screen. This is unavoidable and accepted.
    */
   markPreludeDirty(): void {
+    invalidateCachedEvaluations();
     this.prelude.invalidate();
     invalidateExpressionCompletion();
     invalidateReservedNames();
@@ -467,32 +561,103 @@ export default class SymbatPlugin extends Plugin {
   }
 
   /**
-   * Re-evaluate every open editor after something note-scope-wide changed — a property-type
-   * (re)assignment or a Note properties setting. Rebuilding the inlay and inline-eval extensions
-   * recreates their view plugins, whose fresh caches then key off the new preamble; rendered views
-   * refresh on their next render as usual.
+   * Coalesce a burst of `metadataTypeManager` events into one {@link refreshPropertyTypes}.
+   *
+   * Assigning a type to a property fires the event more than once, and a plugin registering its own
+   * types fires it too. Without this, one action in the property menu can result in running the
+   * widest invalidation the plugin has several times over.
+   *
+   * Non-restarting, the shape `ModuleGraph.scheduleRefresh` uses: a burst should still be answered
+   * promptly, just once. `properties/registry.ts` guards the same event by comparing the key set,
+   * which is the right pattern for *it*, but the registry's keys do not move on an assignment so
+   * keying off them here would swallow the events that matter.
    */
-  refreshNoteScope(): void {
-    // The property widgets' evaluated outcomes are keyed on the scope they were evaluated in, and
-    // this is exactly the event that says that scope has moved (properties/type.ts).
-    clearPropertyOutcomes();
-    this.refreshInlayHints();
-    this.refreshInlineEval();
-    this.refreshScopeViews();
+  private schedulePropertyTypeRefresh(): void {
+    if (this.typeChangeTimer !== null) {
+      return;
+    }
 
-    // The hover's definition tree is keyed on the note's text, which has not changed — but what its
-    // scope contains has.
+    this.typeChangeTimer = window.setTimeout(() => {
+      this.typeChangeTimer = null;
+      this.refreshPropertyTypes();
+    }, TYPE_CHANGE_COALESCE_MS);
+  }
+
+  /**
+   * A property type was assigned or reassigned somewhere in the vault.
+   *
+   * Narrower than {@link refreshNoteScope}: the evaluated property outcomes are **kept**. A type
+   * assignment reaches an evaluation only through the derivation (it decides which properties bind
+   * at all and what expression a value becomes) so it moves the derived text of the properties it
+   * affects and of everything written below them, and nothing else. Those are exactly the entries
+   * whose keys move, so they miss and re-evaluate while every other property of every other note
+   * keeps its answer.
+   *
+   * Emptying the outcome caches instead, as this used to, made one assignment cost a fresh stdlib
+   * load for every note on show — the note being edited, every other open pane, and every row of an
+   * open Bases table — all on the main thread, for an answer that in almost every case had not
+   * changed.
+   *
+   * The preambles do have to go: a type assignment is the one input the preamble stamp cannot see,
+   * since it lives in Obsidian's registry rather than in the settings or the note.
+   */
+  refreshPropertyTypes(): void {
+    invalidateAllPreambles();
+    this.nudgeOpenEditors();
+
+    // The same nudge for the surface {@link nudgeOpenEditors} cannot reach. Obsidian owns the
+    // property rows and re-renders them on its own schedule, so without this a row goes on painting
+    // what it painted before — and after {@link refreshNoteScope} has emptied the caches, what it
+    // painted before is all it has. Cheap enough to sit in the narrow invalidation too: a row whose
+    // key did not move re-reads its answer from the cache.
+    refreshPropertyEditors();
+
+    this.refreshScopeViews();
     invalidateDefinitions();
   }
 
   /**
-   * Nudge every open Markdown editor to recompute its Numbat decorations, without rebuilding the
-   * extensions (so caches survive — only the notes whose cross-note imports actually moved
-   * re-evaluate, and unaffected panes do not flicker). Called when an imported note changes (see
-   * the module graph). A plain effect dispatch, unlike `updateOptions()`, also repaints an inactive
-   * split.
+   * Re-evaluate every open editor after something changed that no cache key can see: a Note
+   * properties setting, a prelude edit, an exchange-rate refresh.
+   *
+   * Every cache is dropped or re-keyed and the open editors and property rows are nudged to look
+   * again; rendered views refresh on their next render as usual. It used to *rebuild* the inlay and
+   * inline-eval extensions, which destroyed every ViewPlugin in every open editor along with its
+   * per-block cache — so one such change re-evaluated every block of every open note, and blanked
+   * their hints until it had. See {@link nudgeOpenEditors} and {@link refreshPropertyEditors}.
+   *
+   * A property-type assignment is **not** one of these, though it used to come through here; it
+   * moves the keys of what it affects and nothing else, so it goes to {@link refreshPropertyTypes}.
    */
-  private refreshImportDependents(): void {
+  refreshNoteScope(): void {
+    // The one thing {@link refreshPropertyTypes} does not do, and the reason this is a separate
+    // method. A property outcome's key describes the note; it does not name the prelude or the
+    // exchange rates, so a changed prelude leaves every key exactly where it was, pointing at an
+    // answer computed under the old one. Nothing short of emptying them says that. A batch still
+    // booting when this lands sees the same bump once its awaits are behind it, and abandons the
+    // pass rather than filing answers about the note as it was.
+    //
+    // Which is the other half of why {@link refreshPropertyTypes} below has to ask the rows again:
+    // a row waiting on that pass is told it finished and finds nothing, and "the pass I was waiting
+    // on abandoned itself" is not something the row can see happen.
+    clearPropertyOutcomes();
+
+    // The rest is the same invalidation a type assignment needs, and the preambles are in it for
+    // the same reason: a prelude edit is not something the stamp can see either.
+    this.refreshPropertyTypes();
+  }
+
+  /**
+   * Nudge every open editor to recompute its Numbat decorations, without rebuilding the extensions.
+   *
+   * The caches survive, and each one re-derives what it needs and re-evaluates only the entries
+   * whose key actually moved so an unaffected pane does not flicker and an unaffected note costs
+   * nothing. A plain effect dispatch, unlike `updateOptions()`, also repaints an inactive split.
+   *
+   * This is all a scope change needs now that every evaluation cache folds the interpreter
+   * generation into its key.
+   */
+  nudgeOpenEditors(): void {
     this.app.workspace.iterateAllLeaves((leaf) => {
       if (!(leaf.view instanceof MarkdownView)) {
         return;
@@ -503,6 +668,10 @@ export default class SymbatPlugin extends Plugin {
         refreshNumbatInline(view);
       }
     });
+
+    // A `.nbt` editor is not a Markdown view and holds its own CodeMirror, so it is nudged through
+    // the view rather than found among the leaves above.
+    this.forEachFileView((view) => view.refreshInlays());
   }
 
   // THE USER PRELUDE
@@ -774,12 +943,12 @@ export default class SymbatPlugin extends Plugin {
     const config = inlineConfig(this);
     const { doc } = view.state;
     primeReservedNames(this.settings.fetchExchangeRates);
-    const units = scanNote(doc.iterLines(1, doc.lines + 1), config);
+    const units = scannedNote(doc, config);
 
     // The source path is what attaches `numbat-use` imports; without it this pass would evaluate in
     // a narrower scope than the widgets it is committing, and silently skip every span that depends
     // on an import.
-    const preamble = notePreamble(this, frontmatterBody(doc.iterLines(1, doc.lines + 1)), sourcePathOf(view));
+    const preamble = notePreamble(this, frontmatterBodyOf(doc), sourcePathOf(view));
     let results;
     try {
       results = evaluateNoteUnits(units, this.settings.fetchExchangeRates, config, preamble);
@@ -936,8 +1105,10 @@ export default class SymbatPlugin extends Plugin {
     }
 
     if (interpreterGeneration() !== before) {
-      // Safe to call from inside an in-flight evaluation: rebuilding the extensions destroys the
-      // running view plugin, which checks `destroyed` after each await.
+      // Safe to call from inside an in-flight evaluation — more so than it used to be. It no longer
+      // destroys the view plugin that is mid-await; it empties caches and dispatches an effect, and
+      // the evaluation in flight keys its result on the generation it reads *after* the awaits, so
+      // what it writes describes the world it is writing into.
       this.refreshNoteScope();
     }
   }

@@ -28,8 +28,9 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import { editorLivePreviewField } from "obsidian";
+import { blockRangesOf, frontmatterBodyOf } from "../document/doc-cache";
 import { sourcePathOf } from "../document/editor-file";
-import { type NumbatBlockRange, numbatBlockRanges } from "../document/fences";
+import { type NumbatBlockRange } from "../document/fences";
 import { FRONTMATTER_CLOSE, FRONTMATTER_OPEN } from "../document/frontmatter";
 import {
   createContext,
@@ -42,11 +43,13 @@ import {
 } from "../interpreter/numbat";
 import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
-import { type FmHint, frontmatterHints, hintPlacesOnKey } from "../properties/frontmatter-inlay";
-import { frontmatterBody, notePreamble, primeReservedNames, replayPreamble } from "../properties/note";
+import { hintPlacesOnKey, hintsFromOutcomes } from "../properties/frontmatter-inlay";
+import { notePreamble, primeReservedNames, replayPreamble } from "../properties/note";
+import { requestNoteOutcomes } from "../properties/note-outcomes";
+import { firstStale, knownOutcomes, outcomeKeys } from "../properties/outcome-cache";
 import { frontmatterKeySites } from "../properties/parse";
 import { INLAY_CACHE_ENTRIES, INLAY_DEBOUNCE_MS } from "../tuning";
-import { blockKey, endPadding, type Hint, hintsForBlock, holeForm } from "./inlay-parse";
+import { blockKey, endPadding, type Hint, hintsForBlock, holeForm, wholeScopeKey } from "./inlay-parse";
 
 /** Dispatched after an off-path evaluation populates the cache, so the plugin rebuilds its
  *  decorations to include the newly-available hints. Also dispatched by {@link refreshNumbatInlays}
@@ -125,8 +128,11 @@ class InlayWidget extends WidgetType {
 // In Source mode the frontmatter is raw YAML, so a numbat-typed (or bound-number) property gets the
 // same end-of-line `= value` hint a `numbat` block line does. In Live Preview the frontmatter is
 // the property-editor widget instead, which carries its own result — so these are suppressed there
-// (see isSourceFrontmatter). The evaluation itself is the pure {@link frontmatterHints}; here we
-// locate each property's line and place the widget.
+// (see isSourceFrontmatter).
+//
+// The evaluation is not done here at all: a note's bindings are evaluated once, by the property
+// batch (properties/note-outcomes.ts), and this projects the same cached outcomes through
+// {@link hintFromOutcome}. Here we locate each property's line and place the widget.
 
 // The frontmatter delimiters, as properties/parse.ts tracks them — matched here over the editor's
 // line index so a property line can be located by number.
@@ -180,8 +186,10 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
       /** Cached hints per block, keyed by {@link blockKey}. */
       private readonly cache = new Map<string, Hint[]>();
 
-      /** Cached frontmatter-property hints, keyed by the note preamble source. */
-      private readonly fmCache = new Map<string, FmHint[]>();
+      /** Stops waiting on the property batch, where a pass has been asked for. Held because the
+       *  batch outlives a view: a destroyed plugin left in the waiter set dispatches into a view
+       *  that is gone. */
+      private unwaitFrontmatter: (() => void) | null = null;
 
       /** The pending debounced evaluation, or `null` when none is scheduled. */
       private timer: number | null = null;
@@ -204,12 +212,15 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         }
       }
 
-      /** Cancel any pending evaluation with the view. */
+      /** Cancel any pending evaluation with the view, and stop waiting on the property batch. */
       destroy(): void {
         this.destroyed = true;
         if (this.timer !== null) {
           window.clearTimeout(this.timer);
         }
+
+        this.unwaitFrontmatter?.();
+        this.unwaitFrontmatter = null;
       }
 
       /**
@@ -228,11 +239,11 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         };
 
         const { doc } = view.state;
-        const blocks = numbatBlockRanges(doc.iterLines(1, doc.lines + 1));
+        const blocks = blockRangesOf(doc);
         const visible = blocks.filter((block) => this.isVisible(view, doc, block));
 
         // The same preamble-aware key the evaluation pass caches under.
-        const preamble = notePreamble(plugin, frontmatterBody(doc.iterLines(1, doc.lines + 1)), sourcePathOf(view));
+        const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
 
         const pending: NumbatBlockRange[] = [];
         const placements: { from: number; widget: InlayWidget; }[] = [];
@@ -270,11 +281,18 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
           const region = frontmatterRegion(doc);
 
           if (region !== null) {
-            const hints = this.fmCache.get(preamble.source);
+            // The keys the batch fills through, built by the same function it builds them with, so
+            // the two cannot come to disagree about what a property's scope is.
+            const keys = outcomeKeys(plugin.settings.fetchExchangeRates, preamble);
+            const outcomes = knownOutcomes(keys, preamble.bindings);
 
-            if (hints === undefined) {
-              needFrontmatter = true;
-            } else {
+            // An old answer is still painted; what it also does is ask for a newer one, which is
+            // how a property reading the clock keeps moving.
+            needFrontmatter = outcomes === null || firstStale(keys, preamble.bindings) !== null;
+
+            if (outcomes !== null) {
+              const hints = hintsFromOutcomes(outcomes);
+
               // One scan of the frontmatter locates every key, nested ones included; the sites are
               // 0-indexed, the document's lines are 1-indexed.
               const sites = frontmatterKeySites(doc.iterLines(1, region.close + 1));
@@ -404,7 +422,7 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         // The note preamble (property bindings) opens every block's scope; it is part of each cache
         // key, so a property edit re-evaluates the hints.
         const { doc } = view.state;
-        const preamble = notePreamble(plugin, frontmatterBody(doc.iterLines(1, doc.lines + 1)), sourcePathOf(view));
+        const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
         let evaluated = false;
 
         for (const block of pending) {
@@ -437,23 +455,27 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
           }
         }
 
-        // Evaluate the frontmatter properties (if requested and not already cached), in one fresh
-        // context that accumulates the bindings in order.
-        if (evalFrontmatter && preamble.bindings.length > 0 && !this.fmCache.has(preamble.source) && isNumbatReady()) {
-          const context = createContext(applyRates);
-          try {
-            this.rememberFm(preamble.source, frontmatterHints((code) => interpret(context, code), preamble));
-            evaluated = true;
-          } catch (error) {
-            console.error("Symbat: frontmatter inlay evaluation crashed", error);
-            restartNumbat();
-          } finally {
-            freeQuietly(context);
-          }
-        }
-
         if (evaluated && !this.destroyed) {
           view.dispatch({ effects: inlayReady.of() });
+        }
+
+        // The frontmatter properties are asked for rather than evaluated: the property batch owns
+        // that evaluation, and while this note's scope is the one a widget is also looking at, the
+        // two share a single pass. Its own dispatch, because it lands on its own schedule.
+        if (evalFrontmatter && preamble.bindings.length > 0) {
+          const keys = outcomeKeys(applyRates, preamble);
+          this.unwaitFrontmatter?.();
+          this.unwaitFrontmatter = requestNoteOutcomes(plugin, preamble, () => {
+            this.unwaitFrontmatter = null;
+
+            // Only when the pass actually answered this scope. A dispatch rebuilds, a rebuild that
+            // still finds nothing asks again, and a pass that cannot run would otherwise spin at
+            // the debounce for the rest of the session. Nothing is lost by waiting: the next edit
+            // rebuilds anyway.
+            if (!this.destroyed && firstStale(keys, preamble.bindings) === null) {
+              view.dispatch({ effects: inlayReady.of() });
+            }
+          });
         }
       }
 
@@ -468,21 +490,6 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
           }
 
           this.cache.delete(oldest);
-        }
-      }
-
-      /** Store one note's frontmatter hints, evicting the oldest entries past the cap (a note's
-       *  preamble changes as its properties are edited). */
-      private rememberFm(key: string, hints: FmHint[]): void {
-        this.fmCache.set(key, hints);
-
-        while (this.fmCache.size > INLAY_CACHE_ENTRIES) {
-          const oldest = this.fmCache.keys().next().value;
-          if (oldest === undefined) {
-            break;
-          }
-
-          this.fmCache.delete(oldest);
         }
       }
     },
@@ -514,7 +521,9 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
       /** The hint widgets CodeMirror is painting, republished on every build. */
       decorations: DecorationSet;
 
-      /** Cached hints for the document, keyed by its full text. */
+      /** Cached hints for the document, keyed by its full text and the interpreter generation. A
+       * prelude edit changes what the file's own statements mean without changing a character of it
+       * (see {@link wholeScopeKey}). */
       private readonly cache = new Map<string, Hint[]>();
 
       /** The pending debounced evaluation, or `null` when none is scheduled. */
@@ -560,8 +569,7 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
         };
 
         const { doc } = view.state;
-        const text = doc.toString();
-        const hints = this.cache.get(text);
+        const hints = this.cache.get(wholeScopeKey(interpreterGeneration(), doc.toString()));
         if (hints === undefined) {
           this.scheduleEvaluation(view);
           return Decoration.none;
@@ -624,14 +632,15 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
 
         const applyRates = plugin.settings.fetchExchangeRates;
         const text = view.state.doc.toString();
-        if (this.cache.has(text)) {
+        const key = wholeScopeKey(interpreterGeneration(), text);
+        if (this.cache.has(key)) {
           return;
         }
 
         const path = filePath();
         const context = createContext(applyRates, path === null ? {} : { preludeBefore: path });
         try {
-          this.remember(text, hintsForBlock((code) => interpret(context, code), text.split("\n")));
+          this.remember(key, hintsForBlock((code) => interpret(context, code), text.split("\n")));
         } catch (error) {
           console.error("Symbat: the Numbat file's inlay evaluation crashed", error);
           restartNumbat();

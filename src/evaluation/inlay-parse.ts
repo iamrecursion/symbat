@@ -772,3 +772,17 @@ export function blockKey(
     .map((earlier) => earlier.body.join("\n"));
   return [String(generation), preambleSource, ...shared, block.body.join("\n")].join("\u0000");
 }
+
+/**
+ * The cache key for something evaluated as one whole scope: a note's frontmatter hints (keyed by
+ * the preamble source) or a `.nbt` file's document hints (keyed by its text).
+ *
+ * `generation` carries the same contract it does in {@link blockKey} (what a context bakes in
+ * beyond the code fed to it) and is what makes a prelude edit or a rate refresh reach these two
+ * caches. Both used to be keyed on their source alone, and were refreshed only because the wider
+ * `refreshNoteScope` destroyed the view plugin holding them; nothing invalidates by destruction any
+ * more.
+ */
+export function wholeScopeKey(generation: number, source: string): string {
+  return [String(generation), source].join("\u0000");
+}

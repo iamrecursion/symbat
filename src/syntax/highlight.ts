@@ -10,8 +10,8 @@
 import { RangeSetBuilder, StateEffect } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { loadPrism, type Plugin } from "obsidian";
+import { blockRangesOf } from "../document/doc-cache";
 import { inNumbatBody, numbatFenceState } from "../document/fence-state";
-import { numbatBlockRanges } from "../document/fences";
 import { primeSemanticNames } from "../interpreter/numbat";
 import { KEYWORDS, NUMBER_PATTERN, tokensForLine } from "./tokenizer";
 import { semanticKind, subscribeSemanticNames } from "./type-names";
@@ -50,7 +50,7 @@ function buildDecorations(view: EditorView): DecorationResult {
   // lines rather than every line of the document on every keystroke and every scroll. Without the
   // index (no field registered) it falls back to scanning, which is what it always did.
   const spans = view.state.field(numbatFenceState, false)
-    ?? numbatBlockRanges(doc.iterLines(1, doc.lines + 1)).map((block) => ({
+    ?? blockRangesOf(doc).map((block) => ({
       shared: block.shared,
       bodyStartLine: block.bodyStartLine,
       closeLine: block.closeLine,

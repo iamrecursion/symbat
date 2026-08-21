@@ -1,6 +1,6 @@
 // Computes the document edit for a LaTeX-style Unicode expansion inside Numbat code, independent of
-// the editor and the wasm interpreter. The completion lookup is injected (in production, the wasm's
-// `get_unicode_completion`; see unicode/input.ts), as is the one scope test that needs Obsidian —
+// the editor and of where the codes come from. The completion lookup is injected (in production,
+// unicode/expand.ts, wired up by unicode/input.ts), as is the one scope test that needs Obsidian —
 // whether the caret is in a Numbat-typed property's value — so this module imports neither and can
 // be exercised against a real CodeMirror `EditorState` in tests.
 

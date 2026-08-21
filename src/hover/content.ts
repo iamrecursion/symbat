@@ -2,65 +2,33 @@
 // built for a symbol rather than for a selected completion, plus the go-to-definition link that
 // only a hover offers.
 //
-// Every surface that hovers builds its card here — the editor (hover/hover.ts), the REPL input and
-// the Numbat property field (through their `NumbatInput` hosts) — so the popup is one thing
-// wherever it opens. What differs is only *which* interpreter context the symbol is asked about.
+// Every surface that hovers builds its card here (the editor (hover/hover.ts), the REPL input, the
+// `.nbt` editor and the Numbat property field) so the popup is one thing wherever it opens. What
+// differs is only which facts the symbol is asked about (hover/card.ts).
 //
-// Not everything hoverable is a name the interpreter knows. Three kinds are not, and each has a
-// card built from what *is* knowable: a struct field (typed and evaluated, but undocumented), a
-// literal (evaluated), and the names a declaration itself binds — its parameters, its fields, its
-// `where`/`and` locals (read back out of the source — see hover/declarations.ts).
+// What a card should *say* is decided in hover/card.ts, which is pure and tested; this module turns
+// that into elements, which needs Obsidian and a document. The one card it decides itself is the
+// declaration card, which asks no interpreter anything: it is for the names a declaration binds —
+// its parameters, its fields, its `where`/`and` locals — read back out of the source (see
+// hover/declarations.ts) because nothing else knows them.
 
 import type { App } from "obsidian";
-import { type CompletionInfo, declaredInfo, declaredTypeHtml, decoratorInfo, describedInfo } from "../completion/docs";
-import { decoratorDoc } from "../completion/expressions";
+import { declaredInfo, declaredTypeHtml } from "../completion/docs";
 import { buildDocPopupContent } from "../completion/render";
-import { completionInfo, completionSignature, interpret, type Numbat } from "../interpreter/numbat";
-import { deriveScopeValue } from "../scope/eval";
 import { hasDefinitionTarget, jumpToDefinition } from "../scope/goto-definition";
 import type { DefinitionMatch } from "../scope/model";
+import type { SymbolFactsSource } from "./card";
+import { symbolCardPlan } from "./card";
 import type { DeclaredSymbol } from "./declarations";
 import type { HoverSymbol } from "./parse";
 
-/** Numbat's `print_info` opens a function's card with this label; its `Signature:` line already
- *  states the type, so the popup does not add a `Type:` one (matching what the completer does for a
- *  `function` row). */
-const FUNCTION_CARD = /^\s*Function:/;
-
 /**
- * The documentation card for `symbol`, asked of `context`, or `null` when there is nothing to say
- * about it.
- *
- * A plain name goes to `print_info`. A member chain and a literal are evaluated instead:
- * `print_info("costs.total")` is `Not found` (Numbat exposes docs by name, and neither a member
- * path nor `21.1 km` is one), while `type()` and evaluation both resolve them. A name that is
- * neither documented nor typed — a half-typed word, a keyword, a parameter — yields `null` here;
- * the caller may still have a {@link declarationCard} for it.
+ * The documentation card for `symbol`, built from what `facts` can answer about it, or `null` when
+ * there is nothing to say. See {@link symbolCardPlan} for which facts a card is made of and why.
  */
-export function symbolCard(context: Numbat, symbol: HoverSymbol): HTMLElement | null {
-  // A decorator exists only in the grammar — no context has heard of it, and `print_info` would
-  // answer for a binding that happens to share the name — so its card comes from the completer's
-  // table. An `@` on a name Numbat has no decorator for says nothing at all.
-  if (symbol.kind === "decorator") {
-    const doc = decoratorDoc(symbol.name);
-    return doc === null ? null : buildDocPopupContent(decoratorInfo(symbol.name, doc));
-  }
-
-  if (symbol.kind === "name") {
-    const info = completionInfo(context, symbol.probe);
-    if (info !== null) {
-      const signature = FUNCTION_CARD.test(plainStart(info)) ? null : completionSignature(context, symbol.probe);
-      return buildDocPopupContent(info, signature);
-    }
-  }
-
-  const signature = completionSignature(context, symbol.probe);
-  if (signature === null) {
-    return null;
-  }
-
-  const label = symbol.kind === "quantity" ? "Quantity" : "Field";
-  return buildDocPopupContent(describedInfo(label, symbol.probe, evaluated(context, symbol.probe)), signature);
+export function symbolCard(facts: SymbolFactsSource, symbol: HoverSymbol): HTMLElement | null {
+  const plan = symbolCardPlan(facts, symbol);
+  return plan === null ? null : buildDocPopupContent(plan.info, plan.signature);
 }
 
 /**
@@ -72,17 +40,6 @@ export function symbolCard(context: Numbat, symbol: HoverSymbol): HTMLElement | 
 export function declarationCard(declared: DeclaredSymbol): HTMLElement {
   const info = declaredInfo(declared.kind, declared.name, declared.owner);
   return buildDocPopupContent(info, declared.type === null ? null : declaredTypeHtml(declared.type));
-}
-
-/** The evaluated value of an expression, or `null` when it has none to show. */
-function evaluated(context: Numbat, expression: string): string | null {
-  const value = deriveScopeValue((code) => interpret(context, code), expression);
-  return value.kind === "value" ? value.valueHtml : null;
-}
-
-/** The first line of a doc body as plain text, for the function check. */
-function plainStart(info: CompletionInfo): string {
-  return info.bodyHtml.split("\n")[0].replace(/<[^>]*>/g, "");
 }
 
 /**

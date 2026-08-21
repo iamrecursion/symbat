@@ -110,7 +110,7 @@ export interface PreambleSettings {
 
 // Bumped when the prelude's reserved-name set arrives or is dropped. It is not a setting, but the
 // derivation reads it (a property named after a prelude unit is skipped), and it moves *silently* —
-// `primeReservedNames` fills the set from an evaluation path, announcing nothing.
+// `ensureReservedNames` fills the set from an evaluation path, announcing nothing.
 let reservedEpoch = 0;
 
 /**

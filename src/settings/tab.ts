@@ -19,7 +19,12 @@ import {
   type SettingDefinitionItem,
   type SettingGroupItem,
 } from "obsidian";
-import { invalidateExpressionCompletion } from "../interpreter/numbat";
+import {
+  describeInterpreterPath,
+  poolReport,
+  releaseInterpreterContexts,
+  setInterpreterThread,
+} from "../interpreter/numbat";
 import type SymbatPlugin from "../main";
 import { invalidateReservedNames } from "../properties/note";
 import {
@@ -181,14 +186,20 @@ export class SymbatSettingTab extends PluginSettingTab {
    */
   private applyEffect(effect: SettingEffect): void {
     switch (effect) {
+      case "clearCaches":
+        this.plugin.clearCaches();
+        break;
       case "ensureExchangeRates":
         // Called unconditionally, not only when switching the toggle on: turning it *off* has to
         // clear the rates, which this already does internally.
         void this.plugin.ensureExchangeRates();
         break;
       case "invalidateCompletionVocabulary":
-        invalidateExpressionCompletion();
+        releaseInterpreterContexts();
         invalidateReservedNames();
+        break;
+      case "applyInterpreterThread":
+        setInterpreterThread(this.plugin.settings.interpreterThread);
         break;
       case "markPreludeDirty":
         this.plugin.markPreludeDirty();
@@ -275,14 +286,17 @@ export class SymbatSettingTab extends PluginSettingTab {
     setting
       .setClass("numbat-version-card")
       .setName(`Symbat ${this.plugin.manifest.version}`)
-      .setDesc(`Obsidian ${apiVersion}`)
+      // The active interpreter path, beside the versions rather than beside the setting that asks
+      // for it. The setting says what was *requested* but this says what happened, crucial for
+      // diagnosis where it doesn't work.
+      .setDesc(`Obsidian ${apiVersion} — interpreter: ${describeInterpreterPath()}`)
       .addButton((button) =>
         button.setIcon("copy").setButtonText(COPY_DEBUG_INFO).onClick(() => void this.copyDebugInfo())
       );
   }
 
   /** A copyable block of version/platform info for bug reports. */
-  private debugInfo(): string {
+  private async debugInfo(): Promise<string> {
     const internal = this.app as unknown as InternalApp;
     const os = Platform.isMacOS
       ? "macOS"
@@ -303,6 +317,9 @@ export class SymbatSettingTab extends PluginSettingTab {
       `Obsidian installer version: ${internal.installerVersion ?? "unknown"}`,
       `Obsidian API version: ${apiVersion}`,
       `Platform: ${os} (${kind})`,
+      `Interpreter: ${describeInterpreterPath()}`,
+      "",
+      await poolReport(),
       "",
       "Community plugins:",
     ];
@@ -326,7 +343,7 @@ export class SymbatSettingTab extends PluginSettingTab {
   /** Copy the debug info to the clipboard and confirm with a notice. */
   private async copyDebugInfo(): Promise<void> {
     try {
-      await navigator.clipboard.writeText(this.debugInfo());
+      await navigator.clipboard.writeText(await this.debugInfo());
       new Notice("Copied Symbat debug info to the clipboard.");
     } catch (error) {
       console.error("Symbat: failed to copy debug info", error);

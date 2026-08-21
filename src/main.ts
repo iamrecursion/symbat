@@ -18,40 +18,50 @@ import { numbatFenceState } from "./document/fence-state";
 import { numbatMarkdownPairGuard } from "./document/markdown-pair";
 import { registerCodeBlocks } from "./evaluation/codeblock";
 import { numbatInlayHints, refreshNumbatInlays } from "./evaluation/inlay";
-import {
-  commitText,
-  evaluateNoteUnits,
-  inlineConfig,
-  numbatInlineEval,
-  refreshNumbatInline,
-} from "./evaluation/inline";
+import { commitText, inlineConfig, numbatInlineEval, refreshNumbatInline } from "./evaluation/inline";
 import { registerInlineEvalReading } from "./evaluation/inline-reading";
 import { invalidateDefinitions } from "./hover/definition";
 import { dismissHover, showHoverAtCursor } from "./hover/hover";
 import { noteHoverExtension } from "./hover/note";
 import { mapVimHoverKey, unmapVimHoverKey } from "./hover/vim";
 import { ModuleGraph } from "./imports/graph";
+import { clearFacts } from "./interpreter/facts";
 import {
+  allowInterpreterSpawn,
+  ask,
   clearExchangeRates,
-  disposeCompletionContexts,
+  disposeInterpreter,
   ensureNumbatReady,
+  interpreterCanBeStopped,
   interpreterGeneration,
   invalidateCachedEvaluations,
-  invalidateExpressionCompletion,
   isNumbatReady,
   loadExchangeRates,
   type PreludePart,
   primeExchangeRatesCache,
-  restartNumbat,
+  refillEvaluationBudget,
+  releaseInterpreterContexts,
+  setInterpreterThread,
   setUserPrelude,
+  stopEvaluations,
 } from "./interpreter/numbat";
+import { clearRefusals, describeLimit, shouldAnnounceLimit } from "./interpreter/refusals";
 import { VersionedLoad } from "./interpreter/versioned-load";
 import { registerZonedDateTypes } from "./properties/date-type";
 import { watchPointerDown } from "./properties/focus-guard";
-import { invalidateReservedNames, notePreamble, primeReservedNames, propertyTypeManager } from "./properties/note";
+import {
+  ensureReservedNames,
+  invalidateReservedNames,
+  notePreamble,
+  propertyTypeManager,
+  reservedNamesRecord,
+  seedReservedNames,
+  whenReservedNamesPrimed,
+} from "./properties/note";
 import { cancelBatches, clearPropertyOutcomes } from "./properties/note-outcomes";
 import { invalidateAllPreambles, invalidatePreamblesFor } from "./properties/preamble-cache";
 import { installTypeOrder } from "./properties/registry";
+import { reservedNamesKey, type ReservedNamesRecord, seededReservedNames } from "./properties/reserved-names";
 import { disposePropertyEditors, refreshPropertyEditors, registerNumbatPropertyType } from "./properties/type";
 import { disposeZoneEditors, sweepZoneUnclips } from "./properties/zone-editor";
 import { setCaretTarget } from "./scope/goto-definition";
@@ -91,6 +101,11 @@ export default class SymbatPlugin extends Plugin {
   /** Whether the on-disk exchange-rate cache has been read into memory yet (once). */
   private exchangeRatesSeeded = false;
 
+  /** The reserved-name record currently on disk, or `null` when there is none worth keeping. Held
+   *  so that a settings write made before any interpreter has answered puts it back rather than
+   *  deleting it — see {@link saveSettings}. */
+  private storedReservedNames: ReservedNamesRecord | null = null;
+
   /** The settings tab, kept so a prelude path rewritten by a vault rename can re-render it in
    *  place. Definitely assigned in {@link onload}. */
   private settingTab!: SymbatSettingTab;
@@ -124,6 +139,13 @@ export default class SymbatPlugin extends Plugin {
    * The interpreter itself is initialized lazily on first use. */
   async onload(): Promise<void> {
     await this.loadSettings();
+
+    // Write the prelude's own vocabulary back the moment the interpreter produces it, so the *next*
+    // session starts with it (properties/reserved-names.ts). Hung off the arrival rather than off a
+    // settings change, or a vault that never opens the settings tab would never persist one.
+    whenReservedNamesPrimed(() => {
+      void this.saveSettings();
+    });
 
     this.registerView(VIEW_TYPE_NUMBAT_REPL, (leaf) => new NumbatReplView(leaf, this));
 
@@ -297,8 +319,8 @@ export default class SymbatPlugin extends Plugin {
         });
       });
     }));
-    // The escape hatch. Every cache here is invalidated by something, and the point of this command
-    // is that it needs no theory about which something was missed.
+    // The escape hatch. Every cache here is invalidated by something, and this command avoids
+    // missing any by just bumping the generation.
     this.addCommand({
       id: "clear-caches",
       name: "Clear all caches and re-evaluate",
@@ -307,6 +329,30 @@ export default class SymbatPlugin extends Plugin {
         new Notice("Symbat: caches cleared. Everything on screen will re-evaluate.");
       },
     });
+    // The other escape hatch, that only exists on a separate thread. A `checkCallback` rather than
+    // a `callback` because an entry in the palette that silently does nothing is a support ticket.
+    // Off the worker path the main thread *is* the evaluation thread, so no click is dispatched and
+    // no palette opens while there is anything to stop.
+    this.addCommand({
+      id: "stop-evaluations",
+      name: "Stop all running evaluations",
+      checkCallback: (checking: boolean) => {
+        if (!interpreterCanBeStopped()) {
+          return false;
+        }
+        if (!checking) {
+          void stopEvaluations().then((stopped) => {
+            new Notice(
+              stopped
+                ? "Symbat: evaluation stopped. Notes that were part-way through will say so until they are edited."
+                : "Symbat: nothing was evaluating.",
+            );
+          });
+        }
+        return true;
+      },
+    });
+
     this.addCommand({
       id: "search-scope",
       name: "Search the note scope and prelude",
@@ -388,6 +434,17 @@ export default class SymbatPlugin extends Plugin {
     // closes it. This is the event that says so (properties/zone-editor.ts).
     this.registerEvent(this.app.workspace.on("layout-change", () => sweepZoneUnclips()));
 
+    setInterpreterThread(this.settings.interpreterThread);
+
+    // Permission to spawn, not an instruction to. Constructing a thread, compiling 1.9 MB of wasm
+    // and loading a standard library is a real cost, and a vault with no Numbat content in it
+    // should never pay any of it; `ensureNumbatReady()` still spawns on the first real demand. What
+    // this avoids is doing that during Obsidian's own startup, where it competes with everything
+    // the reader is actually waiting for.
+    this.app.workspace.onLayoutReady(() => {
+      allowInterpreterSpawn();
+    });
+
     // We explicitly avoid initializing the WASM interpreter on load, as we do it lazily instead to
     // conserve memory and compute.
   }
@@ -420,7 +477,7 @@ export default class SymbatPlugin extends Plugin {
     clearPropertyOutcomes();
     disposeZoneEditors();
     this.moduleGraph?.dispose();
-    disposeCompletionContexts();
+    disposeInterpreter();
   }
 
   // VAULT EVENTS
@@ -432,6 +489,43 @@ export default class SymbatPlugin extends Plugin {
   private onNoteChanged(path: string): void {
     invalidatePreamblesFor(path);
     this.moduleGraph?.noteChanged(path);
+
+    // A changed note is a different note, so what the last one cost says nothing about it: give it
+    // its whole evaluation allowance back (interpreter/budget.ts).
+    //
+    // This fires on the vault's *saved* content while the evaluation caches key on the editor
+    // buffer, which is better than it sounds. A note that ran out of time stays out of time through
+    // a burst of typing — every keystroke moves the cache key, finds the refusal already filed
+    // there and repaints it for the cost of a map lookup — and comes back to life a couple of secs
+    // after the reader stops. One revival per edit rather than one per keystroke.
+    refillEvaluationBudget(path);
+  }
+
+  /**
+   * Tell the reader that a note ran out of its evaluation allowance.
+   *
+   * Two channels, deliberately unequal. The `console.warn` is unthrottled and names everything,
+   * because it is the trail a bug report is built from and "Copy debug info" is what people paste.
+   * The `Notice` is limited to one a minute across the whole vault ({@link shouldAnnounceLimit}),
+   * because the trip is per block rather than per note and a note full of fences would otherwise
+   * stack two hundred identical toasts on top of the problem it reports.
+   *
+   * What the Notice adds is the half that does not fit beside a line of code, which is where the
+   * message itself already appears: which note, how long it had, and where to change that.
+   */
+  reportEvaluationLimit(path: string): void {
+    const limit = describeLimit(this.settings.evaluationLimitMs);
+    console.warn(`Symbat: stopped evaluating ${path === "" ? "a note" : path} after ${limit}.`);
+
+    if (!shouldAnnounceLimit()) {
+      return;
+    }
+
+    const name = path === "" ? "this note" : (path.split("/").pop() ?? path).replace(/\.md$/, "");
+    new Notice(
+      `Symbat stopped evaluating "${name}" after ${limit}, so the rest of it has no values. `
+        + "Change or remove the limit in Settings → Symbat → Runtime.",
+    );
   }
 
   /** A note was renamed or deleted, so link resolution may have moved anywhere. */
@@ -509,11 +603,28 @@ export default class SymbatPlugin extends Plugin {
     cancelBatches();
     this.moduleGraph?.reset();
 
+    // Every note gets its evaluation allowance back. Not strictly required as an allowance refills
+    // on its own after a second of quiet, but this command's promise is that everything on screen
+    // re-evaluates, and a note that spent its ten seconds in the last second would otherwise be
+    // handed straight back the refusal it was cleared to escape. It is also the route back for the
+    // limit setting itself, which names this effect for exactly that reason.
+    refillEvaluationBudget(null);
+
+    // And every note that gave up gets tried again, rather than waiting out its cool-down. The
+    // generation bump below would strand those entries anyway — they are stamped with it — but this
+    // command is written so that it needs no theory about what its callees happen to do.
+    clearRefusals();
+
+    // And everything the interpreter had been asked about a name is forgotten. The generation bump
+    // below strands these entries too (it is part of every key) so this is deliberately redundant
+    // for the same reason the two above are.
+    clearFacts();
+
     // {@link markPreludeDirty} bumps this too, so this call is deliberately redundant. The point of
     // this command is that it needs no theory about what its callees happen to do, and the bump is
     // the one step nothing else here can stand in for.
     invalidateCachedEvaluations();
-    disposeCompletionContexts();
+    releaseInterpreterContexts();
 
     // The prelude, the reserved names, the expression completion, the property outcomes, the
     // preambles, the definitions, the open editors, the property rows, the scope inspectors and the
@@ -551,7 +662,7 @@ export default class SymbatPlugin extends Plugin {
   markPreludeDirty(): void {
     invalidateCachedEvaluations();
     this.prelude.invalidate();
-    invalidateExpressionCompletion();
+    releaseInterpreterContexts();
     invalidateReservedNames();
     this.refreshNoteScope();
 
@@ -942,22 +1053,46 @@ export default class SymbatPlugin extends Plugin {
 
     const config = inlineConfig(this);
     const { doc } = view.state;
-    primeReservedNames(this.settings.fetchExchangeRates);
+    void ensureReservedNames(this.settings.fetchExchangeRates);
     const units = scannedNote(doc, config);
 
     // The source path is what attaches `numbat-use` imports; without it this pass would evaluate in
     // a narrower scope than the widgets it is committing, and silently skip every span that depends
     // on an import.
     const preamble = notePreamble(this, frontmatterBodyOf(doc), sourcePathOf(view));
-    let results;
-    try {
-      results = evaluateNoteUnits(units, this.settings.fetchExchangeRates, config, preamble);
-    } catch (error) {
-      console.error("Symbat: inline evaluation crashed while committing", error);
-      restartNumbat();
+    const evaluation = await ask("evalNoteUnits", {
+      units,
+      applyRates: this.settings.fetchExchangeRates,
+      config,
+      preamble,
+      budget: { budgetMs: this.settings.evaluationLimitMs, key: sourcePathOf(view) },
+    }, { priority: "interactive", note: sourcePathOf(view) ?? undefined });
+    if (evaluation === null) {
       new Notice("Symbat: evaluation failed.");
       return;
     }
+
+    // **The document is re-checked before a single offset is used.** Every `from`/`to` below was
+    // computed from `doc`, and the await above is a window a fast typist can land an edit in — an
+    // edit this pass has no view of, since it was not written when the spans were located. Writing
+    // the values at those offsets into a document that has moved corrupts the note. Bailing is the
+    // right answer rather than mapping the positions forward: a commit is a deliberate action, and
+    // the reader can repeat it in the state they meant it for.
+    if (view.state.doc !== doc) {
+      new Notice("Symbat: the note changed while evaluating — nothing was committed.");
+      return;
+    }
+
+    // The one budgeted request whose caller has somewhere better to put a refusal than a hint
+    // beside the line: nothing is written for a span the limit refused, so without this the reader
+    // is told "no inline results to commit here" about a note that was full of them and simply ran
+    // out of time. Reported, not filed in the ledger — a commit is a deliberate action, and
+    // refusing the next one for a minute would answer a keystroke the reader has not made yet.
+    if (evaluation.exceeded) {
+      this.reportEvaluationLimit(sourcePathOf(view) ?? "");
+    }
+
+    const results = evaluation.value;
 
     const changes: { from: number; to: number; insert: string; }[] = [];
     let inlineIndex = -1;
@@ -983,7 +1118,15 @@ export default class SymbatPlugin extends Plugin {
     }
 
     if (changes.length === 0) {
-      new Notice("Symbat: no inline results to commit here.");
+      // Which of the two it is matters here. The limit's own Notice is throttled across the vault
+      // (a note full of fences would otherwise stack fifty of them), and a throttle is exactly
+      // wrong for a command the reader just invoked: "nothing to commit" would be the only thing
+      // they were told, and it would not be true.
+      new Notice(
+        evaluation.exceeded
+          ? "Symbat: nothing was committed — this note ran out of its evaluation time limit."
+          : "Symbat: no inline results to commit here.",
+      );
       return;
     }
 
@@ -1174,10 +1317,47 @@ export default class SymbatPlugin extends Plugin {
     // `preludePaths` shape); `Object.assign` would otherwise alias the shared
     // `DEFAULT_SETTINGS.preludeFiles` and later mutations would touch it.
     this.settings.preludeFiles = normalizePreludeFiles(loaded?.preludeFiles, loaded?.preludePaths);
+
+    // What the prelude defines, as the last session found it. Restored here rather than waited for,
+    // so the first note read this session does not derive its frontmatter with an empty set and
+    // then re-derive it when the real one lands (properties/reserved-names.ts). `normalizeSettings`
+    // is a whitelist over the settings' own keys, so this rides alongside them rather than in them.
+    const key = this.reservedNamesKey();
+    const seed = seededReservedNames(loaded?.reservedNames, key);
+    if (seed !== null) {
+      seedReservedNames(seed);
+
+      // Held so a write that happens before an interpreter has answered can put it back. See
+      // {@link saveSettings}.
+      this.storedReservedNames = { key, names: seed };
+    }
+  }
+
+  /** What the persisted reserved-name set is stamped with — see
+   *  {@link import("./properties/reserved-names").reservedNamesKey}. */
+  private reservedNamesKey(): string {
+    return reservedNamesKey(
+      this.manifest.version,
+      this.settings.preludeFiles.map((file) => file.path),
+      this.settings.fetchExchangeRates,
+    );
   }
 
   /** Persist the current settings to Obsidian's plugin data. */
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    // The reserved names ride alongside the settings rather than inside them: `saveData` replaces
+    // the whole file, so a key left out here is a key deleted.
+    //
+    // Which is why the seed this session loaded stands in when no interpreter has answered yet.
+    // Every write before the first evaluation — a settings toggle, a prelude path — would otherwise
+    // delete the record whose entire purpose is to spare the *next* session a derivation storm, and
+    // the storm it spares is the one nobody would connect to having opened the settings tab. A
+    // record the interpreter has produced always wins; a stale key is dropped rather than rewritten
+    // (`reservedNamesKey` has moved, so what is held no longer describes this vault).
+    const key = this.reservedNamesKey();
+    const reserved = reservedNamesRecord(key)
+      ?? (this.storedReservedNames?.key === key ? this.storedReservedNames : null);
+    this.storedReservedNames = reserved;
+    await this.saveData(reserved === null ? this.settings : { ...this.settings, reservedNames: reserved });
   }
 }

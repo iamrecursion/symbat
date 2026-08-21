@@ -197,12 +197,25 @@ jobs:
       - name: Lint
         run: make lint
 
+      # The interpreter's three import doors. Every failure mode is silent: a
+      # second `.wasm` importer doubles main.js, a second bindings importer puts
+      # a whole extra interpreter in the bundle, and a second importer of the
+      # built worker means two places believe they own the one instance Numbat's
+      # set-once rate store permits. None shows up as anything but a size a
+      # reviewer would have to notice.
+      - name: Assert the interpreter's import doors
+        run: make doors
+
       - name: Unit tests
         run: make test-unit
 
       - name: Integration tests
         run: make test-integration
 
+      # Also where the worker bundle is built, and therefore where its two
+      # guards and the two size budgets fire: a worker that imports Obsidian or
+      # the wasm binary is a build error, and either half of `main.js` growing
+      # past its budget fails here rather than in review.
       - name: Bundle
         run: make build
 

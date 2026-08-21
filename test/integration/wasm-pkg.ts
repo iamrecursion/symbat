@@ -31,6 +31,12 @@ if (!built && process.env.CI) {
  */
 export const skip = built ? false : "wasm not built (run `make wasm`)";
 
+/** The Numbat module itself, base64-encoded exactly as esbuild inlines it into the bundle — which
+ *  is the form the worker's `init` message carries. */
+export function wasmBase64(): string {
+  return readFileSync(pkgWasm).toString("base64");
+}
+
 /**
  * Imports the bindings and instantiates the wasm module, returning the module namespace.
  * wasm-bindgen caches the instance, so repeated calls are cheap and every caller shares one
@@ -57,6 +63,28 @@ export function newContext(mod: any): any {
   const context = mod.Numbat.new(true, true, mod.FormatType.Html);
   context.interpret(NULLABLE_PRELUDE).free();
   return context;
+}
+
+// The engine module is a singleton — one wasm instance, one set of contexts — exactly as it is in
+// the plugin, so one start serves every test in a file.
+let engineStarted: Promise<typeof import("../../src/interpreter/worker/engine.ts")> | null = null;
+
+/**
+ * Start the plugin's own engine module against the real bindings, and hand it back.
+ *
+ * This is what makes the seam testable at all. `worker/engine.ts` imports no Obsidian and no DOM
+ * precisely so that this can exist: the tasks above it can be driven against real Numbat and
+ * compared with the pure evaluation modules driven directly, which is the only way to see that a
+ * reused context has not leaked a definition from one note into the next.
+ */
+export async function loadEngine(): Promise<typeof import("../../src/interpreter/worker/engine.ts")> {
+  engineStarted ??= (async () => {
+    const engine = await import("../../src/interpreter/worker/engine.ts");
+    await engine.initEngine(readFileSync(pkgWasm).toString("base64"));
+    return engine;
+  })();
+
+  return engineStarted;
 }
 
 /**

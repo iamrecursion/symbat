@@ -133,6 +133,25 @@ export interface NotePreamble {
 /** The preamble of a note with no contributing properties. */
 export const EMPTY_PREAMBLE: NotePreamble = { bindings: [], skips: [], source: "" };
 
+/**
+ * The statements a preamble contributes, in the order they must be replayed: the cross-note imports
+ * first, then each binding's own definitions and the binding itself.
+ *
+ * Pure, and separated from the replay for exactly one reason: the replay runs where the interpreter
+ * is, and after the seam that is not where the preamble is derived. A list of strings crosses; a
+ * loop holding a context does not.
+ */
+export function preambleChunks(preamble: NotePreamble): string[] {
+  const chunks: string[] = [...(preamble.imports ?? [])];
+  for (const binding of preamble.bindings) {
+    // The definitions the binding's own expression needs (an array of objects' element type) come
+    // first; almost every binding has none.
+    chunks.push(...binding.defs, binding.code);
+  }
+
+  return chunks;
+}
+
 // NUMBAT NAMES FROM YAML KEYS
 // ================================================================================================
 
@@ -254,9 +273,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** A short, identifier-safe digest (FNV-1a, base36) used to keep generated struct names from
- *  colliding — see {@link PreambleRules.namespace}. */
-function digest(text: string): string {
+/** A short, identifier-safe digest (FNV-1a, base36). Keeps generated struct names from colliding
+ *  (see {@link PreambleRules.namespace}), and stamps the persisted reserved-name set
+ *  (properties/reserved-names.ts) with what it was built from. */
+export function digest(text: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i += 1) {
     hash ^= text.charCodeAt(i);

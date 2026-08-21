@@ -149,9 +149,9 @@ function register(
  * called through as it stands. That is the whole benefit of reading rather than replacing: whatever
  * is in the registry is what the reader has chosen to have there.
  *
- * Only when there is no built-in widget to borrow — an Obsidian that renamed the type, or a
- * stripped-down one — does this fall back to a plain `<input>`. That is enough to keep the property
- * editable, which is the point of having a fallback at all.
+ * Only when there is no built-in widget to borrow (an Obsidian that renamed the type, or a
+ * stripped-down one) does this fall back to a plain `<input>`. That is enough to keep the property
+ * editable as a fallback.
  */
 function drawBuiltin(
   widgets: Record<string, unknown>,

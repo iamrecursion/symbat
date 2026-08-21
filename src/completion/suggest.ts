@@ -5,8 +5,8 @@
 // declaration's return `->`, or a decorator's `@`. Selecting a row inserts the name (a decorator
 // also gets the punctuation its grammar requires). It is the code-block counterpart of
 // the REPL completer (see views/input.ts), sharing the categorization and trigger logic in
-// completion/expressions.ts; only the source context differs (a shared prelude context here, the
-// live session context in the REPL).
+// completion/expressions.ts; only the scope differs (the code above the cursor here, the live
+// session in the REPL).
 //
 // It stands aside for the `\code` completer (unicode/suggest.ts) whenever the caret sits in a code,
 // so the two never both fire.
@@ -23,18 +23,10 @@ import {
 import { type FenceSpan, inNumbatBody, numbatFenceState } from "../document/fence-state";
 import { insideNumbatFence } from "../document/fences";
 import { inlineSpanAtCursor } from "../evaluation/inline";
-import {
-  completionInfo,
-  completionSignature,
-  contextGeneration,
-  ensureBlockCompletion,
-  ensureNumbatReady,
-  expressionCompletionCandidates,
-  isNumbatReady,
-  type Numbat,
-  structFields,
-  touchCompletionIdle,
-} from "../interpreter/numbat";
+import { type ScopeSpec, WANT_INFO, WANT_SIGNATURE } from "../interpreter/facts";
+import { scopeFactsHost } from "../interpreter/live-facts";
+import { ask, ensureNumbatReady, isNumbatReady, touchCompletionIdle } from "../interpreter/numbat";
+import type { CompletionsReply } from "../interpreter/protocol";
 import type SymbatPlugin from "../main";
 import { type PropertyValueSite } from "../properties/parse";
 import { numbatPropertySiteAt, replayChunksAt } from "../scope/replay";
@@ -47,6 +39,7 @@ import {
   boundCompletions,
   declaredNameCompletions,
   decoratorCompletions,
+  type ExprCategories,
   type ExprCompletion,
   expressionCompletions,
   exprTriggerAt,
@@ -56,8 +49,12 @@ import {
 } from "./expressions";
 import { buildDocPopupContent, DocPopup, renderExprSuggestion } from "./render";
 
-/** Maximum rows shown at once. */
+/** Maximum rows shown at once. Also exactly how many rows are asked about: Obsidian truncates the
+ *  list to this, so probing further would be filling facts for rows that cannot be drawn. */
 const SUGGESTION_LIMIT = 60;
+
+/** What the documentation popup asks about a row: the body, and the type line above it. */
+const WANT_DWELL = WANT_INFO | WANT_SIGNATURE;
 
 // CORE TYPES
 // ================================================================================================
@@ -116,14 +113,17 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
   /** Whether a background warm-up is already in flight (avoids piling them up). */
   private warming = false;
 
-  /** The block-completion context of the current popover, for signature/info lookups, with the
-   *  {@link contextGeneration} it was obtained at. Read only through {@link liveBlockContext} — the
-   *  interpreter frees these behind our back (the idle release, a prelude change, a restart). */
-  private lastBlockContext: Numbat | null = null;
+  /** The scope the current popover's rows were resolved against, or `null` when they were served
+   *  without one. Named rather than held: what the renderer and the dwell popup need is a key to
+   *  read facts under, and a key cannot be freed behind their backs the way a context can. */
+  private lastScope: ScopeSpec | null = null;
 
-  /** The {@link contextGeneration} {@link lastBlockContext} was obtained at; when the module's
-   *  generation moves past it, that pointer is into a freed context. */
-  private lastBlockGeneration = 0;
+  /** Facts about the names in {@link lastScope} — read synchronously by the renderer, filled by
+   *  {@link getSuggestions} before the rows are handed over. */
+  private readonly facts = scopeFactsHost(
+    () => this.lastScope,
+    () => this.plugin.settings.completionIdleSeconds * 1000,
+  );
 
   /** The suggestions currently shown, so a selected index maps back to its name. */
   private shown: ExprSuggestion[] = [];
@@ -287,6 +287,9 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     // engine candidate is a parse error there, so it is served without touching the wasm at all.
     const bound = boundCompletions(beforeAnchor, context.query, enabled);
     if (bound !== null) {
+      // No scope is named for these, and none should be: they are served without touching the wasm,
+      // so nothing about them is to be read out of a scope some earlier query left behind.
+      this.lastScope = null;
       this.shown = bound;
       return bound;
     }
@@ -302,6 +305,7 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       inlineSpan === null && fmSite === null,
     );
     if (decorators !== null) {
+      this.lastScope = null;
       this.shown = decorators;
       return decorators;
     }
@@ -323,21 +327,18 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     }
     void this.plugin.ensureExchangeRates();
 
-    // Replay the code the user has already written above the cursor, so their own definitions
-    // complete. `ensureBlockCompletion` caches the built context, so this only rebuilds when the
-    // code above changes — not on every keystroke.
-    const chunks = this.codeBeforeCursor(context);
-    const built = ensureBlockCompletion(chunks, settings.fetchExchangeRates);
-    if (built === null) {
-      return [];
-    }
+    // The code the user has already written above the cursor, named rather than replayed here, so
+    // their own definitions complete. The interpreter caches the context it builds from that name,
+    // so it only rebuilds when the code above changes instead of on every keystroke.
+    const scope: ScopeSpec = {
+      chunks: this.codeBeforeCursor(context),
+      applyRates: settings.fetchExchangeRates,
+    };
+    // Name the scope the rows belong to, so the renderer and the dwell popup can read facts about
+    // them without a handle of their own.
+    this.lastScope = scope;
 
-    // Stash the context so renderSuggestion / the dwell popup can look up signatures and
-    // documentation against it.
-    this.lastBlockContext = built.context;
-    this.lastBlockGeneration = contextGeneration();
-
-    // Keep the context warm while completing, and schedule its release once idle.
+    // Keep the scope's context warm while completing, and schedule its release once idle.
     touchCompletionIdle(settings.completionIdleSeconds * 1000);
 
     // Member position: Numbat's own completer offers nothing after a `.`, so the struct's fields
@@ -345,27 +346,59 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     // all names that cannot legally appear there. A base that is not a struct falls through to the
     // ordinary behavior.
     const memberBase = enabled.identifiers ? memberBaseAt(beforeAnchor) : null;
-    if (memberBase !== null) {
+    const reply = await ask("completions", {
+      ref: { kind: "scope", spec: scope },
+      query: context.query,
+      ...(memberBase === null ? {} : { memberBase }),
+    }, { priority: "interactive", group: "completions" });
+    if (reply === null) {
+      return [];
+    }
+
+    if (memberBase !== null && reply.fields !== null) {
       const query = context.query.toLowerCase();
-      const fields = structFields(built.context, memberBase)
+      const fields = reply.fields
         .filter((field) => field.toLowerCase().startsWith(query))
         .map((field) => ({ name: field, category: "field" as const, probeName: `${memberBase}.${field}` }));
       if (fields.length > 0) {
         this.shown = fields;
+        await this.fillSignatures(fields);
         return fields;
       }
     }
 
+    // A base that is not a struct falls through to the ordinary behavior, which the same answer
+    // already carries the candidates for.
+    return this.ordinaryCompletions(context, beforeAnchor, scope, enabled, reply);
+  }
+
+  /**
+   * The name completions for a non-member position: what the engine offers, plus what the enclosing
+   * declaration itself binds.
+   *
+   * Split out from {@link getSuggestions} only because the member branch falls through into it —
+   * a `.` after something that turns out not to be a struct.
+   */
+  private async ordinaryCompletions(
+    context: EditorSuggestContext,
+    beforeAnchor: string,
+    scope: ScopeSpec,
+    enabled: ExprCategories,
+    reply: CompletionsReply,
+  ): Promise<ExprSuggestion[]> {
+    if (reply.vocab === null) {
+      return [];
+    }
+
     const allowed = allowedCategoriesAt(beforeAnchor);
-    const raw = expressionCompletionCandidates(built.context, context.query);
-    const engine = expressionCompletions(raw, built.vocab, enabled, allowed);
+    const engine = expressionCompletions([...reply.candidates], reply.vocab, enabled, allowed);
 
     // What the enclosing declaration itself binds completes first — its type variables at a type
     // position, its parameters and `where`/`and` locals in a value one. They are the most
     // contextual names there are, and the engine knows none of them. The declaration header may sit
     // several lines above the cursor, so the scope text spans the replayed code as well as the
     // current line.
-    const scopeText = `${chunks.join("\n")}\n${beforeAnchor}`;
+    const scopeText = `${scope.chunks.join("\n")}\n${beforeAnchor}`;
     const local = [
       ...typeVariableCompletions(scopeText, context.query, enabled, allowed),
       ...declaredNameCompletions(scopeText, context.query, enabled, allowed),
@@ -373,8 +406,32 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     const injected = new Set(local.map((completion) => completion.name));
     const suggestions = [...local, ...engine.filter((completion) => !injected.has(completion.name))];
     this.shown = suggestions;
+    await this.fillSignatures(suggestions);
 
     return suggestions;
+  }
+
+  /**
+   * Ask for the signatures the rows about to be drawn will want, in one batch.
+   *
+   * **This is what A4b is for.** The signature used to be fetched inside `renderSuggestion`, once
+   * per visible row, synchronously, from a stashed handle — a renderer being the one place in the
+   * plugin with no way to wait for anything and no second chance to draw. Asking here instead puts
+   * the whole popover's worth of questions into one request, on a path that is already `async`, and
+   * leaves the renderer a map read.
+   *
+   * Only what can be drawn is asked about: Obsidian truncates the list to {@link SUGGESTION_LIMIT},
+   * and a row past that is a fact nobody sees. Rows the interpreter has never heard of — a
+   * decorator, a parameter, a `where` local — are not asked about at all; their signature comes
+   * from the declaration that binds them.
+   */
+  private async fillSignatures(rows: readonly ExprCompletion[]): Promise<void> {
+    await this.facts.facts(
+      rows.slice(0, SUGGESTION_LIMIT)
+        .filter((row) => isInterpreterKnown(row.category))
+        .map((row) => row.probeName ?? row.name),
+      WANT_SIGNATURE,
+    );
   }
 
   /** The code to replay so completions see the user's own definitions — the shared position-scope
@@ -393,18 +450,25 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       el.setText("Loading Numbat…");
       return;
     }
-    // A row the interpreter has never heard of must not be probed, or a binding that happens to
-    // share the name would put its signature on the row. A parameter still shows a signature — the
-    // type its own declaration writes.
-    const probe = value.probeName ?? value.name;
-    const live = isInterpreterKnown(value.category) ? this.liveBlockContext() : null;
+
+    // A row the interpreter has never heard of must not be asked about, or a binding that happens
+    // to share the name would put its signature on the row. A parameter still shows a signature,
+    // which is the type its own declaration writes.
+    //
+    // `undefined` here means the fill did not answer for this row, which is the same situation the
+    // freed-context check used to describe and is handled the same way: fall back to what the
+    // declaration says, and failing that show no signature at all.
+    const known = isInterpreterKnown(value.category)
+      ? this.facts.knownFacts(value.probeName ?? value.name, WANT_SIGNATURE)
+      : undefined;
     const declaredType = value.declared?.type ?? null;
-    const signature = live !== null
-      ? completionSignature(live, probe)
+    const signature = known !== undefined
+      ? known.signature
       : declaredType === null
       ? null
       : declaredTypeHtml(declaredType);
     renderExprSuggestion(el, value, signature);
+
     // The popover exists now, so its container is reachable for the dwell observer.
     this.ensureDwellObserver();
   }
@@ -472,31 +536,38 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     if (this.dwellTimer !== null) {
       window.clearTimeout(this.dwellTimer);
     }
+
+    // Start the lookup with the timer rather than after it, so the answer is usually there by the
+    // time the dwell elapses. The scope is warm as the query that produced these rows just used it.
+    const selected = this.selectedRow();
+    if (selected !== null && selected.doc === undefined && selected.declared === undefined) {
+      void this.facts.facts([selected.name], WANT_DWELL);
+    }
+
     this.dwellTimer = window.setTimeout(() => this.showDwellPopup(), COMPLETION_DWELL_MS);
   }
 
-  /** Show the documentation popup for the currently-selected completion. */
-  /**
-   * The stashed block context, or `null` if the interpreter has freed it since.
-   *
-   * Leaving a popover open for `completionIdleSeconds` releases the completion contexts — only
-   * `getSuggestions` re-arms that timer, so simply reading the list does not. Calling into the
-   * freed handle throws "null pointer passed to Rust", which the catch downstream treats as an
-   * interpreter crash and recovers from by restarting the whole engine. Dropping the reference
-   * instead costs a signature line on one popover.
-   */
-  private liveBlockContext(): Numbat | null {
-    if (this.lastBlockContext !== null && this.lastBlockGeneration !== contextGeneration()) {
-      this.lastBlockContext = null;
-    }
-    return this.lastBlockContext;
+  /** The completion the popover is highlighting, or `null` when there is none to answer for. */
+  private selectedRow(): ExprCompletion | null {
+    const value = this.shown[chooserOf(this)?.selectedItem ?? -1];
+    return value === undefined || isLoading(value) ? null : value;
   }
 
-  /** Show the documentation popup for the highlighted row, once the dwell elapses. Silently does
-   *  nothing if anything it needs has gone — the popover may have closed, or the context been
-   *  freed, while the timer ran. */
-  private showDwellPopup(): void {
-    this.dwellTimer = null;
+  /**
+   * Show the documentation popup for the highlighted row, once the dwell elapses. Silently does
+   * nothing if anything it needs has gone as the popover may have closed while the timer ran.
+   *
+   * A dwell is the reader having *stopped*, so unlike the rows there is no next keystroke to be
+   * corrected on: a row the facts layer cannot answer for yet is asked about and comes back here,
+   * at most once. What used to guard this was a freed-context check. The idle release frees the
+   * completion contexts while a popover sits open, and calling into the freed handle threw "null
+   * pointer passed to Rust", which downstream read as a crash and restarted the whole engine. There
+   * is no handle to free now, so that hazard is gone rather than guarded.
+   */
+  private showDwellPopup(retried = false): void {
+    if (!retried) {
+      this.dwellTimer = null;
+    }
     const chooser = chooserOf(this);
     const container = this.popoverContainer();
     if (chooser == null || container == null) {
@@ -525,19 +596,33 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       return;
     }
 
-    const live = this.liveBlockContext();
-    if (live === null) {
+    const known = this.facts.knownFacts(value.name, WANT_DWELL);
+    if (known === undefined) {
+      if (retried) {
+        return;
+      }
+
+      void this.facts.facts([value.name], WANT_DWELL).then(() => {
+        // Still the row being dwelt on: the reader may have arrowed on, or closed the popover, in
+        // the meantime.
+        if (this.selectedRow() === value) {
+          this.showDwellPopup(true);
+        }
+      });
       return;
     }
-    const info = completionInfo(live, value.name);
-    if (info === null) {
+    if (known.info === null) {
       return;
     }
+
     // A non-function entry gets a `Type:` field from `type(<name>)` (functions already carry a
-    // `Signature:` line; see formatDocBody).
+    // `Signature:` line; see formatDocBody). The signature is the *row's* probe, which for a member
+    // row is the whole chain, so it is read separately from the body's name.
     const probeName = value.probeName ?? value.name;
-    const typeSignature = value.category === "function" ? null : completionSignature(live, probeName);
-    this.docPopup.showAbove(container.getBoundingClientRect(), buildDocPopupContent(info, typeSignature));
+    const typeSignature = value.category === "function"
+      ? null
+      : this.facts.knownFacts(probeName, WANT_SIGNATURE)?.signature ?? null;
+    this.docPopup.showAbove(container.getBoundingClientRect(), buildDocPopupContent(known.info, typeSignature));
   }
 
   /** Cancel the dwell timer, disconnect the observer, and hide the popup. */

@@ -15,35 +15,23 @@
 
 import { Platform, setIcon, TextFileView, type WorkspaceLeaf } from "obsidian";
 import {
-  type CompletionVocabulary,
   type ExprCategories,
   type ExprCategory,
   type ExprCompletion,
   expressionCompletions,
 } from "../completion/expressions";
 import { groupStatements } from "../evaluation/inlay-parse";
+import { factsSource } from "../hover/card";
 import { appendDefinitionLink, declarationCard, symbolCard } from "../hover/content";
 import { declaredSymbolAt } from "../hover/declarations";
 import type { HoverSymbol } from "../hover/parse";
-import {
-  completionInfo,
-  completionSignature,
-  createContext,
-  ensureBlockCompletion,
-  ensureNumbatReady,
-  expressionCompletionCandidates,
-  freeQuietly,
-  getLastPreludeError,
-  interpret,
-  isNumbatReady,
-  type Numbat,
-  restartNumbat,
-  structFields,
-} from "../interpreter/numbat";
+import { type ScopeSpec, WANT_CARD } from "../interpreter/facts";
+import { scopeFactsHost } from "../interpreter/live-facts";
+import { ask, ensureNumbatReady, isNumbatReady } from "../interpreter/numbat";
 import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
 import { scopeDeclaration } from "../scope/model";
-import { NumbatInput } from "./input";
+import { type HoverCard, NumbatInput } from "./input";
 import { SoftKeyboardTracker } from "./soft-keyboard";
 import type { VimMode } from "./vim-mode";
 
@@ -112,6 +100,22 @@ export class NumbatFileView extends TextFileView {
   /** The editor itself; absent before {@link onOpen} and after {@link onClose}, and replaced
    *  outright when a different file is loaded into this view. */
   private input?: NumbatInput;
+
+  /** What the interpreter has said about the names in scope above the caret, for the completer's
+   *  signatures and its documentation popup. */
+  private readonly completionFacts = scopeFactsHost(
+    () => this.scopeAbove(),
+    () => this.plugin.settings.completionIdleSeconds * 1000,
+  );
+
+  /** The same, one line lower: the hover card resolves against the caret's *own* line too, so
+   *  hovering `speed` on its own `let speed = …` describes that binding rather than nothing. A
+   *  second host rather than a parameter, because the two are genuinely different scopes and each
+   *  files its answers under its own key. */
+  private readonly hoverFacts = scopeFactsHost(
+    () => this.scopeAbove(true),
+    () => this.plugin.settings.completionIdleSeconds * 1000,
+  );
 
   /** The mobile key bar below the editor, shown only while the soft keyboard is up; null on desktop
    *  and until the view is built. */
@@ -357,21 +361,9 @@ export class NumbatFileView extends TextFileView {
         },
         filePath: () => this.file?.path ?? null,
         exprCompletions: (query, enabled, allowed) => this.exprCompletions(query, enabled, allowed),
-        memberFields: (base) => {
-          const resolved = this.contextAbove();
-          return resolved === null ? [] : structFields(resolved.context, base);
-        },
-        completionSignature: (name) => {
-          const resolved = this.contextAbove();
-          return resolved === null ? null : completionSignature(resolved.context, name);
-        },
-        completionInfo: (name) => {
-          const resolved = this.contextAbove();
-          return resolved === null ? null : completionInfo(resolved.context, name);
-        },
+        // The scope the caret is in, re-asked on every lookup: it moves as the caret does.
+        ...this.completionFacts,
         hoverCard: (symbol) => this.hoverCard(symbol),
-        // Document mode shows every line's result instead of the last line's hole.
-        holeType: () => null,
         // What lights up the key bar's visual-block button while that mode is live.
         vimModeChanged: (mode) => this.setVimMode(mode),
       },
@@ -508,49 +500,55 @@ export class NumbatFileView extends TextFileView {
   }
 
   /**
-   * An interpreter context holding everything in scope above the caret: the file's statements up to
-   * (and, with `includeCaretLine`, including) the caret's line.
+   * The scope above the caret, *named* rather than built: the file's statements up to, but not
+   * including, the caret's line.
    *
    * Each statement is its own replay chunk, so a half-written line leaves the definitions above it
-   * intact — and the whole thing is memoized by {@link ensureBlockCompletion}, which the note's
-   * completer shares. `preludeBefore` keeps a file that is itself part of the prelude from being
-   * defined twice.
+   * intact, and `preludeBefore` keeps a file that is itself part of the prelude from being defined
+   * twice. Everything this view asks — a signature beside a completion row, the candidate list, a
+   * hover card — is a question about this scope, and only the answer comes back.
+   *
+   * `includeCaretLine` is the hover's: hovering `speed` on its own `let speed = …` must resolve it,
+   * and that line falls below the completion cut.
    */
-  private contextAbove(includeCaretLine = false): { context: Numbat; vocab: CompletionVocabulary; } | null {
+  private scopeAbove(includeCaretLine = false): ScopeSpec | null {
     const document = this.documentLines();
     if (document === null) {
       return null;
     }
 
     const above = document.lines.slice(0, includeCaretLine ? document.caret + 1 : document.caret);
-    const chunks = groupStatements(above).map((statement) => statement.text);
-    const path = this.file?.path ?? null;
 
-    return ensureBlockCompletion(chunks, this.plugin.settings.fetchExchangeRates, {
-      preludeBefore: path ?? undefined,
-    });
+    return {
+      chunks: groupStatements(above).map((statement) => statement.text),
+      applyRates: this.plugin.settings.fetchExchangeRates,
+      preludeBefore: this.file?.path ?? undefined,
+    };
   }
 
   /**
    * Categorized expression completions for `query` against the scope above the caret. Empty when
    * the interpreter is not ready or completion is switched off.
    */
-  private exprCompletions(
+  private async exprCompletions(
     query: string,
     enabled: ExprCategories,
     allowed: ReadonlySet<ExprCategory> | null,
-  ): ExprCompletion[] {
-    if (!this.plugin.settings.exprCompletion) {
+  ): Promise<ExprCompletion[]> {
+    const scope = this.scopeAbove();
+    if (!this.plugin.settings.exprCompletion || scope === null) {
       return [];
     }
 
-    const resolved = this.contextAbove();
-    if (resolved === null) {
+    const reply = await ask("completions", { ref: { kind: "scope", spec: scope }, query }, {
+      priority: "interactive",
+      group: "nbt-completions",
+    });
+    if (reply === null || reply.vocab === null) {
       return [];
     }
 
-    const raw = expressionCompletionCandidates(resolved.context, query);
-    return expressionCompletions(raw, resolved.vocab, enabled, allowed);
+    return expressionCompletions([...reply.candidates], reply.vocab, enabled, allowed);
   }
 
   /**
@@ -558,30 +556,35 @@ export class NumbatFileView extends TextFileView {
    * some, else what the enclosing declaration says about the name (a parameter, a type parameter, a
    * struct field), plus a go-to-definition row when the file declares the name itself.
    */
-  private hoverCard(symbol: HoverSymbol): HTMLElement | null {
+  private hoverCard(symbol: HoverSymbol): HoverCard {
     const document = this.documentLines();
     if (document === null) {
-      return null;
+      return { miss: "no editor here" };
     }
 
     // A parameter, a type parameter or a struct field is asked about first: it shadows, and the
     // interpreter — which knows nothing about it — may well know an outer name that matches. A
     // member chain is excluded, since its `name` is only the last component and a declaration
-    // elsewhere could introduce that.
+    // elsewhere could introduce that. They also need no interpreter, so a declared name never
+    // waits.
     const declared = symbol.kind === "name"
       ? declaredSymbolAt(document.lines, document.caret, symbol.name)
       : null;
 
-    // The caret's own line counts: hovering `speed` on its own `let speed = …` must resolve it, and
-    // that line falls below the completion cut.
-    const resolved = declared !== null ? null : this.contextAbove(true);
-    const content = declared !== null
-      ? declarationCard(declared)
-      : resolved === null
-      ? null
-      : symbolCard(resolved.context, symbol);
+    let content = declared === null ? null : declarationCard(declared);
+    if (declared === null) {
+      const known = this.hoverFacts.knownFacts(symbol.probe, WANT_CARD);
+      if (known === undefined) {
+        return {
+          pending: this.hoverFacts.facts([symbol.probe], WANT_CARD),
+          miss: "could not look that name up — try again in a moment",
+        };
+      }
+
+      content = symbolCard(factsSource(known), symbol);
+    }
     if (content === null) {
-      return null;
+      return { miss: `nothing known about \`${symbol.probe}\` here` };
     }
 
     // A declared name's definition is the declaration the pointer is already inside; linking would
@@ -598,7 +601,7 @@ export class NumbatFileView extends TextFileView {
       );
     }
 
-    return content;
+    return { dom: content };
   }
 
   /**
@@ -684,22 +687,26 @@ export class NumbatFileView extends TextFileView {
       return;
     }
 
-    const context = createContext(this.plugin.settings.fetchExchangeRates, { preludeBefore: path });
-    try {
-      const earlier = getLastPreludeError();
-      if (earlier !== null) {
-        this.showBanner("The prelude loaded before this file failed:", earlier);
-        return;
-      }
-
-      const result = interpret(context, this.input.getValue());
-      this.showBanner(result.isError ? "This file will not load as a prelude:" : null, result.output);
-    } catch (error) {
-      console.error("Symbat: checking the prelude crashed the interpreter", error);
-      restartNumbat();
-    } finally {
-      freeQuietly(context);
+    // Both halves come back together, which is what the boundary makes necessary: the error the
+    // prelude files *ahead* of this one left behind belongs to the context that was just built, and
+    // reading it out of module state after the fact is exactly the ordering a message does not
+    // preserve.
+    const checked = await ask("preludeCheck", {
+      text: this.input.getValue(),
+      applyRates: this.plugin.settings.fetchExchangeRates,
+      preludeBefore: path,
+    }, { priority: "background", group: `prelude-check:${path}` });
+    if (checked === null) {
+      return;
     }
+
+    if (checked.earlier !== null) {
+      this.showBanner("The prelude loaded before this file failed:", checked.earlier);
+      return;
+    }
+
+    const { result } = checked;
+    this.showBanner(result.isError ? "This file will not load as a prelude:" : null, result.output);
   }
 
   /** Show (or, with a null label, hide) the banner above the editor. */

@@ -52,6 +52,45 @@ Changes to the files are picked up automatically, and if you move or rename a fi
 updates its path for you. If a prelude fails to parse, the error is shown in the REPL (and logged to
 the developer console).
 
+## Evaluation Time Limit
+
+Numbat has no loops, but it does have recursion, and a handful of characters can ask it for work
+that won't finish in your lifetime, such as `fn f(n) = if n < 2 then 1 else f(n-1) + f(n-2)`, then
+`f(45)`. A note like that is enough to lock up Obsidian, and it could get at you via a synced vault
+or hand-shared note.
+
+So Symbat gives each note a budget. **Stop evaluating a note after** (Settings → Symbat → Runtime)
+is how many milliseconds Symbat may spend in the interpreter for one note before it gives up on the
+rest of it; the default is 10 000, and `0` removes the limit entirely.
+
+What evaluated is kept, but everything that is past the time limit will show an error beside the
+line as an inlay hint. A notice names the note and points back at the setting, at most once a minute
+so that a long note cannot bury you in them.
+
+The budget belongs to the **note**, rather than being a per-block one that would be ineffective as
+the number of blocks grows. The note's inlay hints, its inline expressions, its rendered blocks, its
+properties and its scope inspector all draw on the same allowance, in Source mode, Live Preview and
+Reading view alike. Notes pulled in with `numbat-use` are also covered, so a chain of imports cannot
+spend the limit several times over.
+
+A note that runs out is left alone for a minute rather than retried on every scroll. Four things
+bring it back immediately: editing the note, changing the prelude or the exchange rates, changing
+the limit itself, or running **Clear all caches and re-evaluate**.
+
+Two limits are worth knowing:
+
+- **An expression that has already started still runs to the end.** Numbat cannot be interrupted
+  from the inside, so what the budget bounds is how many _further_ calls are made. A single
+  expression that never returns therefore outlives its own note's limit. What happens next depends
+  on where the interpreter is running: on a separate thread you can stop it (see
+  [Interpreter Thread](#interpreter-thread)); on this thread nothing can, and Obsidian hangs.
+- **A custom prelude is not bounded at all**, because a context without its prelude is wrong rather
+  than merely slow. Its time is still charged to whatever note is waiting on it, but it cannot be
+  refused.
+
+The REPL is deliberately exempt. Typing an expression at a prompt and pressing Enter is you asking
+for it to run.
+
 ## Expression Completion
 
 As you type an expression — either two characters into a word, or straight after a `.`, a `:`, a
@@ -334,6 +373,48 @@ block still renders its result using the bare numbat renderer.
 The **REPL input** shows the incomplete-expression placeholder too: type `3 m +` and a muted
 `⟨Length⟩` appears at the end of the input, resolved against the live session (so names you defined
 earlier in the REPL session are in scope). It follows the same **Show type hints** toggle.
+
+## Interpreter Thread
+
+Numbat runs on a worker thread in contexts where Obsidian allows it, and on Obsidian's main thread
+where it does not. **Interpreter thread** (Settings → Symbat → Runtime) is where you choose, and the
+version card at the bottom of the settings tab says which is active. The choice is a request, not a
+guarantee as Obsidian promises no worker availability in its API, so one is not always available.
+
+The difference is not speed. Numbat cannot be interrupted from the inside: it has no time limit of
+its own, no way to be asked to stop, and no ceiling on how deep it will recurse. Stopping an
+evaluation that has already started means stopping the thread it is on, and that is only possible
+when it is not the thread Obsidian is drawing with. So on the worker thread you get:
+
+- **Stop evaluating**, the ■ button at the end of the REPL's input row, is for when you have typed
+  something at the prompt that is not coming back. It is always there and greys out when pressing it
+  would do nothing: while no line is running, and permanently on the main thread, where a submission
+  runs inline and no click could reach it. The REPL is deliberately exempt from the
+  [evaluation time limit](#evaluation-time-limit), which is why this button is so important.
+- **Stop all running evaluations**, a command, for a note that is grinding. It asks first and only
+  resets the interpreter if that was not enough, so in the common case your REPL session and
+  everything already worked out survive. Asking is not a formality: a pass that has started stands
+  aside between blocks, so it hears you.
+
+Neither does anything on the main thread. While an evaluation is running there, the click cannot be
+delivered in the first place. The command is hidden outright, since a palette entry is found by
+searching for it and its presence is therefore a promise; the REPL's button greys out instead, so
+that the row it sits in does not reflow around you and so there is somewhere to look for it before
+the moment you need it.
+
+Symbat asks for a worker thread by default, and if it cannot get one it **stops rather than moving
+you to the main thread**. You get a notice that stays until you dismiss it, saying so and saying
+where the setting is. The version card repeats it for as long as it is true, and **Copy debug info**
+carries the same line, which on a phone is usually the only way to find out.
+
+That is a deliberate choice not to be helpful. The main thread is not a slower worker, it is a
+weaker guarantee (the stop button and the time limit both live on the other path) so being moved
+there silently would leave you relying on a promise the running configuration cannot keep. Switching
+is one dropdown away, and it is yours to make.
+
+The exception is the moment Obsidian is still starting up: a request that arrives before the
+workspace is ready is served in process rather than by spawning a thread during startup, and it is
+replaced by a worker as soon as one is allowed.
 
 ## Live REPL Highlighting
 
@@ -896,6 +977,43 @@ glyph. It is handy for discovering a code or picking a longer one without typing
 and the eager expansion work together — the popover helps while a code is still partial, and eager
 expansion finishes a code the moment you complete it — and both follow the **Unicode expansion**
 setting. The leader defaults to `\` and can be changed with the **Unicode leader** setting.
+
+## Values That Refresh
+
+Almost everything you write in Numbat is worth computing once. `3 miles / 40 min -> km/h` is the
+same answer today as it will be next Tuesday, so Symbat works it out when it first sees it and shows
+you that answer for as long as the text stays put. Editing the note, changing the prelude, or
+changing a property the expression reads is what makes it compute again.
+
+Two things break that, and they are the only two: `now()` and `random()`. Symbat recognizes these,
+and the calls built on top of them, and re-executes any affected scope (after around 10 seconds by
+default), wherever its value shows. Nothing is on a timer — an untouched note in a background pane
+does not tick by itself — but the next time that value is drawn, which is to say the next time you
+type, scroll, switch panes or reopen the note, it is worked out again rather than repeated. You keep
+seeing the previous value while that happens, so a clock reads a moment behind rather than blinking
+out.
+
+A scope that reaches neither is not re-evaluated at all, however long you leave it and however often
+it is redrawn. This matters most where you would least notice it: a Bases table over a hundred notes
+used to reload Numbat's whole standard library once per note, every ten seconds, for as long as you
+kept scrolling it, to work out answers that could not have changed.
+
+Three details are worth knowing:
+
+- **What counts is the whole scope, not the line.** If your custom prelude defines
+  `fn start() = today()`, then a note calling `start()` refreshes, even though the note itself never
+  writes `today`. The same goes for a `numbat-use` import, a `numbat-shared` block above the one you
+  are looking at, and a property above the one you are reading.
+- **Comments and text inside strings do not count**, so `# time to destination` in a block does not
+  make the block refresh. This is deliberate: `now`, `today` and `time` are ordinary English words
+  as well as Numbat functions, and a note about dates is exactly the note likely to write them in
+  prose. What is inside `"{…}"` _does_ count, because that is code.
+- **A note that hits the [evaluation time limit](#evaluation-time-limit) stops refreshing.** Its
+  values stay as they were and it is not tried again, because re-reading the clock would cost more
+  than you allowed and the answer would be the same refusal. Editing the note, or **Clear all caches
+  and re-evaluate**, starts it over.
+
+Nothing here needs configuring, and there is no setting for it.
 
 ## Vim Mode
 

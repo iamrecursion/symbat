@@ -10,10 +10,12 @@
 // completer is currently open — while one is, hover stands aside, since the completer opens this
 // very card on its own dwell.
 //
-// **Resolution is synchronous, deliberately.** An asynchronous answer is one the pointer has
-// usually moved away from by the time it arrives. Everything a card needs is available
-// synchronously once the interpreter is warm; the surfaces warm it in the background and answer
-// with a miss until it is.
+// **Resolution answers now, or says it cannot yet.** An asynchronous answer is one the pointer has
+// usually moved away from by the time it arrives, so a surface that has everything answers on the
+// spot; one that does not returns a {@link HoverPending} and the driver asks again when it settles,
+// provided the reader is still looking at the same thing. Keeping that policy here rather than in
+// each surface is what makes the two triggers agree about it — and the caret dwell gives the wait
+// somewhere to happen, through {@link HoverSource.prewarm}.
 //
 // **One state field, module-scope, never replaced.** Both triggers drive the same field.
 // CodeMirror's own `hoverTooltip` was used for the pointer at first, but it builds a *new* state
@@ -50,12 +52,36 @@ export interface HoverMiss {
   miss: string;
 }
 
+/**
+ * There is no card **yet**: something the answer depends on is on its way, and asking again once it
+ * settles may well produce one. The wasm still loading is one; the facts about the name not being
+ * in the cache is the other (interpreter/facts.ts).
+ *
+ * A surface returns this rather than retrying itself, so that the one policy — how long to wait,
+ * whether the reader is still looking at the same thing, and what to say if it comes to nothing —
+ * lives in the driver, next to the triggers that have to agree with it.
+ */
+export interface HoverPending {
+  /** Settles when the answer is there to be asked for again. Never rejects into anything the
+   *  driver has to interpret: a failed lookup settles like any other, and the second ask is what
+   *  discovers there is still nothing. */
+  pending: Promise<void>;
+
+  /** What to say if the second ask comes to nothing after all. */
+  miss: string;
+}
+
 /** What a resolve produced. */
-export type HoverOutcome = HoverResolution | HoverMiss;
+export type HoverOutcome = HoverResolution | HoverMiss | HoverPending;
 
 /** Whether an outcome is a miss (there is no card). */
 export function isMiss(outcome: HoverOutcome): outcome is HoverMiss {
-  return "miss" in outcome;
+  return "miss" in outcome && !("pending" in outcome);
+}
+
+/** Whether an outcome is an answer still on its way. */
+export function isPending(outcome: HoverOutcome): outcome is HoverPending {
+  return "pending" in outcome;
 }
 
 /** What one surface must supply for its text to be hoverable. */
@@ -70,6 +96,14 @@ export interface HoverSource {
   /** Whether a caret dwell counts right now — Vim's insert mode, on the surface's own Vim instance.
    *  Defaults to {@link dwellCountsIn}, which reads Obsidian's. */
   dwellAllowed?(view: EditorView): boolean;
+
+  /** Start whatever `resolve` at `pos` is going to need, without producing anything.
+   *
+   *  Called when the caret dwell is armed rather than when it fires, so the work happens inside a
+   *  delay the reader is already waiting through — which is the difference between a card that
+   *  appears and a card that appears *late*. Optional: a surface that answers synchronously has
+   *  nothing to start. */
+  prewarm?(view: EditorView, pos: number): void;
 }
 
 /** The surface's source, reachable from the module-scope plugin (and so from the Vim key and the
@@ -140,6 +174,17 @@ const hoverCard = StateField.define<CardState | null>({
  *  left, in px. Bridges the gap between the text and the card. */
 const POINTER_MARGIN = 8;
 
+/** How many answers one attempt may wait for. Two, because there are two: the wasm loading, and
+ *  then the facts about the name being looked up in the scope it loaded. */
+const MAX_WAITS = 2;
+
+/** How long the caret must sit still before its answer is sent for, in ms, capped by the hover
+ *  delay itself, so a reader who has set a short one still gets the lookup started first.
+ *
+ *  Short, because everything after it is head start: only that a caret still traveling does not
+ *  send for an answer per line it passes. */
+const PREWARM_SETTLE_MS = 120;
+
 /** Build a tooltip from a resolution — anchored to the symbol, preferring above (the card is tall,
  *  and below would cover the lines being read). The wrapper carries the completer popup's own
  *  styling, so the two surfaces are one card. */
@@ -164,7 +209,7 @@ function nearRect(rect: DOMRect, x: number, y: number): boolean {
 
 /**
  * The hover driver: both triggers, one card. Every entry point is wrapped, because CodeMirror
- * **disables a view plugin whose `update` throws** for the life of the editor — a single bad update
+ * **disables a view plugin whose `update` throws** for the life of the editor. A single bad update
  * would not degrade hover, it would end it, silently and permanently, while every other surface
  * carried on working.
  */
@@ -175,12 +220,22 @@ class HoverDriver {
   /** The pending pointer-dwell resolve, or `null` when none is scheduled. */
   private pointerTimer: number | null = null;
 
+  /** The pending prewarm, or `null` when none is scheduled. */
+  private prewarmTimer: number | null = null;
+
   /** The deferred close scheduled by `clearSoon`; cleared on teardown. */
   private clearTimer: number | null = null;
 
   /** The last pointer position seen, used to decide whether it is still over the card or its
    *  symbol; `null` before the pointer has moved over this editor. */
   private pointer: { x: number; y: number; } | null = null;
+
+  /** Bumped whenever an attempt is abandoned outright (Escape, a blur, a completer taking over),
+   *  so an answer arriving afterwards knows the card it belonged to is no longer wanted. */
+  private attempt = 0;
+
+  /** Set on teardown: a wait that settles afterwards must not touch the view. */
+  private destroyed = false;
 
   /** @param view the editor this driver serves; one instance per editor. */
   constructor(private readonly view: EditorView) {}
@@ -229,6 +284,22 @@ class HoverDriver {
       config.source.dwellAllowed === undefined ? dwellCountsIn(view) : config.source.dwellAllowed(view);
     if (!this.view.state.selection.main.empty || !allowed(this.view)) {
       return;
+    }
+
+    // Start what the card will need before the card is due, so the dwell doubles as the wait for
+    // it. On its own short settle rather than immediately: a caret arrowing down a block would
+    // otherwise start one lookup per line, each of which may build a whole scope, and the reader
+    // moving through code is precisely the reader who wants the main thread left alone.
+    if (config.source.prewarm !== undefined) {
+      const head = this.view.state.selection.main.head;
+      this.prewarmTimer = window.setTimeout(() => {
+        this.prewarmTimer = null;
+        try {
+          config.source.prewarm?.(this.view, head);
+        } catch (error) {
+          console.error("Symbat: the hover popup could not prepare an answer", error);
+        }
+      }, Math.min(PREWARM_SETTLE_MS, this.delay(config.plugin)));
     }
 
     this.caretTimer = window.setTimeout(() => {
@@ -355,56 +426,101 @@ class HoverDriver {
     }
   }
 
-  /** Show the card once the interpreter is ready, if the caret has not moved — so the very first
-   *  hover of a session, which lands while the wasm is still loading, still ends in a card instead
-   *  of nothing. */
-  retryWhenReady(ready: Promise<void>): void {
-    const pos = this.view.state.selection.main.head;
-    void ready.then(() => {
-      if (this.view.state.selection.main.head === pos && this.view.hasFocus) {
-        this.show();
-      }
-    });
-  }
-
   /**
-   * Resolve at `pos` and show the card, or explain the miss.
+   * Resolve at `pos` and show the card, explain the miss, or wait for an answer on its way.
    *
    * Every early return here is explainable, deliberately. A gate that quietly stops an explicit
-   * request is indistinguishable from a broken feature — which is exactly how a completer-open
-   * check that never went false again presented: no error, no card, no clue.
+   * request is indistinguishable from a broken feature.
+   *
+   * `waits` is how many answers this attempt has already waited for. It is bounded rather than
+   * open-ended because each wait is a *different* dependency arriving, and there are only two of
+   * them; a chain that could go on would be a hover that never resolves and never says so.
    */
-  private open(pos: number, trigger: "caret" | "mouse", explain: boolean): void {
+  private open(pos: number, trigger: "caret" | "mouse", explain: boolean, waits = 0): void {
     const config = this.view.state.facet(hoverSource);
     if (config === null) {
       return;
     }
 
     if (!config.plugin.settings.hover) {
-      this.explain(explain, "hover is switched off");
+      this.giveUp(explain, "hover is switched off");
       return;
     }
 
     if (config.source.completerOpen(this.view)) {
-      this.explain(explain, "a completer is open — hover stands aside for it");
+      this.giveUp(explain, "a completer is open — hover stands aside for it");
       return;
     }
 
     const outcome = config.source.resolve(this.view, pos);
+    if (isPending(outcome)) {
+      if (waits >= MAX_WAITS) {
+        this.giveUp(explain, outcome.miss);
+        return;
+      }
+      this.waitFor(outcome.pending, pos, trigger, explain, waits + 1);
+      return;
+    }
     if (isMiss(outcome)) {
-      this.explain(explain, outcome.miss);
+      this.giveUp(explain, outcome.miss);
       return;
     }
 
     const card = cardState(outcome, trigger);
     if (trigger === "mouse") {
       // Once the pointer is over the card there are no more editor mouse events, so the card
-      // watches for the pointer leaving *it* — otherwise a card entered and then abandoned would
-      // stay on screen. The listener dies with the element.
+      // watches for the pointer leaving *it* otherwise a card entered and then abandoned would stay
+      // on screen. The listener dies with the element.
       card.dom.addEventListener("mouseleave", () => this.clear());
     }
 
     this.view.dispatch({ effects: setCard.of(card) });
+  }
+
+  /** End the attempt with no card, saying why to a trigger that asked outright. */
+  private giveUp(explain: boolean, reason: string): void {
+    this.explain(explain, reason);
+  }
+
+  /** Ask again once `pending` settles, provided the reader is still looking at the same thing and
+   *  the attempt has not been abandoned meanwhile. */
+  private waitFor(
+    pending: Promise<void>,
+    pos: number,
+    trigger: "caret" | "mouse",
+    explain: boolean,
+    waits: number,
+  ): void {
+    const attempt = this.attempt;
+    void pending.then(() => {
+      if (this.destroyed || this.attempt !== attempt) {
+        return; // the editor went away, or the card was dismissed while we waited
+      }
+      if (!this.stillAt(pos, trigger)) {
+        return;
+      }
+
+      try {
+        this.open(pos, trigger, explain, waits);
+      } catch (error) {
+        console.error("Symbat: the hover popup failed", error);
+      }
+    }, (error: unknown) => {
+      // A pending answer settles rather than fails by contract; a rejection is a bug in the
+      // surface, and swallowing it silently is how a hover comes to do nothing forever.
+      console.error("Symbat: the hover popup could not wait for an answer", error);
+    });
+  }
+
+  /** Whether the trigger that opened this attempt is still on `pos` — the caret has not moved, or
+   *  the pointer is still over the same character. */
+  private stillAt(pos: number, trigger: "caret" | "mouse"): boolean {
+    if (trigger === "caret") {
+      return this.view.hasFocus && this.view.state.selection.main.head === pos;
+    }
+
+    const at = this.pointer;
+    return at !== null && this.view.posAtCoords(at) === pos;
   }
 
   /** Say why there is no card, but only to a trigger that asked outright. */
@@ -414,8 +530,10 @@ class HoverDriver {
     }
   }
 
-  /** Drop a shown card (Escape, a completer taking over, the pointer leaving). */
+  /** Drop a shown card (Escape, a completer taking over, the pointer leaving). Also abandons an
+   *  attempt still waiting for an answer, so it does not arrive as a card nobody asked for. */
   clear(): void {
+    this.attempt += 1;
     this.cancelCaret();
     this.cancelPointer();
     if (this.view.state.field(hoverCard, false) != null) {
@@ -456,11 +574,15 @@ class HoverDriver {
     return Math.max(0, plugin.settings.hoverDelayMs);
   }
 
-  /** Abandon a pending caret-dwell resolve. */
+  /** Abandon a pending caret-dwell resolve, and the prewarm that leads it. */
   private cancelCaret(): void {
     if (this.caretTimer !== null) {
       window.clearTimeout(this.caretTimer);
       this.caretTimer = null;
+    }
+    if (this.prewarmTimer !== null) {
+      window.clearTimeout(this.prewarmTimer);
+      this.prewarmTimer = null;
     }
   }
 
@@ -472,8 +594,10 @@ class HoverDriver {
     }
   }
 
-  /** Drop all three timers with the view, so none can fire into a torn-down editor. */
+  /** Drop all three timers with the view, so none can fire into a torn-down editor — and mark the
+   *  driver dead, since a pending answer cannot be cancelled, only ignored. */
   destroy(): void {
+    this.destroyed = true;
     this.cancelCaret();
     this.cancelPointer();
     this.cancelClear();
@@ -496,12 +620,6 @@ export function showHoverAtCursor(view: EditorView): void {
     return;
   }
   driver.show(true);
-}
-
-/** Re-show at the caret once `ready` settles (the interpreter warming up on the very first hover),
- *  if nothing has moved meanwhile. */
-export function showHoverWhenReady(view: EditorView, ready: Promise<void>): void {
-  view.plugin(hoverPlugin)?.retryWhenReady(ready);
 }
 
 /** Close a shown card — after its go-to-definition has been taken, so it does not linger over the

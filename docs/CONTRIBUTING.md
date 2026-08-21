@@ -44,17 +44,18 @@ shell, so `make check` works from a bare terminal too but will be a little bit s
 
 `make help` lists every target, but the main ones you will use are listed below.
 
-| Target           | What it does                                                    |
-| ---------------- | --------------------------------------------------------------- |
-| `make build`     | wasm + typecheck + bundle — a release `main.js`                 |
-| `make dev`       | rebuild `main.js` on change, with sourcemaps                    |
-| `make install`   | build, then copy the plugin into `$DEV_VAULT_PATH`              |
-| `make link`      | symlink this checkout into `$DEV_VAULT_PATH` instead of copying |
-| `make unlink`    | swap that symlink back for a copied build                       |
-| `make check`     | **everything CI checks**: format, typecheck, lint, all tests    |
-| `make test-unit` | the pure tests only — fast, no wasm needed                      |
-| `make format`    | reformat Markdown, JSON, CSS, TOML, and TypeScript with dprint  |
-| `make clean`     | drop build output, keep the numbat checkout and `node_modules`  |
+| Target           | What it does                                                                  |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `make build`     | wasm + typecheck + bundle — a release `main.js`                               |
+| `make dev`       | rebuild `main.js` on change, with sourcemaps                                  |
+| `make install`   | build, then copy the plugin into `$DEV_VAULT_PATH`                            |
+| `make link`      | symlink this checkout into `$DEV_VAULT_PATH` instead of copying               |
+| `make unlink`    | swap that symlink back for a copied build                                     |
+| `make check`     | **everything CI checks**: format, typecheck, lint, doors, tests, bundle       |
+| `make doors`     | assert only the intended modules import the wasm, its bindings and the worker |
+| `make test-unit` | the pure tests only — fast, no wasm needed                                    |
+| `make format`    | reformat Markdown, JSON, CSS, TOML, and TypeScript with dprint                |
+| `make clean`     | drop build output, keep the numbat checkout and `node_modules`                |
 
 We do not really support building without Nix (and hence recommend using WSL for development on
 Windows). If you want to try anyway, you will at a minimum need: Node.js 24, a Rust toolchain that
@@ -151,6 +152,20 @@ them is therefore a deliberate step before a release tag, not something a workfl
   two machines building the same tag.
 - The script is written in **xonsh** for maintainability and readability. The flake provides it, so
   the devshell remains the supported way to build the plugin.
+- **Re-check the impure name table** in `src/interpreter/purity.ts`. It is the closure of Numbat's
+  two impure builtins — `now()` and `random()` — over the bundled prelude, and it decides which
+  notes are re-evaluated as the clock moves and which are cached. A rename or a removal fails
+  `test/integration/interpreter/purity.test.ts`; a _new_ impure builtin does not, because Numbat
+  exposes no purity information and evaluating twice is not an oracle (`today()` gives the same
+  answer all day). So a tag bump is the one moment anyone looks. Recompute it from
+  `.build/numbat/numbat/modules` rather than reading it off the documentation.
+- **Re-transcribe the `\code` table** in `src/unicode/table.ts` from
+  `.build/numbat/numbat/src/unicode_input.rs`. It is a mechanical copy, kept in the upstream file's
+  order and under its section comments so the two diff line by line. Unlike the impure name table
+  this one is fully checked with `test/integration/unicode/table.test.ts` comparing it against the
+  shipped interpreter in both directions, so a stale copy fails a test rather than silently dropping
+  a glyph. Mind the two homoglyph pairs while you are in there: `Omega` is U+03A9 and `ohm` is
+  U+2126, `mu` is U+03BC and `micro` is U+00B5.
 
 To force a rebuild, delete `src/wasm/pkg/` and run `make wasm`. `make clean` deliberately leaves it
 alone, since it is tracked and removing it would leave you with a dirty tree.
@@ -168,6 +183,11 @@ The tests are split across two suites:
   these files exist specifically to pin surprising interpreter facts (`let m = 5` is an identifier
   clash, `let pi = 3` silently shadows), so a Numbat version bump surfaces the difference early
   rather than in actual usage.
+- **The interpreter's tasks are checked on both paths at once.** `tasks.test.ts` asks every task in
+  this process _and_ in a real thread running the built worker bundle, and asserts the two agree. A
+  reply that does not survive `structuredClone`, or a task that depends on state the worker does not
+  have, fails where it is written rather than in somebody's vault. Adding a task means adding a case
+  there as nothing else drives the worker.
 
 Both suites mirror `src/`'s folders, so a module's tests sit at the matching path. For example,
 `src/scope/model.ts` is covered by `test/unit/scope/model.test.ts`, and the interpreter behavior it
@@ -186,10 +206,23 @@ disagreement is extracted into a shared module (which is why there are so many o
 
 Coding style in this repository is mostly automated, so just keep the following in mind:
 
-- **Passing `make check` is Not Optional:** This checks formatting, the typecheck, linting, and runs
-  both test suites. `src/` is expected to be completely warnings clean, while `test/` has documented
-  exemptions in `eslint.config.mjs`. Adding an exception will be subject to significant scrutiny and
-  require justtification.
+- **Passing `make check` is Not Optional:** This checks formatting, the typecheck, linting, the
+  interpreter's import doors, and runs both test suites. `src/` is expected to be completely
+  warnings clean, while `test/` has documented exemptions in `eslint.config.mjs`. Adding an
+  exception will be subject to significant scrutiny and require justification.
+- **Do Not Widen the Interpreter's Import Doors:** Exactly one module may import the `.wasm`
+  (`interpreter/wasm-binary.ts`), one the generated bindings (`interpreter/worker/engine.ts`), and
+  one the built worker bundle (`interpreter/host.ts`). `make doors` asserts all three, because the
+  failures are silent but costly: a second `.wasm` importer inlines a second 2.5 MB copy into
+  `main.js`, a second bindings importer puts a whole extra interpreter in the bundle, and a second
+  worker importer means two places believe they own the one instance Numbat's set-once exchange-rate
+  store permits. Everything else asks `interpreter/host.ts` for an evaluation and gets plain data
+  back — see the [architecture doc](./architecture.md#three-import-doors-not-one).
+- **Nothing Under `src/interpreter/worker/` May Import the Host:** No Obsidian, no Electron, no
+  CodeMirror, no Lezer, no Node built-ins, no plugin object. ESLint says so and the worker build
+  says so again as a build error, because a stray one yields a worker that throws on load. Since the
+  in-process path is opt-in, that is a plugin which evaluates nothing at all and blames the reader's
+  device for it. Nothing about the failure points at the import that caused it.
 - **DPrint Handles Formatting:** Run `make format` rather than arguing with it; a rename that
   changes a name's alphabetical position will reorder an import block and that is fine.
 - **Keep `src/` Organized:** It is grouped by concern with one folder each, and a folder holds all

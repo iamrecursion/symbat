@@ -11,37 +11,29 @@
 // shows the *value* until it is clicked into, and builds no editor until then (properties/host.ts
 // draws the distinction, properties/display.ts says what each state shows).
 
-import type { CompletionInfo } from "../completion/docs";
 import {
   type ExprCategories,
   type ExprCategory,
   type ExprCompletion,
   expressionCompletions,
 } from "../completion/expressions";
-import { holeForm, parseHoleType } from "../evaluation/inlay-parse";
+import { factsSource } from "../hover/card";
 import { symbolCard } from "../hover/content";
 import type { HoverSymbol } from "../hover/parse";
-import {
-  completionInfo,
-  completionSignature,
-  ensureBlockCompletion,
-  expressionCompletionCandidates,
-  interpret,
-  isNumbatReady,
-  structFields,
-  touchCompletionIdle,
-} from "../interpreter/numbat";
+import { type FactsHost, type ScopeSpec, WANT_CARD } from "../interpreter/facts";
+import { scopeFactsHost } from "../interpreter/live-facts";
+import { ask, isNumbatReady, touchCompletionIdle } from "../interpreter/numbat";
 import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
 import { PROPERTY_EVAL_DEBOUNCE_MS } from "../tuning";
-import { NumbatInput } from "../views/input";
+import { type HoverCard, NumbatInput } from "../views/input";
 import { type DisplayMode, displayPlan, type PropertyDisplay } from "./display";
 import { deferFocusCheck } from "./focus-guard";
 import { ACTIVE_CLASS, COMPACT_CLASS, resolveHost, windowFor } from "./host";
 import {
+  ensureReservedNames,
   NUMBAT_PROPERTY_TYPE,
   preambleForFile,
-  primeReservedNames,
   propertyTypeManager,
   type PropertyWidgetContext,
   scopeChunksAbove,
@@ -298,7 +290,7 @@ function renderWidget(
     if (resolved.mode === "note") {
       const asked = preambleForFile(plugin, ctx.sourcePath ?? "");
       const askedEpoch = outcomeEpoch();
-      unwait = requestNoteOutcomes(plugin, asked, () => {
+      unwait = requestNoteOutcomes(plugin, asked, ctx.sourcePath ?? "", () => {
         if (pass === generation) {
           unwait = null;
         }
@@ -497,7 +489,7 @@ function renderWidget(
   // behind it then collapses those rounds into one evaluation for the whole note.
   //
   // Skipped outright on a *fresh* hit: the key covers everything the evaluation would read except
-  // the clock, so within `OUTCOME_FRESH_MS` re-running it could only reproduce the value already
+  // the clock, so within `IMPURE_FRESH_MS` re-running it could only reproduce the value already
   // painted above. That is what keeps a scrolled Base column from evaluating at all; an older hit
   // is painted but re-evaluated, so nothing reading the clock stays still.
   if (!resolved.fresh) {
@@ -546,78 +538,71 @@ export function refreshPropertyEditors(): void {
  * editor and the REPL use, resolved against the scope this property actually has — the note's
  * imports and the properties written above it, which is exactly what its value evaluates in.
  *
- * The context comes from `ensureBlockCompletion`, keyed on those chunks, so it is built once per
- * distinct scope rather than per keystroke. Everything degrades to "no completions" while the wasm
- * is still loading.
+ * The scope is named rather than built, and the interpreter caches the context it builds from that
+ * name — so it is built once per distinct scope rather than per keystroke. Everything degrades to
+ * "no completions" while the interpreter is still loading.
  */
-function propertyCompletions(plugin: SymbatPlugin, ctx: PropertyWidgetContext): {
+function propertyCompletions(plugin: SymbatPlugin, ctx: PropertyWidgetContext): FactsHost & {
   exprCompletions: (
     query: string,
     enabled: ExprCategories,
     allowed: ReadonlySet<ExprCategory> | null,
-  ) => ExprCompletion[];
-  memberFields: (base: string) => string[];
-  completionSignature: (name: string) => string | null;
-  completionInfo: (name: string) => CompletionInfo | null;
-  hoverCard: (symbol: HoverSymbol) => HTMLElement | null;
-  holeType: (input: string) => string | null;
+  ) => Promise<ExprCompletion[]>;
+  hoverCard: (symbol: HoverSymbol) => HoverCard;
 } {
-  const built = () => {
+  // The scope this field's value lives in, named rather than built: what a completion row needs is
+  // a key to file an answer under, and only the branches that still hold a handle build from it.
+  const spec = (): ScopeSpec | null => {
     if (!plugin.settings.noteProperties || !isNumbatReady()) {
       return null;
     }
 
-    primeReservedNames(plugin.settings.fetchExchangeRates);
+    void ensureReservedNames(plugin.settings.fetchExchangeRates);
     const preamble = preambleForFile(plugin, ctx.sourcePath ?? "");
-    const chunks = scopeChunksAbove(preamble, ctx.key ?? "");
 
-    const context = ensureBlockCompletion(chunks, plugin.settings.fetchExchangeRates);
-    if (context !== null) {
-      touchCompletionIdle(plugin.settings.completionIdleSeconds * 1000);
-    }
-
-    return context;
+    return {
+      chunks: scopeChunksAbove(preamble, ctx.key ?? ""),
+      applyRates: plugin.settings.fetchExchangeRates,
+    };
   };
+
+  const facts = scopeFactsHost(spec, () => plugin.settings.completionIdleSeconds * 1000);
   return {
-    exprCompletions: (query, enabled, allowed) => {
-      if (!plugin.settings.exprCompletion) {
+    ...facts,
+    exprCompletions: async (query, enabled, allowed) => {
+      const scope = spec();
+      if (!plugin.settings.exprCompletion || scope === null) {
         return [];
       }
 
-      const scope = built();
-      if (scope === null) {
+      const reply = await ask("completions", { ref: { kind: "scope", spec: scope }, query }, {
+        priority: "interactive",
+        group: "property-completions",
+      });
+      if (reply === null || reply.vocab === null) {
         return [];
       }
 
-      const raw = expressionCompletionCandidates(scope.context, query);
-      return expressionCompletions(raw, scope.vocab, enabled, allowed);
-    },
-    memberFields: (base) => {
-      const scope = built();
-      return scope === null ? [] : structFields(scope.context, base);
-    },
-    completionSignature: (name) => {
-      const scope = built();
-      return scope === null ? null : completionSignature(scope.context, name);
-    },
-    completionInfo: (name) => {
-      const scope = built();
-      return scope === null ? null : completionInfo(scope.context, name);
+      // The scope this used is kept warm on the same policy as every other use of it: a reader
+      // typing into a property row is using it.
+      touchCompletionIdle(plugin.settings.completionIdleSeconds * 1000);
+      return expressionCompletions([...reply.candidates], reply.vocab, enabled, allowed);
     },
     // Hovering a name in the field asks the same scope the value evaluates in, so a sibling
-    // property reads exactly as it will when the value is committed.
+    // property reads exactly as it will when the value is committed. There is no declaration card
+    // and no go-to-definition: a property value is one expression, with nothing above it in the
+    // field to declare a name.
     hoverCard: (symbol) => {
-      const scope = built();
-      return scope === null ? null : symbolCard(scope.context, symbol);
-    },
-    holeType: (text) => {
-      const scope = built();
-      if (scope === null) {
-        return null;
+      const known = facts.knownFacts(symbol.probe, WANT_CARD);
+      if (known === undefined) {
+        return {
+          pending: facts.facts([symbol.probe], WANT_CARD),
+          miss: "could not look that name up — try again in a moment",
+        };
       }
 
-      const hole = holeForm(text);
-      return hole === null ? null : parseHoleType(interpret(scope.context, hole).output);
+      const dom = symbolCard(factsSource(known), symbol);
+      return dom === null ? { miss: `nothing known about \`${symbol.probe}\` here` } : { dom };
     },
   };
 }

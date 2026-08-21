@@ -55,6 +55,40 @@ export default tseslint.config(
     },
   },
   {
+    // The answering side of the interpreter seam must stay loadable where the wasm runs and nowhere
+    // else: no Obsidian, no DOM host, no CodeMirror, no plugin object. Today that is what makes it
+    // drivable from `test/integration`; once it runs in a worker, a stray `import { Notice } from
+    // "obsidian"` yields a worker that throws on load and falls back silently, forever. Caught at
+    // lint time, because by build time it is a runtime failure nobody sees.
+    files: ["src/interpreter/worker/**/*.ts"],
+    rules: {
+      // A worker's own scope is reachable as `globalThis` and by nothing else. The rule wants
+      // `window` or `activeWindow` instead, which are Obsidian popout-window concerns — and this is
+      // the one directory in the repository that is provably not running inside Obsidian.
+      "obsidianmd/no-global-this": "off",
+      "no-restricted-imports": ["error", {
+        paths: [
+          { name: "obsidian", message: "The interpreter's answering side must not depend on Obsidian." },
+          { name: "electron", message: "The interpreter's answering side must not depend on Electron." },
+        ],
+        patterns: [
+          {
+            group: ["@codemirror/*", "@lezer/*"],
+            message: "The interpreter's answering side must not depend on the editor.",
+          },
+          {
+            group: ["**/main", "**/main.ts"],
+            message: "The interpreter's answering side must not reach for the plugin object.",
+          },
+          {
+            group: ["node:*"],
+            message: "The interpreter's answering side must not depend on Node built-ins.",
+          },
+        ],
+      }],
+    },
+  },
+  {
     // The tests run under node, not inside Obsidian. The recommended config withholds Node globals
     // and forbids `node:` imports because the manifest declares isDesktopOnly: false — which
     // constrains the plugin, not its test suite.
@@ -62,6 +96,9 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
     rules: {
       "obsidianmd/no-nodejs-modules": "off",
+      // Same reason: the rule is about Obsidian's popout windows, and there is no `window` here at
+      // all — `window.setTimeout` would be a ReferenceError rather than an improvement.
+      "obsidianmd/prefer-window-timers": "off",
       // node:test's `test()` returns a promise that callers are meant to discard — the runner is
       // what awaits it. Otherwise every test in the suite would need a `void` in front of it.
       "@typescript-eslint/no-floating-promises": "off",
@@ -83,6 +120,10 @@ export default tseslint.config(
     rules: {
       ...tseslint.configs.disableTypeChecked.rules,
       "obsidianmd/no-nodejs-modules": "off",
+      // Both rules here are about what the *plugin* may do inside somebody's vault, and a build
+      // script is not the plugin. Printing what was produced — the two bundle sizes, and which
+      // budget was blown when one is — is the reason a build script has a stdout.
+      "obsidianmd/rule-custom-message": "off",
     },
   },
 );

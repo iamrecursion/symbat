@@ -1,7 +1,7 @@
 // Editor-side (CodeMirror 6) LaTeX-style Unicode expansion for `numbat` / `numbat-shared` fenced
 // blocks, inline-eval spans, and a Numbat-typed property's value in frontmatter: typing a known
 // `\code` (e.g. `\alpha`) inside one replaces it with the corresponding Unicode character (`α`) on
-// the keystroke that completes it, backed by the wasm's `get_unicode_completion`.
+// the keystroke that completes it, resolved against the committed code table (unicode/expand.ts).
 //
 // The expansion is applied through a high-precedence `EditorView.inputHandler`. When it fires it
 // suppresses the default character insertion, so the completing keystroke never reaches other
@@ -10,8 +10,8 @@
 // keystroke proceeds normally and those other extensions still see it (the "swallow, else re-emit"
 // behavior).
 //
-// The scope check and offset arithmetic live in unicode/edit.ts (wasm-free and unit-tested); this
-// module only wires that to the live interpreter and editor.
+// The scope check and offset arithmetic live in unicode/edit.ts (unit-tested, and importing neither
+// the editor nor Obsidian); this module only wires that to the editor.
 
 import { type Extension, Prec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -19,9 +19,9 @@ import { Platform } from "obsidian";
 import { cursorInNumbatProperty } from "../document/editor-property";
 import { numbatFenceState } from "../document/fence-state";
 import { inlineConfig } from "../evaluation/inline";
-import { getUnicodeCompletion, primeUnicodeCompletion } from "../interpreter/numbat";
 import type SymbatPlugin from "../main";
 import { replUnicodeExpansionEdit, unicodeExpansionEdit } from "./edit";
+import { unicodeExpansionAt } from "./expand";
 
 /**
  * The editor extension: a high-precedence input handler that expands a completed `\code` to its
@@ -30,14 +30,9 @@ import { replUnicodeExpansionEdit, unicodeExpansionEdit } from "./edit";
  * Markdown document); the REPL, whose whole input is Numbat, passes `false` to expand anywhere.
  */
 export function numbatUnicodeInput(plugin: SymbatPlugin, fenced = true): Extension {
-  // Resolve a code and, on plausibly relevant input (a `\code` tail — the point at which the
-  // expansion edit calls this), warm the wasm up so later keystrokes resolve even if this one is
-  // too early. Keeping the prime here (rather than per keystroke) preserves the plugin's lazy
-  // start.
-  const lookup = (textBeforeCursor: string) => {
-    primeUnicodeCompletion();
-    return getUnicodeCompletion(textBeforeCursor, plugin.settings.unicodeLeader);
-  };
+  // Read the leader per call rather than closing over it: the extension is registered once at
+  // load, and the setting can change under it.
+  const lookup = (textBeforeCursor: string) => unicodeExpansionAt(textBeforeCursor, plugin.settings.unicodeLeader);
 
   return Prec.highest(
     EditorView.inputHandler.of((view, from, to, text) => {

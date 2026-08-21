@@ -147,7 +147,7 @@ test("the vocabulary composes with the rest of Numbat", { skip }, async () => {
   const run = runner(newContext(await loadNumbat()));
 
   // `get` is an ordinary function, so the list vocabulary applies to a list of nullables — which is
-  // the point of keeping the list intact rather than dropping it.
+  // why we keep the list intact rather than dropping it.
   const summed = run(`sum(map(get, [${definedValue("1 m")}, ${definedValue("2 m")}]))`);
   assert.equal(summed.isError, false, summed.text);
   assert.match(summed.text, /= 3 m/);

@@ -1,5 +1,5 @@
 // Evaluating a note's Numbat properties: a whole note at a time, from the _first_ property whose
-// answer is not already known.
+// answer is **not already known**.
 //
 // The widget used to evaluate one property at a time, each in a fresh interpreter context that
 // replayed the properties above it. This module answers all property values from one context, and
@@ -29,27 +29,24 @@
 // row falls to the live path, which is where its warning is judged anyway.
 
 import { wholeScopeKey } from "../evaluation/inlay-parse";
-import { inlineResultFor } from "../evaluation/inline-parse";
 import {
-  createContext,
-  ensureBlockCompletion,
+  ask,
   ensureNumbatReady,
-  freeQuietly,
-  interpret,
   interpreterGeneration,
   isNumbatReady,
-  type Numbat,
-  restartNumbat,
+  preludeReadsClockOrRandom,
   touchCompletionIdle,
 } from "../interpreter/numbat";
+import { impureBindings, readsClockOrRandom } from "../interpreter/purity";
+import { refusalResult, rememberRefusal } from "../interpreter/refusals";
 import type SymbatPlugin from "../main";
 import { PROPERTY_BATCH_COALESCE_MS } from "../tuning";
 import type { PropertyDisplay } from "./display";
 import {
   bindingKey,
+  ensureReservedNames,
   type NotePreamble,
   preambleForFile,
-  primeReservedNames,
   type PropertyWidgetContext,
   scopeChunksAbove,
 } from "./note";
@@ -67,7 +64,7 @@ import {
   requestBatch,
   scopeKey,
 } from "./outcome-cache";
-import { definesNames, displayFromOutcome, evaluateBindings } from "./outcomes";
+import { type BindingOutcome, displayFromOutcome } from "./outcomes";
 import { isBareZero } from "./parse";
 
 // Re-exported so the surfaces that drive this module need only one import. `outcomeEpoch` is part
@@ -153,12 +150,23 @@ export function resolveOutcome(plugin: SymbatPlugin, ctx: PropertyWidgetContext,
  * two surfaces that derived the same bindings want the same answers and share one evaluation, and
  * two that did not are asking different questions (properties/outcome-cache.ts).
  *
+ * `notePath` does *not* identify anything, and is not part of the key. It names the note whose
+ * evaluation allowance this pass draws on (interpreter/budget.ts), so that a note's properties, its
+ * inlay hints and its inline expressions share one ten seconds instead of taking one each. Two
+ * notes with byte-identical frontmatter still share a single pass, and the first requester's path
+ * is the one it is charged to.
+ *
  * `done` reports only that a pass ran; the caller re-reads its own outcome, because between asking
  * and being told, its text may have moved on.
  */
-export function requestNoteOutcomes(plugin: SymbatPlugin, preamble: NotePreamble, done: () => void): () => void {
+export function requestNoteOutcomes(
+  plugin: SymbatPlugin,
+  preamble: NotePreamble,
+  notePath: string,
+  done: () => void,
+): () => void {
   return requestBatch(batchKey(plugin, preamble), {
-    run: () => runNotePass(plugin, preamble),
+    run: () => runNotePass(plugin, preamble, notePath),
     delay: (start) => {
       const timer = window.setTimeout(start, PROPERTY_BATCH_COALESCE_MS);
       return () => window.clearTimeout(timer);
@@ -181,7 +189,7 @@ function batchKey(plugin: SymbatPlugin, preamble: NotePreamble): string {
  * the cache as it was; the widgets keep whatever they were painting and ask again on their next
  * render.
  */
-async function runNotePass(plugin: SymbatPlugin, preamble: NotePreamble): Promise<void> {
+async function runNotePass(plugin: SymbatPlugin, preamble: NotePreamble, notePath: string): Promise<void> {
   const epoch = outcomeEpoch();
   try {
     await ensureNumbatReady();
@@ -198,7 +206,7 @@ async function runNotePass(plugin: SymbatPlugin, preamble: NotePreamble): Promis
     return;
   }
 
-  primeReservedNames(plugin.settings.fetchExchangeRates);
+  void ensureReservedNames(plugin.settings.fetchExchangeRates);
 
   // The preamble is the one the request was keyed on and is not re-derived here, deliberately. An
   // edit that landed across the awaits is a different scope with a different key so re-reading the
@@ -210,20 +218,74 @@ async function runNotePass(plugin: SymbatPlugin, preamble: NotePreamble): Promis
     return;
   }
 
-  const context = createContext(plugin.settings.fetchExchangeRates);
-  try {
-    const outcomes = evaluateBindings((code) => interpret(context, code), preamble, from);
-    for (const [offset, outcome] of outcomes.entries()) {
-      const index = from + offset;
-      rememberNoteOutcome(keys[index], preamble.bindings[index].expr, outcome);
-    }
-  } catch (error) {
-    // A wasm panic: schedule a restart (the interpreter reinitializes before the next evaluation)
-    // and leave the cache holding what it held.
-    console.error("Symbat: the property batch crashed", error);
-    restartNumbat();
-  } finally {
-    freeQuietly(context);
+  // The note's allowance, shared with its inlay and inline passes. In the editor all three run on
+  // the same note within a debounce of each other, and three separate budgets would let one note
+  // take three times what the reader asked for.
+  //
+  // As on the inline path, and for the same reason, there is no head check: one context serves the
+  // whole pass, and past the deadline `evaluateBindings` still runs so that every binding comes
+  // back as an ordinary error outcome. Those get filed, so the widgets have an answer and stop
+  // asking. Refusing before the context would file nothing, `firstStale` would keep returning the
+  // same index, and every render would schedule the pass again.
+  //
+  // Answering, not skipping. The other two ledger surfaces can simply decline to render, but a
+  // property widget that is told nothing keeps asking: `firstStale` would go on returning the same
+  // index and every render would schedule this pass again. So a note inside its cool-down is
+  // answered from a runner that refuses everything.
+  //
+  // This is also the surface that needs the ledger most, and for a reason peculiar to it: the
+  // outcome cache *ages* (IMPURE_FRESH_MS), deliberately, so that a property reading the clock
+  // keeps moving. A property that cannot be evaluated has no clock to read, and without the longer
+  // cool-down dominating that window the note would pay the whole limit every ten seconds for the
+  // rest of the session.
+  const stamp = interpreterGeneration();
+  const outcomes = await ask("evalBindings", {
+    preamble,
+    from,
+    applyRates: plugin.settings.fetchExchangeRates,
+    budget: { budgetMs: plugin.settings.evaluationLimitMs, key: notePath },
+    refuseWith: refusalResult(notePath, stamp),
+  }, { note: notePath });
+  if (outcomes === null) {
+    return;
+  }
+
+  // Re-checked on the way out as well as on the way in: the caches may have been emptied while the
+  // pass ran, and filing answers about a world that has been declared gone would put entries under
+  // keys nothing will ever look up again. The widgets that wanted them ask again.
+  if (outcomeEpoch() !== epoch) {
+    return;
+  }
+
+  if (outcomes.exceeded) {
+    rememberRefusal(notePath, stamp);
+    plugin.reportEvaluationLimit(notePath);
+  }
+
+  fileOutcomes([...outcomes.value], keys, preamble, from);
+}
+
+/**
+ * Record a pass's outcomes against the keys they were computed for.
+ *
+ * Each entry is filed with whether *its* scope can produce a different answer next time, which is
+ * what decides whether it ever ages out (properties/outcome-cache.ts). A note that reads no clock
+ * anywhere is therefore never re-evaluated on a timer again, and one that reads a clock partway
+ * down resumes there rather than at the top — see {@link impureBindings}.
+ *
+ * Decided for the whole preamble rather than for the slice this pass evaluated, because the flags
+ * are indexed by binding and a pass that started at `from` still has to file at the right offsets.
+ */
+function fileOutcomes(
+  outcomes: BindingOutcome[],
+  keys: string[],
+  preamble: NotePreamble,
+  from: number,
+): void {
+  const impure = impureBindings(preamble, preludeReadsClockOrRandom());
+  for (const [offset, outcome] of outcomes.entries()) {
+    const index = from + offset;
+    rememberNoteOutcome(keys[index], preamble.bindings[index].expr, outcome, impure[index]);
   }
 }
 
@@ -260,15 +322,21 @@ export async function evaluateLiveOutcome(
     return { kind: "empty" };
   }
 
-  primeReservedNames(plugin.settings.fetchExchangeRates);
+  void ensureReservedNames(plugin.settings.fetchExchangeRates);
 
   // Re-derived after the awaits: the note may have been edited across them, and the scope this
   // evaluates in is the one the answer will be filed under.
   const key = ctx.key ?? "";
   const preamble = preambleForFile(plugin, ctx.sourcePath ?? "");
   const scope = propertyScope(preamble, key);
+  // The row's own text is part of the question here in a way it is not for the note cache: this
+  // cache holds text the note does not hold, so a reader typing `now()` is asking about a scope
+  // whose last statement is the thing that reads the clock.
+  const impure = preludeReadsClockOrRandom()
+    || readsClockOrRandom(text)
+    || scope.chunks.some((chunk) => readsClockOrRandom(chunk));
   const remember = (display: PropertyDisplay): PropertyDisplay => {
-    rememberLiveOutcome(liveKey(keyFor(plugin, key, scope), text), display);
+    rememberLiveOutcome(liveKey(keyFor(plugin, key, scope), text), display, impure);
     return display;
   };
 
@@ -279,57 +347,24 @@ export async function evaluateLiveOutcome(
     return remember({ kind: "warning", text: scope.warning });
   }
 
-  const evaluate = (context: Numbat): PropertyDisplay =>
-    remember(displayFromOutcome(inlineResultFor((code) => interpret(context, code), text)));
-
-  // The completer has almost certainly already built a context at this exact scope for the row
-  // being typed into, and it is the same one this would build: the same chunks replayed on the same
-  // prelude. Borrowing it turns a keystroke's evaluation from a standard-library load into an
-  // interpret call, which is the single largest cost on the typing path.
-  const borrowed = borrowScopeContext(plugin, scope.chunks, text);
-  if (borrowed !== null) {
-    return evaluate(borrowed);
+  // The reuse this used to arrange for itself now happens inside the interpreter, where the
+  // replayed scope is cached: the completer has almost certainly already built a context at this
+  // exact scope for the row being typed into, and it is the same one this asks about. That turns a
+  // keystroke's evaluation from a standard-library load into a single `interpret`, which is the
+  // largest single cost on the typing path.
+  const outcome = await ask("evalProperty", {
+    chunks: scope.chunks,
+    text,
+    applyRates: plugin.settings.fetchExchangeRates,
+  }, { priority: "interactive" });
+  if (outcome === null) {
+    return { kind: "empty" };
   }
 
-  const context = createContext(plugin.settings.fetchExchangeRates);
-  try {
-    // Imports, then only the properties written above this one.
-    for (const chunk of scope.chunks) {
-      interpret(context, chunk);
-    }
-
-    return evaluate(context);
-  } finally {
-    freeQuietly(context);
-  }
-}
-
-/**
- * The completer's context for this scope, when evaluating `text` in it would leave nothing behind
- * and otherwise `null`, where the caller builds one of its own.
- *
- * Two things make the borrow safe. Evaluating an expression is pure, so a context that has been
- * read from is the same context afterwards; {@link definesNames} is what refuses the rest. And the
- * handle is used inside the call that asked for it and never stored, so none of the
- * `contextGeneration` hazards apply: the context cannot be freed underneath a caller that never
- * survives to the next tick.
- *
- * The idle touch is what keeps the borrow from changing when the context is released: it is the
- * same policy the completer applies on its own uses, so a borrowed context lives exactly as long as
- * a used one.
- */
-function borrowScopeContext(plugin: SymbatPlugin, chunks: string[], text: string): Numbat | null {
-  if (definesNames(text)) {
-    return null;
-  }
-
-  const built = ensureBlockCompletion(chunks, plugin.settings.fetchExchangeRates);
-  if (built === null) {
-    return null;
-  }
-
+  // The scope this used is the completer's own, and it is kept warm on the same policy as any other
+  // use of it: a reader typing into a property row is using it.
   touchCompletionIdle(plugin.settings.completionIdleSeconds * 1000);
-  return built.context;
+  return remember(displayFromOutcome(outcome));
 }
 
 // THE SCOPE A PROPERTY EVALUATES IN

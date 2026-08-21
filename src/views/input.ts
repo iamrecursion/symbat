@@ -45,7 +45,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
-import { type CompletionInfo, declaredInfo, declaredTypeHtml, decoratorInfo } from "../completion/docs";
+import { declaredInfo, declaredTypeHtml, decoratorInfo } from "../completion/docs";
 import {
   allowedCategoriesAt,
   boundCompletions,
@@ -61,14 +61,15 @@ import {
 } from "../completion/expressions";
 import { buildDocPopupContent, DocPopup, renderCategoryTag, renderSignature } from "../completion/render";
 import { numbatDocumentInlays, numbatReplHoleHint, refreshNumbatInlays } from "../evaluation/inlay";
-import { type HoverOutcome, numbatHover } from "../hover/hover";
+import { type HoverMiss, type HoverOutcome, type HoverPending, numbatHover } from "../hover/hover";
 import { type HoverSymbol, hoverSymbolAt } from "../hover/parse";
-import { listUnicodeCompletions, primeUnicodeCompletion } from "../interpreter/numbat";
+import { type FactsHost, WANT_FIELDS, WANT_INFO, WANT_SIGNATURE } from "../interpreter/facts";
 import type SymbatPlugin from "../main";
 import { numbatReplHighlight } from "../syntax/highlight";
 import { numbatLanguage } from "../syntax/language";
 import { COMPLETION_DWELL_MS } from "../tuning";
 import { unicodePrefixAt } from "../unicode/codes";
+import { listUnicodeCompletions } from "../unicode/expand";
 import { numbatUnicodeInput } from "../unicode/input";
 import { fuzzyFilter } from "./fuzzy";
 import { DEFAULT_INDENT_WIDTH, numbatIndentKeymap, numbatIndentUnit } from "./indent";
@@ -78,13 +79,35 @@ import { type VimMode, vimModeFrom, vimModeOf } from "./vim-mode";
  *  tell them apart from the user's own edits. */
 const SET_INPUT_EVENT = "numbat.set";
 
+/** What the documentation popup asks about a completion: the body, and the type line above it. */
+const WANT_DWELL = WANT_INFO | WANT_SIGNATURE;
+
 // THE HOST CONTRACT
 // ================================================================================================
 
-/** The events a consumer handles for its Numbat input. Only `submit` and the completion lookups
- *  are required; the rest are the REPL's, and a surface without a history or a log simply omits
- *  them. */
-export interface NumbatInputHost {
+/**
+ * What a host can say about a hovered symbol: the card, why there is none, or the lookup that would
+ * produce one.
+ *
+ * The last two arms are already {@link HoverOutcome}s, so a host's answer passes straight through
+ * the editor to the driver. That is deliberate: waiting for an answer and asking again is the same
+ * policy wherever the hover fires, and it lives in hover/hover.ts for all of them (see the note
+ * there on why the retry is not each surface's own).
+ */
+export type HoverCard = { dom: HTMLElement; } | HoverMiss | HoverPending;
+
+/**
+ * The events a consumer handles for its Numbat input, and the facts layer it answers from. Only
+ * `submit`, `exprCompletions` and {@link FactsHost}'s two methods are required; the rest are the
+ * REPL's, and a surface without a history or a log simply omits them.
+ *
+ * **Extending `FactsHost` is what took the interpreter out of this contract.** Three members used
+ * to sit here — `completionSignature`, `completionInfo` and `memberFields` — and each of them was a
+ * synchronous question a surface answered by calling into a wasm handle while the user waited, on
+ * the typing path, once per visible row. They are one batched fill and one map read now, and the
+ * three implementations differ only in which scope they name.
+ */
+export interface NumbatInputHost extends FactsHost {
   /** Accept the current text — evaluate it (REPL) or commit it (a property). */
   submit(value: string): void;
 
@@ -120,35 +143,23 @@ export interface NumbatInputHost {
   /** Ctrl+L: scroll the visible log off-screen, shell-style (keeps scrollback). */
   clearScreen?(): void;
 
-  /** Categorized expression completions for `query`, from the live session context: `enabled` is
-   *  the user's category toggles, `allowed` restricts to what the cursor position accepts (e.g.
-   *  types/dimensions/units after a `:`), or is null to accept all. */
+  /** Categorized expression completions for `query`, from whichever scope this surface's cursor is
+   *  in: `enabled` is the user's category toggles, `allowed` restricts to what the cursor position
+   *  accepts (e.g. types/dimensions/units after a `:`), or is null to accept all.
+   *
+   *  Asynchronous because enumerating a scope's names is a request now, where it used to be a call
+   *  into a handle the surface was holding. The one consumer is already an `async` completion
+   *  source, so the wait has somewhere to go. */
   exprCompletions(
     query: string,
     enabled: ExprCategories,
     allowed: ReadonlySet<ExprCategory> | null,
-  ): ExprCompletion[];
+  ): Promise<ExprCompletion[]>;
 
-  /** The field names of the struct `base` evaluates to, in declaration order, or an empty list when
-   *  it is not one. Drives member completion after a `.`, which Numbat's own completer does not
-   *  offer. */
-  memberFields?(base: string): string[];
-
-  /** The hover card for `symbol` (see hover/content.ts), or `null` when there is nothing to show. A
-   *  surface that omits it simply does not hover; no card carries a go-to-definition here, since
-   *  neither the REPL session nor a property field has a note position to jump *from*. */
-  hoverCard?(symbol: HoverSymbol): HTMLElement | null;
-
-  /** The inline `type()` signature HTML for a completion, or `null` if it has none. */
-  completionSignature(name: string): string | null;
-
-  /** The full documentation for a completion (the dwell popup), or `null` if none. */
-  completionInfo(name: string): CompletionInfo | null;
-
-  /** For an incomplete input, the type of the operand it is still missing — evaluated against the
-   *  live session context via a typed hole — or `null` when the input is complete, empty, or its
-   *  type cannot be recovered. */
-  holeType(input: string): string | null;
+  /** The hover card for `symbol` (see hover/content.ts). A surface that omits it simply does not
+   *  hover; no card carries a go-to-definition here, since neither the REPL session nor a property
+   *  field has a note position to jump *from*. */
+  hoverCard?(symbol: HoverSymbol): HoverCard;
 
   /** Vim's ex-mode command line opened or closed. Only the REPL uses it, to put its command line on
    *  the prompt's row instead of below it; a surface that omits it pays nothing, since the watcher
@@ -273,13 +284,20 @@ function applyOf(completion: ExprCompletion): Completion["apply"] {
  *
  * `admitsStatements` is false for an input holding one expression (a property value), which cannot
  * take a decorator — see the `expressionOnly` option.
+ *
+ * **Asynchronous, and the two branches that need to be.** CodeMirror lets a source return a
+ * promise, which is what lets the signatures on the rows be *asked for* rather than read out of a
+ * handle: one batched fill per keystroke instead of one interpreter call per visible row. The
+ * `\code` and history branches await nothing and simply resolve a tick later. After every await the
+ * context is re-checked for `aborted`. The reader typing on is what supersedes this query, and
+ * building rows for text they have moved past is work nobody will see.
  */
 function numbatCompletionSource(
   plugin: SymbatPlugin,
   host: NumbatInputHost,
   admitsStatements: boolean,
 ): CompletionSource {
-  return (context): CompletionResult | null => {
+  return async (context): Promise<CompletionResult | null> => {
     const { settings } = plugin;
 
     // Unicode `\code` completion, when the caret is inside a code.
@@ -287,7 +305,6 @@ function numbatCompletionSource(
       const before = context.state.sliceDoc(0, context.pos);
       const prefix = unicodePrefixAt(before, settings.unicodeLeader);
       if (prefix !== null) {
-        primeUnicodeCompletion();
         const from = context.pos - settings.unicodeLeader.length - prefix.length;
 
         // `numbatGlyph` drives the glyph gutter (see the autocompletion config); the label is the
@@ -336,17 +353,12 @@ function numbatCompletionSource(
         // Member position wins outright: after a `.` every engine candidate is a name that cannot
         // legally appear there. A base that is not a struct falls through to the ordinary behavior.
         const base = settings.completeIdentifiers ? memberBaseAt(before.slice(0, from)) : null;
-        if (base !== null && host.memberFields !== undefined) {
-          const query = trigger.query.toLowerCase();
-          const fields = host.memberFields(base)
-            .filter((field) => field.toLowerCase().startsWith(query))
-            .map((field): ReplCompletion => ({
-              label: field,
-              numbatCategory: "field",
-              numbatSignature: host.completionSignature(`${base}.${field}`) ?? undefined,
-            }));
-
-          if (fields.length > 0) {
+        if (base !== null) {
+          const fields = await memberCompletions(host, base, trigger.query);
+          if (context.aborted) {
+            return null;
+          }
+          if (fields !== null) {
             return { from, to: context.pos, options: fields, filter: false };
           }
         }
@@ -379,7 +391,8 @@ function numbatCompletionSource(
           const injected = new Set(local.map((completion) => completion.name));
           completions = [
             ...local,
-            ...host.exprCompletions(trigger.query, enabled, allowed).filter((c) => !injected.has(c.name)),
+            ...(await host.exprCompletions(trigger.query, enabled, allowed))
+              .filter((c) => !injected.has(c.name)),
           ];
         }
 
@@ -387,11 +400,27 @@ function numbatCompletionSource(
         // decorator has no runtime existence, and a parameter would be answered for by whatever
         // outer binding shares its name. Their card, their signature and their inserted text all
         // come from the completer's own tables instead.
+        //
+        // The rest are asked about in one batch, and only for their signature: filling what a card
+        // wants would run an *evaluation* per row (interpreter/facts.ts's mask), which for a
+        // hundred-row popover on every keystroke is the cost this layer exists to remove. No cap on
+        // the batch, deliberately — the list is already prefix-filtered, and every one of these
+        // names was answered for individually before this commit, so one request for all of them is
+        // strictly less work than what it replaces.
+        await host.facts(
+          completions.filter((completion) => isInterpreterKnown(completion.category))
+            .map((completion) => completion.name),
+          WANT_SIGNATURE,
+        );
+        if (context.aborted) {
+          return null;
+        }
+
         const options: ReplCompletion[] = completions.map((completion) => ({
           label: completion.name,
           numbatCategory: completion.category,
           numbatSignature: isInterpreterKnown(completion.category)
-            ? host.completionSignature(completion.name) ?? undefined
+            ? host.knownFacts(completion.name, WANT_SIGNATURE)?.signature ?? undefined
             : declaredSignature(completion),
           numbatDoc: completion.doc,
           numbatDeclared: completion.declared,
@@ -409,6 +438,39 @@ function numbatCompletionSource(
 
     return null;
   };
+}
+
+/**
+ * The member rows for `base.`, filtered by what has been typed after the dot, or `null` when the
+ * base is not a struct, or is not known to be one yet, which reads the same and is corrected on the
+ * next keystroke.
+ *
+ * Two fills rather than one, and they cannot be merged: what the fields *are* is a fact about the
+ * base, and their signatures are facts about names that cannot even be spelled until the first
+ * answer arrives. Both are batched, so a struct of twenty fields costs two round trips rather than
+ * the twenty-one this used to be.
+ */
+async function memberCompletions(
+  host: NumbatInputHost,
+  base: string,
+  query: string,
+): Promise<ReplCompletion[] | null> {
+  await host.facts([base], WANT_FIELDS);
+
+  const lower = query.toLowerCase();
+  const fields = (host.knownFacts(base, WANT_FIELDS)?.fields ?? [])
+    .filter((field) => field.toLowerCase().startsWith(lower));
+  if (fields.length === 0) {
+    return null;
+  }
+
+  await host.facts(fields.map((field) => `${base}.${field}`), WANT_SIGNATURE);
+
+  return fields.map((field): ReplCompletion => ({
+    label: field,
+    numbatCategory: "field",
+    numbatSignature: host.knownFacts(`${base}.${field}`, WANT_SIGNATURE)?.signature ?? undefined,
+  }));
 }
 
 /**
@@ -529,6 +591,14 @@ export class NumbatInput {
 
   /** Holds the document's indent unit, so a changed indent width applies live. */
   private readonly indentCompartment = new Compartment();
+
+  /** Holds the editable flag, so an input can be closed off while there is nothing behind it to
+   *  answer. See {@link setEditable}. */
+  private readonly editableCompartment = new Compartment();
+
+  /** The ghost text for an empty input, compartmentalized so a host can withdraw it. See
+   *  {@link setPlaceholder}. */
+  private readonly placeholderCompartment = new Compartment();
 
   /** The host, for documentation lookups on the dwell popup. */
   private readonly host: NumbatInputHost;
@@ -665,6 +735,7 @@ export class NumbatInput {
         // needed when the margin moves.
         EditorView.scrollMargins.of(() => ({ bottom: this.scrollBottomMargin })),
         numbatLanguage,
+        this.editableCompartment.of([]),
         this.gutterCompartment.of(options.lineNumbers === true ? lineNumbers() : []),
         this.highlightCompartment.of(highlight ? numbatReplHighlight : []),
 
@@ -691,7 +762,7 @@ export class NumbatInput {
         // the narrow sidebar — the REPL sits in a sidebar stacking context that the workspace
         // paints over otherwise.
         tooltips({ parent: document.body }),
-        placeholder(options.placeholder),
+        this.placeholderCompartment.of(placeholder(options.placeholder)),
         autocompletion({
           override: [numbatCompletionSource(plugin, host, !expressionOnly)],
 
@@ -829,23 +900,63 @@ export class NumbatInput {
 
     if (label !== null) {
       const row = selected;
+
+      // Start the lookup *with* the timer rather than after it. The scope is warm as the completion
+      // source that produced this row used it a moment ago, so this is one batch of one name, and
+      // it is what keeps the popup from appearing a round trip after the dwell it already waited
+      // for. A row carrying its own card needs nothing asked (see below).
+      if (row?.numbatDoc === undefined && row?.numbatDeclared === undefined) {
+        void this.host.facts([label], WANT_DWELL);
+      }
+
       this.dwellTimer = window.setTimeout(() => this.showDwellPopup(label, row), COMPLETION_DWELL_MS);
     }
   }
 
-  /** Show the documentation popup for the dwelt-on completion, above the completer. */
-  private showDwellPopup(label: string, row: ReplCompletion | null): void {
-    this.dwellTimer = null;
+  /**
+   * Show the documentation popup for the dwelt-on completion, above the completer.
+   *
+   * A dwell is the reader having *stopped*, so unlike the rows themselves there is no next
+   * keystroke to be re-rendered on: a name the facts layer cannot answer for yet has to be asked
+   * about and come back here. It comes back at most once — `retried` — because a fill that produced
+   * nothing at all will produce nothing again, and a popup that re-asks forever is a worse failure
+   * than a popup that does not appear.
+   */
+  private showDwellPopup(label: string, row: ReplCompletion | null, retried = false): void {
+    // The handle belongs to the timer that called this; a retry arrives on a promise and must not
+    // forget a timer some later row has since armed.
+    if (!retried) {
+      this.dwellTimer = null;
+    }
 
     // A row carrying its own card is one the interpreter cannot answer for: a decorator, or a name
     // the enclosing declaration binds, whose type and owner only its own source states.
     const doc = row?.numbatDoc;
     const declared = row?.numbatDeclared;
+
+    const known = doc !== undefined || declared !== undefined
+      ? undefined
+      : this.host.knownFacts(label, WANT_DWELL);
+    if (doc === undefined && declared === undefined && known === undefined) {
+      if (retried) {
+        return;
+      }
+
+      void this.host.facts([label], WANT_DWELL).then(() => {
+        // Still the row being dwelt on: the reader may have arrowed on, or dismissed the popover
+        // altogether, while the answer was on its way.
+        if (this.dwellLabel === label) {
+          this.showDwellPopup(label, row, true);
+        }
+      });
+      return;
+    }
+
     const info = doc !== undefined
       ? decoratorInfo(label, doc)
       : declared !== undefined
       ? declaredInfo(declared.kind, label, declared.owner)
-      : this.host.completionInfo(label);
+      : known?.info ?? null;
     if (info === null) {
       return;
     }
@@ -864,7 +975,7 @@ export class NumbatInput {
       ? (declared.type === null ? null : declaredTypeHtml(declared.type))
       : category === "function" || doc !== undefined
       ? null
-      : this.host.completionSignature(label);
+      : known?.signature ?? null;
     this.docPopup.showAbove(tooltip.getBoundingClientRect(), buildDocPopupContent(info, typeSignature));
   }
 
@@ -930,12 +1041,55 @@ export class NumbatInput {
     this.view.focus();
   }
 
+  /** Whether keyboard focus is in the editor _right now_. Asked by a host that is about to hide the
+   *  editor and wants to know whether to give focus back afterwards: hiding a focused element drops
+   *  focus to `<body>`, and restoring it unconditionally would take the caret away from wherever
+   *  the reader actually moved it while they waited. */
+  hasFocus(): boolean {
+    return this.view.hasFocus;
+  }
+
   /** Whether the completion popup is open. A host that tears the editor down when focus leaves it
    *  must not do so while the reader is picking a completion: the popup is parented on
    *  `document.body`, so pressing part of it blurs the editor without the reader having gone
    *  anywhere (properties/focus-guard.ts). */
   completionOpen(): boolean {
     return completionStatus(this.view.state) === "active";
+  }
+
+  /**
+   * Close the input off, or open it again.
+   *
+   * `editable` stops typing and removes the caret, and `readOnly` is what the commands consult, so
+   * without it a paste or a Vim `p` still lands. A closed input keeps its content and its scroll
+   * position. This is a surface waiting for something, not a surface being reset.
+   */
+  setEditable(on: boolean): void {
+    this.view.dispatch({
+      effects: this.editableCompartment.reconfigure(
+        on ? [] : [EditorView.editable.of(false), EditorState.readOnly.of(true)],
+      ),
+    });
+  }
+
+  /**
+   * Replace the ghost text shown while the input is empty, or withdraw it with `null`.
+   *
+   * Withdrawing it is not decoration. The placeholder is an _invitation_ and while the interpreter
+   * is starting or busy the surface cannot accept one, so leaving it there invites a reader to type
+   * into something that will refuse them. The REPL hides the whole editor in those states so just
+   * in case we also replace the placeholder.
+   */
+  setPlaceholder(text: string | null): void {
+    this.view.dispatch({
+      effects: this.placeholderCompartment.reconfigure(text === null ? [] : placeholder(text)),
+    });
+  }
+
+  /** Re-measure after the editor has been hidden and shown again. CodeMirror caches the geometry it
+   *  last saw, and what it last saw inside a `display: none` box is zeroes. */
+  remeasure(): void {
+    this.view.requestMeasure();
   }
 
   /** Toggle live syntax highlighting without rebuilding the editor. */
@@ -997,10 +1151,12 @@ export class NumbatInput {
       return { miss: "nothing to hover at the cursor" };
     }
 
-    const dom = this.host.hoverCard(symbol);
-    return dom === null
-      ? { miss: `nothing known about \`${symbol.probe}\` here` }
-      : { from: line.from + symbol.from, to: line.from + symbol.to, dom };
+    // Anything but a card is already an outcome — a miss to report, or a lookup for the driver to
+    // wait on and come back from.
+    const card = this.host.hoverCard(symbol);
+    return "dom" in card
+      ? { from: line.from + symbol.from, to: line.from + symbol.to, dom: card.dom }
+      : card;
   }
 
   /** Toggle (or re-read the settings of) the hover card without rebuilding the editor. */
@@ -1015,7 +1171,7 @@ export class NumbatInput {
   private inlayExtension() {
     return this.documentMode
       ? numbatDocumentInlays(this.plugin, () => this.host.filePath?.() ?? null)
-      : numbatReplHoleHint(this.plugin, (input) => this.host.holeType(input));
+      : numbatReplHoleHint(this.plugin, this.host);
   }
 
   /**

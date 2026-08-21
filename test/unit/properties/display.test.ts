@@ -4,6 +4,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { EVALUATION_LIMIT_TEXT } from "../../../src/interpreter/budget.ts";
 import { displayPlan, type PropertyDisplay } from "../../../src/properties/display.ts";
 
 /** Beside an editor the reader can already see — a property row. */
@@ -59,4 +60,15 @@ test("an incomplete expression shows the missing operand's type either way", () 
   const plan = { paint: "text", text: "⟨Length⟩", cls: null };
   assert.deepEqual(displayPlan({ kind: "hole", type: "Length" }, ANNOTATED), plan);
   assert.deepEqual(displayPlan({ kind: "hole", type: "Length" }, ALONE), plan);
+});
+
+// The evaluation limit needs no display kind of its own: it arrives as an ordinary error outcome
+// and is painted by the path errors already take. This is what "no new PropertyDisplay variant" is
+// worth as an assertion rather than a claim — if a future refactor gives refusals their own kind,
+// every surface that renders one has to learn about it, and this is where that shows up first.
+test("the evaluation limit paints through the error path, in a row and in a bare cell alike", () => {
+  const refused: PropertyDisplay = { kind: "error", text: EVALUATION_LIMIT_TEXT };
+
+  assert.deepEqual(displayPlan(refused, ANNOTATED), { paint: "text", text: EVALUATION_LIMIT_TEXT, cls: "error" });
+  assert.deepEqual(displayPlan(refused, ALONE), { paint: "text", text: EVALUATION_LIMIT_TEXT, cls: "error" });
 });

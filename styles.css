@@ -433,6 +433,86 @@
   background: var(--text-selection);
 }
 
+/* The input while there is no interpreter behind it.
+ *
+ * CodeMirror's own `editable: false` removes the caret and refuses the keystrokes; this is the part
+ * a reader can see, so that a prompt which does not respond reads as waiting rather than as broken.
+ *
+ * The editor is *hidden*, never emptied: a reader who half-typed a line before a respawn still has
+ * it when the interpreter comes back. The prompt goes with it, because a `>>>` with no caret after
+ * it is an invitation the surface cannot honour. */
+.numbat-repl-input-row.numbat-repl-waiting .cm-editor,
+.numbat-repl-input-row.numbat-repl-waiting .numbat-repl-prompt {
+  display: none;
+}
+
+.numbat-repl-status {
+  display: none;
+  flex: 1;
+  align-items: center;
+  gap: 0.5em;
+  /* The theme's own orange rather than a color of ours: this is a transient state, not an error,
+   * and every Obsidian theme has an opinion about which orange is its. */
+  color: var(--color-orange);
+  font-size: var(--numbat-repl-input-font-size, var(--code-size, 0.9em));
+  line-height: 1.5;
+}
+
+.numbat-repl-input-row.numbat-repl-waiting .numbat-repl-status {
+  display: flex;
+}
+
+/* The message fills what the hidden editor left, rather than sitting content-sized at the left of a
+ * row that is mostly empty. The span, not just its container: the container already grows, so a
+ * short message like "Evaluating…" still ended at its own last character, and the row read as a
+ * label with a gap after it instead of as one status line. `min-width: 0` so a message longer than
+ * the sidebar ellipsizes rather than forcing the row wider than the pane. */
+.numbat-repl-status-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The stop control sits at the end of the input row, in the same family as the Esc and evaluate
+ * buttons it shares that row with (the rules further down size and paint all three together).
+ *
+ * Dimmed rather than removed while there is nothing running: it holds its place so a reader knows
+ * where it is before the moment they want it. `pointer-events: none` because a disabled button in
+ * some themes still takes the cursor. */
+.numbat-repl-stop-button:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* `currentColor`, so the ring takes the theme's orange from the text beside it and the two cannot
+ * drift apart. `flex: none` keeps it circular when the message wraps on a narrow pane. */
+.numbat-repl-spinner {
+  flex: none;
+  width: 0.9em;
+  height: 0.9em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: numbat-repl-spin 0.8s linear infinite;
+}
+
+@keyframes numbat-repl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* A spinner is decoration; the sentence beside it carries the meaning. Readers who have asked for
+ * less motion still get the ring, just still. */
+@media (prefers-reduced-motion: reduce) {
+  .numbat-repl-spinner {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* --- Vim block cursor ---------------------------------------------------- */
 
 /* `@replit/codemirror-vim` draws normal-mode's block cursor itself, as an absolutely positioned
@@ -566,7 +646,8 @@
 .numbat-repl-prompt,
 .numbat-repl-input-row .cm-content,
 .numbat-repl-esc-button,
-.numbat-repl-submit-button {
+.numbat-repl-submit-button,
+.numbat-repl-stop-button {
   font-size: var(--numbat-repl-input-font-size, var(--code-size, 0.9em));
   line-height: 1.5;
 }
@@ -676,6 +757,7 @@
  * key bar, which sits on no such line, overrides the height where it is defined. */
 .numbat-repl-esc-button,
 .numbat-repl-submit-button,
+.numbat-repl-stop-button,
 .numbat-file-keybar button {
   flex: 0 0 auto;
   display: flex;
@@ -691,7 +773,8 @@
  * where a tint is enough of a fill to read as a control. The key bar's are sized for a fingertip
  * and sit on the file's text, so they state both for themselves where they are defined. */
 .numbat-repl-esc-button,
-.numbat-repl-submit-button {
+.numbat-repl-submit-button,
+.numbat-repl-stop-button {
   height: 1.5em;
   min-width: 1.6em;
   padding: 0 0.4em;
@@ -709,6 +792,7 @@
  * would then repaint a lit button's glyph in the color it has when unlit. */
 .numbat-repl-esc-button:hover,
 .numbat-repl-submit-button:hover,
+.numbat-repl-stop-button:not(:disabled):hover,
 .numbat-file-keybar button:not(.is-active):hover {
   color: var(--text-normal);
 }

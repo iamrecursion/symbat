@@ -29,42 +29,33 @@ import {
 import { type Editor, type EditorPosition } from "obsidian";
 import { frontmatterBodyOf, scannedNote } from "../document/doc-cache";
 import { sourcePathOf } from "../document/editor-file";
+import { EvaluationCache } from "../interpreter/eval-cache";
 import { escapeHtmlStrict } from "../interpreter/markup";
 import {
-  createContext,
+  ask,
   ensureNumbatReady,
-  freeQuietly,
-  interpret,
   interpreterGeneration,
   isNumbatReady,
+  preludeReadsClockOrRandom,
   restartNumbat,
 } from "../interpreter/numbat";
 import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
-import {
-  EMPTY_PREAMBLE,
-  type NotePreamble,
-  notePreamble,
-  primeReservedNames,
-  replayPreamble,
-} from "../properties/note";
+import { ensureReservedNames, notePreamble } from "../properties/note";
 import { tokensForLine } from "../syntax/tokenizer";
 import { semanticKind } from "../syntax/type-names";
 import { INLINE_EVAL_CACHE_ENTRIES, INLINE_EVAL_DEBOUNCE_MS } from "../tuning";
 import {
-  configError,
-  configErrorResult,
   DEFAULT_SEPARATOR,
   type InlineEvalConfig,
   type InlineResult,
-  inlineResultFor,
   inlineScopeAt,
   type InlineSpan,
   MAX_DECIMAL_PLACES,
+  noteReadsClockOrRandom,
   noteSignature,
   type NoteUnit,
   spanAtColumn,
-  spanDecimalPlaces,
 } from "./inline-parse";
 
 // CONFIGURATION
@@ -111,81 +102,6 @@ export function inlineConfig(plugin: SymbatPlugin): InlineEvalConfig {
     codeBlocks: plugin.settings.inlineEvalCodeBlocks,
     decimalPlaces: defaultDecimalPlaces(plugin.settings.inlineEvalDecimalPlaces),
   };
-}
-
-// EVALUATION
-// ================================================================================================
-
-/**
- * Replay a note's units in one fresh interpreter context, returning each inline unit's {@link
- * InlineResult} in document order. The note preamble (property bindings) replays first, then shared
- * blocks are interpreted for their side effects and inline expressions are interpreted with their
- * results derived. The caller must have ensured the interpreter is ready. Shared by the editor's
- * async pass and the commit command.
- */
-export function evaluateNoteUnits(
-  units: NoteUnit[],
-  applyRates: boolean,
-  config: InlineEvalConfig,
-  preamble: NotePreamble = EMPTY_PREAMBLE,
-): InlineResult[] {
-  const results: InlineResult[] = [];
-  const context = createContext(applyRates);
-
-  try {
-    replayPreamble(context, preamble);
-    for (const unit of units) {
-      if (unit.kind === "shared") {
-        interpret(context, unit.code);
-        continue;
-      }
-
-      const run = (code: string) => interpret(context, code);
-      const badConfig = configError(unit.span.configText);
-      if (badConfig !== null) {
-        // A malformed `{…}` config surfaces like an evaluation error; the expression still runs for
-        // its state effects (a `let` stays visible to the spans below).
-        run(unit.span.expr);
-        results.push(configErrorResult(badConfig));
-        continue;
-      }
-
-      results.push(inlineResultFor(run, unit.span.expr, spanDecimalPlaces(unit.span, config)));
-    }
-  } finally {
-    freeQuietly(context);
-  }
-
-  return results;
-}
-
-/**
- * Evaluate a sequence of expressions (each with its effective decimal places and any config error)
- * in one fresh context, in order (so a later expression sees an earlier one's definitions). Used by
- * the reading-view processor when it cannot recover the surrounding note text for full shared
- * state. The caller must have ensured the interpreter is ready.
- */
-export function evaluateExprs(
-  entries: { expr: string; dp: number | null; error: string | null; }[],
-  applyRates: boolean,
-  preamble: NotePreamble = EMPTY_PREAMBLE,
-): InlineResult[] {
-  const context = createContext(applyRates);
-  try {
-    replayPreamble(context, preamble);
-    return entries.map((entry) => {
-      const run = (code: string) => interpret(context, code);
-
-      if (entry.error !== null) {
-        run(entry.expr); // state effects only; the config error takes precedence
-        return configErrorResult(entry.error);
-      }
-
-      return inlineResultFor(run, entry.expr, entry.dp);
-    });
-  } finally {
-    freeQuietly(context);
-  }
 }
 
 /** The plain-text a commit writes for a span: `expr = value` or just `value`. */
@@ -424,7 +340,7 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
       decorations: DecorationSet;
 
       /** Cached note evaluations, keyed by {@link noteSignature}. */
-      private readonly cache = new Map<string, InlineResult[]>();
+      private readonly cache = new EvaluationCache<InlineResult[]>(INLINE_EVAL_CACHE_ENTRIES);
 
       /** The pending debounced evaluation, or `null` when none is scheduled. */
       private timer: number | null = null;
@@ -488,8 +404,13 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
 
         const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
         const signature = noteSignature(interpreterGeneration(), preamble.source, units, config);
-        const results = this.cache.get(signature);
-        if (results === undefined) {
+        // A stale hit still paints, and also asks for a newer one — the same two-sided use the
+        // frontmatter inlays make of an aged property outcome. Treating it as a miss instead would
+        // blank every span of a note containing `now()` for the length of a standard-library load,
+        // every ten seconds, which is a worse answer than a value a moment out of date.
+        const hit = this.cache.get(signature);
+        const results = hit?.value;
+        if (hit === null || !hit.fresh) {
           this.scheduleEvaluation(view);
         }
 
@@ -592,7 +513,11 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
         const { doc } = view.state;
         const units = scannedNote(doc, config);
         const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
-        const results = this.cache.get(noteSignature(interpreterGeneration(), preamble.source, units, config));
+        // Freshness is not consulted: this writes a computed value into the document because the
+        // reader asked it to, and last second's answer is the one they were looking at when they
+        // asked.
+        const results = this.cache.get(noteSignature(interpreterGeneration(), preamble.source, units, config))
+          ?.value;
         if (results === undefined) {
           return;
         }
@@ -628,47 +553,64 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
 
         const config = inlineConfig(plugin);
         const { doc } = view.state;
-        primeReservedNames(plugin.settings.fetchExchangeRates);
+        void ensureReservedNames(plugin.settings.fetchExchangeRates);
 
         const units = scannedNote(doc, config);
         const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
         const signature = noteSignature(interpreterGeneration(), preamble.source, units, config);
-        if (this.cache.has(signature)) {
+        const noteImpure = preludeReadsClockOrRandom() || noteReadsClockOrRandom(preamble.source, units);
+        if (this.cache.hasFresh(signature)) {
           return; // Raced with another pass; nothing to do.
         }
 
-        let results: InlineResult[];
-        try {
-          results = evaluateNoteUnits(units, plugin.settings.fetchExchangeRates, config, preamble);
-        } catch (error) {
-          console.error("Symbat: inline evaluation crashed", error);
-          restartNumbat();
+        // The note's allowance is stated: a wall-clock deadline held across the request would
+        // charge the note for the time the request spent waiting to be served. One context serves
+        // the whole note over there, and there is no head check on this path. Past the deadline
+        // every span comes back as an ordinary error result. That is deliberate: the alternative,
+        // answering nothing, would leave the signature uncached, so the next rebuild would find the
+        // same work outstanding and schedule the same pass again, at the debounce, for the rest of
+        // the session.
+        //
+        // Grouped by note, so a reader typing supersedes their own previous request rather than
+        // queueing a standard-library load per keystroke behind it.
+        const budgeted = await ask("evalNoteUnits", {
+          units,
+          applyRates: plugin.settings.fetchExchangeRates,
+          config,
+          preamble,
+          budget: { budgetMs: plugin.settings.evaluationLimitMs, key: sourcePathOf(view) },
+        }, { group: `inline:${sourcePathOf(view) ?? ""}`, note: sourcePathOf(view) ?? undefined });
+
+        if (budgeted === null || this.destroyed) {
           return;
         }
-        this.remember(signature, results);
 
-        if (this.destroyed) {
-          return;
+        if (budgeted.exceeded) {
+          // As in the inlay pass: reported, not filed in the refusal ledger. The signature this is
+          // cached under moves with the buffer, so the refusal is found again without re-evaluating
+          // — provided it does not age out, which is what `!exceeded` below is for.
+          plugin.reportEvaluationLimit(sourcePathOf(view) ?? "");
         }
 
-        const changes = concreteChanges(view, units, results, config);
+        const results = [...budgeted.value];
+
+        // Never age a refusal. An answer the limit cut short is not a value the clock can change,
+        // so re-asking for it would spend the whole allowance again to be told the same thing and
+        // the note's own text is the only thing that can make the answer different. This is what
+        // keeps a note that reads `now()` *and* exceeds the limit from freezing once every window
+        // for the rest of the session, which is the retry the buffer key used to prevent by itself.
+        this.cache.set(signature, results, !budgeted.exceeded && noteImpure);
+
+        // The document is re-checked before anything is *written* to it, and only then. The results
+        // were computed against `doc`, and the await in front of them is a window a fast typist can
+        // land an edit in; a concrete span materialized against a document that has moved would be
+        // written at the wrong offsets. Repainting decorations is safe either way as they are
+        // rebuilt from the live state, so the effect is dispatched regardless.
+        const changes = view.state.doc === doc ? concreteChanges(view, units, results, config) : [];
         if (changes.length > 0) {
           view.dispatch({ changes, effects: inlineEvalReady.of(), annotations: materialization.of(true) });
         } else {
           view.dispatch({ effects: inlineEvalReady.of() });
-        }
-      }
-
-      /** Store a signature's results, evicting the oldest entries past the cap. */
-      private remember(signature: string, results: InlineResult[]): void {
-        this.cache.set(signature, results);
-
-        while (this.cache.size > INLINE_EVAL_CACHE_ENTRIES) {
-          const oldest = this.cache.keys().next().value;
-          if (oldest === undefined) {
-            break;
-          }
-          this.cache.delete(oldest);
         }
       }
     },

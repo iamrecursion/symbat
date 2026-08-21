@@ -6,20 +6,25 @@
 // It resolves the symbol against exactly the scope that position has (scope/replay.ts — the same
 // walk the completer uses), so a name means here what it means there.
 //
-// Everything here is synchronous (see hover/hover.ts): the interpreter is warmed in the background
-// and a hover before it is ready simply shows nothing.
+// Nothing here calls the interpreter (see hover/hover.ts). What a name is comes out of the facts
+// cache (interpreter/facts.ts) as a map lookup; a miss says so and hands back the fill it started,
+// which the driver waits on and asks again after. The dwell being armed is what starts that fill,
+// so by the time the card is due the answer is usually already there.
 
 import type { EditorView } from "@codemirror/view";
 import { type Editor, editorInfoField } from "obsidian";
 import { cursorInInlineExpr, cursorInNumbatFence } from "../document/editor-scope";
 import { inlineConfig } from "../evaluation/inline";
-import { ensureBlockCompletion, ensureNumbatReady, isNumbatReady, touchCompletionIdle } from "../interpreter/numbat";
+import { ensureFacts, knownFacts, scopeKey, type ScopeSpec, WANT_CARD } from "../interpreter/facts";
+import { scopeFactsReader } from "../interpreter/live-facts";
+import { ensureNumbatReady, interpreterGeneration, isNumbatReady } from "../interpreter/numbat";
 import type SymbatPlugin from "../main";
 import { numbatPropertySiteAt, replayChunksAt } from "../scope/replay";
+import { factsSource } from "./card";
 import { appendDefinitionLink, declarationCard, symbolCard } from "./content";
 import { declaredSymbolAt } from "./declarations";
 import { definitionAt } from "./definition";
-import { dismissHover, type HoverOutcome, type HoverSource, numbatHover, showHoverWhenReady } from "./hover";
+import { dismissHover, type HoverMiss, type HoverOutcome, type HoverSource, numbatHover } from "./hover";
 import { type HoverSymbol, hoverSymbolAt } from "./parse";
 
 /** Where in a note a position sits, when it is Numbat source at all. A property's value carries the
@@ -35,20 +40,21 @@ function editorFor(view: EditorView): { editor: Editor; path: string | null; } |
   return editor === undefined ? null : { editor, path: info?.file?.path ?? null };
 }
 
-/** Whether a background warm-up is already in flight (see {@link warmUp}). */
-let warming = false;
+/** The warm-up in flight, or `null` when none is (see {@link warmUp}). */
+let warming: Promise<void> | null = null;
 
 /**
- * Ready the interpreter off the hover path, so the *next* hover can answer synchronously. Mirrors
- * the completer's warm-up, for the same reason: the first hover in a session would otherwise have
- * to await the wasm.
+ * Ready the interpreter, and settle when it is ready to be asked. Mirrors the completer's warm-up,
+ * for the same reason: the first hover in a session would otherwise land while the wasm is still
+ * loading.
+ *
+ * Shared rather than started per hover: a reader moving the caret through a block would otherwise
+ * queue one of these per keystroke, and they all wait for the same thing. It never rejects — a
+ * failure is logged and settles, and the ask that follows is what discovers there is still no
+ * answer.
  */
-function warmUp(plugin: SymbatPlugin, view: EditorView): void {
-  if (warming) {
-    return;
-  }
-  warming = true;
-  const ready = (async () => {
+function warmUp(plugin: SymbatPlugin): Promise<void> {
+  warming ??= (async () => {
     try {
       await ensureNumbatReady();
       await plugin.ensurePrelude();
@@ -56,12 +62,11 @@ function warmUp(plugin: SymbatPlugin, view: EditorView): void {
     } catch (error) {
       console.error("Symbat: the hover popup could not initialize the interpreter", error);
     } finally {
-      warming = false;
+      warming = null;
     }
   })();
-  // The hover that triggered the warm-up is the one the user wanted; show it when the interpreter
-  // arrives, rather than making them ask a second time.
-  showHoverWhenReady(view, ready);
+
+  return warming;
 }
 
 /** The hover source for a note editor. */
@@ -69,6 +74,9 @@ function noteHoverSource(plugin: SymbatPlugin): HoverSource {
   return {
     completerOpen: () => completerOpen(),
     resolve: (view, pos) => resolveInNote(plugin, view, pos),
+    prewarm: (view, pos) => {
+      prewarmInNote(plugin, view, pos);
+    },
   };
 }
 
@@ -93,13 +101,35 @@ function completerOpen(): boolean {
   return false;
 }
 
-/** Resolve the symbol at `pos`, or say why there is nothing to show. Every `miss` here is
- *  user-facing: the command and the Vim key report it. */
-function resolveInNote(
-  plugin: SymbatPlugin,
-  view: EditorView,
-  pos: number,
-): HoverOutcome {
+/** What a hover landed on: the symbol, the note holding it, and the scope it resolves against.
+ *  Shared by the resolve and the prewarm, so the two cannot come to disagree about which name in
+ *  which scope the reader is asking about. */
+interface HoverSite {
+  /** The note's editor, for the definition search. */
+  editor: Editor;
+
+  /** The note's path, or `null` for an unsaved buffer. */
+  path: string | null;
+
+  /** The document line the position is on — the tooltip's anchor is an offset into it. */
+  line: { from: number; text: string; };
+
+  /** The position as a line/column pair, which is what the note-side walks take. */
+  position: { line: number; ch: number; };
+
+  /** The name being asked about. */
+  symbol: HoverSymbol;
+
+  /** The scope the name resolves in: the code above it, replayed. */
+  spec: ScopeSpec;
+
+  /** That scope's cache key (interpreter/facts.ts). */
+  key: string;
+}
+
+/** The site at `pos`, or why there is nothing there. Every `miss` is user-facing: the command and
+ *  the Vim key report it. */
+function hoverSiteAt(plugin: SymbatPlugin, view: EditorView, pos: number): HoverSite | HoverMiss {
   const target = editorFor(view);
   if (target === null) {
     return { miss: "no editor here" };
@@ -130,29 +160,68 @@ function resolveInNote(
   if (region.kind === "property" && symbol.from < region.valueCh) {
     return { miss: `\`${symbol.name}\` is the property's key, not its value` };
   }
-  if (!isNumbatReady()) {
-    warmUp(plugin, view);
-    return { miss: "still starting the interpreter — try again in a moment" };
-  }
 
-  // The position's own scope — including its line, so a name hovered on the very statement that
+  // The position's own scope, including its line, so a name hovered on the very statement that
   // defines it resolves.
   const chunks = replayChunksAt(plugin, target.editor, target.path, { line: position.line, ch: symbol.from }, {
     includeCurrentLine: true,
   });
+  const spec: ScopeSpec = { chunks, applyRates: plugin.settings.fetchExchangeRates };
 
-  const built = ensureBlockCompletion(chunks, plugin.settings.fetchExchangeRates);
-  if (built === null) {
-    return { miss: "could not build the scope for this position" };
+  return {
+    editor: target.editor,
+    path: target.path,
+    line,
+    position,
+    symbol,
+    spec,
+    key: scopeKey(spec, interpreterGeneration()),
+  };
+}
+
+/** Start the lookup this site needs, and settle when its answer is in the cache. Batched at one
+ *  name because that is all a hover asks about; the completer rows are what will send forty. */
+function fillFacts(plugin: SymbatPlugin, site: HoverSite): Promise<void> {
+  return ensureFacts(
+    site.key,
+    [site.symbol.probe],
+    WANT_CARD,
+    scopeFactsReader(site.spec, plugin.settings.completionIdleSeconds * 1000),
+  );
+}
+
+/** Resolve the symbol at `pos`: the card, why there is none, or the lookup that would produce
+ *  one. */
+function resolveInNote(
+  plugin: SymbatPlugin,
+  view: EditorView,
+  pos: number,
+): HoverOutcome {
+  const site = hoverSiteAt(plugin, view, pos);
+  if ("miss" in site) {
+    return site;
   }
-  touchCompletionIdle(plugin.settings.completionIdleSeconds * 1000);
+  const { line, position, symbol } = site;
+
+  if (!isNumbatReady()) {
+    return { pending: warmUp(plugin), miss: "still starting the interpreter — try again in a moment" };
+  }
 
   // A parameter, a type parameter, a struct's own field: names that exist only inside the
   // declaration that introduces them. They are asked about *first*, because they shadow — no
   // context knows them, but a context may well know an outer name that happens to match, and `fn
   // f(x: Length)` written under a `let x = 9` must describe the parameter rather than the variable.
+  // They also need no interpreter at all, so a declared name never waits.
   const declared = declarationCardAt(view, position.line, symbol);
-  const card = declared ?? symbolCard(built.context, symbol);
+
+  let card = declared;
+  if (card === null) {
+    const known = knownFacts(site.key, symbol.probe, WANT_CARD);
+    if (known === undefined) {
+      return { pending: fillFacts(plugin, site), miss: "could not look that name up — try again in a moment" };
+    }
+    card = symbolCard(factsSource(known), symbol);
+  }
   if (card === null) {
     return { miss: `nothing known about \`${symbol.probe}\` here` };
   }
@@ -161,17 +230,37 @@ function resolveInNote(
   // go — and the outer binding it shadows is the one place a link must not lead.
   const definition = declared !== null ? null : definitionAt(
     plugin,
-    target.path,
-    target.editor.getValue(),
+    site.path,
+    site.editor.getValue(),
     symbol.probe,
     symbol.name,
     position.line,
   );
   if (definition !== null) {
-    appendDefinitionLink(card, plugin.app, definition, target.path, () => dismissHover(view));
+    appendDefinitionLink(card, plugin.app, definition, site.path, () => dismissHover(view));
   }
 
   return { from: line.from + symbol.from, to: line.from + symbol.to, dom: card };
+}
+
+/**
+ * Start what a card at `pos` will need, while the dwell delay runs.
+ *
+ * The site is worked out first and the interpreter is only woken for a position that is actually
+ * Numbat. This runs wherever a caret settles in an editor hover is registered in, and warming the
+ * wasm because someone paused in a paragraph would be a cost with nothing at the end of it.
+ */
+function prewarmInNote(plugin: SymbatPlugin, view: EditorView, pos: number): void {
+  const site = hoverSiteAt(plugin, view, pos);
+  if ("miss" in site) {
+    return;
+  }
+
+  if (!isNumbatReady()) {
+    void warmUp(plugin);
+    return;
+  }
+  void fillFacts(plugin, site);
 }
 
 /**

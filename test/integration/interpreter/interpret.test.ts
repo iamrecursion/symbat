@@ -5,7 +5,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { jqueryTerminalToHtml, refinedNumbatClass } from "../../../src/interpreter/markup.ts";
-import { buildUnicodeCodeList } from "../../../src/unicode/codes.ts";
 import { loadNumbat, reinitNumbat, skip } from "../wasm-pkg.ts";
 
 test("evaluates a unit conversion to highlighted HTML", { skip }, async () => {
@@ -134,52 +133,8 @@ test("a prelude parse error is reported via is_error, not a panic", { skip }, as
   nb.free();
 });
 
-// The plugin's Unicode expansion relies on this contract: a match returns `[patternLength,
-// replacement]` (the length counts the leading backslash), and a non-match returns an empty array.
-// See `getUnicodeCompletion`.
-test("get_unicode_completion returns [length, replacement] for a known code", { skip }, async () => {
-  const { Numbat, FormatType } = await loadNumbat();
-  const nb = Numbat.new(true, true, FormatType.Html);
-
-  const alpha = nb.get_unicode_completion("x = \\alpha");
-  assert.deepEqual(alpha, [6, "α"]);
-
-  // Only the tail matters: a code mid-string with trailing text does not match.
-  assert.deepEqual(nb.get_unicode_completion("\\alpha + 1"), []);
-  // A plain word with no leading backslash is not a code.
-  assert.deepEqual(nb.get_unicode_completion("alpha"), []);
-  // An unknown code does not match.
-  assert.deepEqual(nb.get_unicode_completion("\\notacode"), []);
-
-  nb.free();
-});
-
-// The completion popover enumerates codes by filtering Numbat's completion vocabulary
-// (`get_completions_for`) through `get_unicode_completion`. This pins that pipeline against the
-// real wasm (see `listUnicodeCompletions`).
-test("get_completions_for feeds buildUnicodeCodeList a usable code list", { skip }, async () => {
-  const { Numbat, FormatType } = await loadNumbat();
-  const nb = Numbat.new(true, true, FormatType.Html);
-
-  // Prefix completion includes the unicode code name.
-  const forAl = (nb.get_completions_for("al") as unknown[]).map((v) => String(v));
-  assert.ok(forAl.includes("alpha"), "expected 'alpha' among completions for 'al'");
-
-  // Build the full \code list exactly as the plugin does.
-  const names = (nb.get_completions_for("") as unknown[]).map((v) => String(v));
-  const codes = buildUnicodeCodeList(names, (code) => {
-    const r = nb.get_unicode_completion(code) as unknown[];
-    return Array.isArray(r) && r.length === 2 ? String(r[1]) : null;
-  });
-  const byName = new Map(codes.map((c) => [c.name, c.replacement]));
-  assert.equal(byName.get("alpha"), "α");
-  assert.equal(byName.get("pi"), "π");
-  // Keywords and functions that are not codes are filtered out.
-  assert.equal(byName.has("let"), false);
-  assert.equal(byName.has("sin"), false);
-
-  nb.free();
-});
+// The Unicode `\code` tests moved to test/integration/unicode/table.test.ts when the table stopped
+// being asked of the wasm at runtime; they now pin the committed transcription against it.
 
 const ECB_XML = `<?xml version="1.0"?>
 <gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">

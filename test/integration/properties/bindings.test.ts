@@ -451,8 +451,8 @@ test("arrays of objects: one element type, and Numbat's list vocabulary over it"
     replay(nb, preamble);
     const run = runnerFor(nb);
     assert.equal(inlineResultFor(run, "len(legs)").plain, "2");
-    // A field reads through an element, and — the point of a *homogeneous* list — a function over
-    // the element type maps across the whole of it.
+    // A field reads through an element, and a function over the element type maps across the whole
+    // of it.
     assert.equal(plain(inlineResultFor(run, "element_at(0, legs).distance").valueHtml ?? ""), "5 km");
 
     // The generated name is not something a user would type, so the mapping function is declared
@@ -1221,7 +1221,7 @@ test("a suffix pass answers what the same properties answered in a full pass", {
   assert.equal(suffix.length, 3);
 });
 
-// Step 7's equivalence: the Source-mode frontmatter inlays no longer evaluate anything. They read
+// The equivalence that lets the Source-mode frontmatter inlays evaluate nothing at all: they read
 // the outcomes the property batch filed and project them, so what they show has to be exactly what
 // evaluating the note would have shown — and the whole point of storing the outcome rather than a
 // projection of it is that both readers can take their own view of the same entry.
@@ -1243,7 +1243,7 @@ test("frontmatter hints read from the cache are the hints a fresh evaluation pro
   const batch = newContext(mod);
   try {
     for (const [index, outcome] of evaluateBindings(runnerFor(batch), preamble).entries()) {
-      rememberNoteOutcome(keys[index], preamble.bindings[index].expr, outcome);
+      rememberNoteOutcome(keys[index], preamble.bindings[index].expr, outcome, true);
     }
   } finally {
     batch.free();
@@ -1270,7 +1270,7 @@ test("a suffix refill leaves the hints above it untouched", { skip }, async () =
   try {
     const outcomes = evaluateBindings(runnerFor(first), preamble);
     for (const [index, outcome] of outcomes.entries()) {
-      rememberNoteOutcome(keys[index], preamble.bindings[index].expr, outcome);
+      rememberNoteOutcome(keys[index], preamble.bindings[index].expr, outcome, true);
     }
     expected = outcomes.map(hintFromOutcome).filter((hint) => hint !== null);
   } finally {
@@ -1282,7 +1282,7 @@ test("a suffix refill leaves the hints above it untouched", { skip }, async () =
   const second = newContext(mod);
   try {
     for (const [offset, outcome] of evaluateBindings(runnerFor(second), preamble, from).entries()) {
-      rememberNoteOutcome(keys[from + offset], preamble.bindings[from + offset].expr, outcome);
+      rememberNoteOutcome(keys[from + offset], preamble.bindings[from + offset].expr, outcome, true);
     }
   } finally {
     second.free();

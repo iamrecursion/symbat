@@ -19,19 +19,21 @@ import {
 } from "obsidian";
 import type { CompletionVocabulary } from "../completion/expressions";
 import { buildDocPopupContent, DocPopup, renderExprSuggestion } from "../completion/render";
+import { EvaluationCache } from "../interpreter/eval-cache";
+import { type ScopeSpec, WANT_INFO, WANT_SIGNATURE } from "../interpreter/facts";
+import { scopeFactsHost } from "../interpreter/live-facts";
 import {
-  completionInfo,
-  completionSignature,
-  ensureExpressionContext,
+  ask,
   ensureNumbatReady,
-  getExpressionVocabulary,
-  type Numbat,
+  interpreterGeneration,
+  preludeReadsClockOrRandom,
   touchCompletionIdle,
 } from "../interpreter/numbat";
 import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
 import { jumpToDefinition } from "../scope/goto-definition";
 import {
+  adoptScopeValues,
   currentNodePath,
   declarationHeadHtml,
   isActiveLine,
@@ -41,6 +43,7 @@ import {
   type ScopeTree,
   type ScopeValue,
   type SkipEntry,
+  treeReadsClockOrRandom,
 } from "../scope/model";
 import {
   rankSearchCandidates,
@@ -118,7 +121,7 @@ export class NumbatScopeView extends ItemView {
   private readonly expanded = new Map<string, boolean>();
 
   /** Cached values by tree signature (values only — structure is always rebuilt). */
-  private readonly valueCache = new Map<string, (ScopeValue | undefined)[]>();
+  private readonly valueCache = new EvaluationCache<(ScopeValue | undefined)[]>(SCOPE_VALUE_CACHE_ENTRIES);
 
   /** Whether the caret's node is revealed — force-expanded and scrolled to (the "reveal active
    *  line" toggle). The highlight follows the caret either way. */
@@ -159,6 +162,13 @@ export class NumbatScopeView extends ItemView {
   /** The current query's matches, best first. */
   private hits: SearchHit[] = [];
 
+  /** What the interpreter has said about the names in the prelude context — read synchronously by
+   *  the result rows and the dwell card, filled by {@link fillResultFacts} and {@link armDwell}. */
+  private readonly facts = scopeFactsHost(
+    () => this.preludeSpec(),
+    () => this.plugin.settings.completionIdleSeconds * 1000,
+  );
+
   /** Index into {@link hits} of the highlighted result. */
   private selected = 0;
 
@@ -174,6 +184,13 @@ export class NumbatScopeView extends ItemView {
 
   /** Whether a bundled-prelude vocabulary load is in flight. */
   private loadingVocab = false;
+
+  /** The prelude's categorized vocabulary, once fetched, and the interpreter generation it
+   *  describes. Held here rather than read back from the interpreter on every keystroke, which is
+   *  what a synchronous façade used to allow: a snapshot is a request now, so the answer has to be
+   *  kept. The stamp is what a prelude edit invalidates it with. */
+  private vocab: CompletionVocabulary | null = null;
+  private vocabGeneration = -1;
 
   /** The rendered tree rows by stable key, for revealing a search hit. Rebuilt each render; keys
    *  (not entry objects) because a refresh replaces every entry. */
@@ -611,34 +628,35 @@ export class NumbatScopeView extends ItemView {
     this.setCurrent(tree, this.caretLine);
 
     if (!tree.empty) {
+      // A stale hit is re-evaluated where it can be and painted where it cannot. A tree whose
+      // values read the clock is worth refreshing, but not at the price of showing nothing while
+      // the interpreter is unavailable.
       const cached = this.valueCache.get(tree.signature);
-      if (cached !== undefined) {
-        scopeEntries(tree).forEach((entry, index) => {
-          entry.value = cached[index];
-        });
+      if (cached !== null && (cached.fresh || !wasmReady)) {
+        adoptScopeValues(tree, cached.value);
       } else if (wasmReady) {
-        this.wasmReady = evaluateScope(this.plugin, tree, isDocument ? file.path : undefined);
-        this.cacheValues(tree.signature, scopeEntries(tree).map((entry) => entry.value));
+        const evaluation = await evaluateScope(this.plugin, tree, file.path, isDocument ? file.path : undefined);
+        if (generation !== this.generation) {
+          return; // a newer refresh started while the values were being filled in
+        }
+        this.wasmReady = evaluation.ready;
+
+        // A refusal is filed as unable to change, as on every other surface: re-asking would spend
+        // the note's whole allowance again to be told the same thing.
+        const impure = !evaluation.exceeded
+          && (preludeReadsClockOrRandom() || treeReadsClockOrRandom(tree));
+        this.cacheValues(tree.signature, scopeEntries(tree).map((entry) => entry.value), impure);
       }
     }
 
     this.renderTree();
   }
 
-  /** Remember a tree's evaluated values against its signature, evicting the oldest entries past the
-   *  cap. Values are stored positionally, in `scopeEntries` order, since the entry objects
-   *  themselves are replaced on every refresh. */
-  private cacheValues(signature: string, values: (ScopeValue | undefined)[]): void {
-    this.valueCache.set(signature, values);
-
-    while (this.valueCache.size > SCOPE_VALUE_CACHE_ENTRIES) {
-      const oldest = this.valueCache.keys().next().value;
-      if (oldest === undefined) {
-        break;
-      }
-
-      this.valueCache.delete(oldest);
-    }
+  /** Remember a tree's evaluated values against its signature. Values are stored positionally, in
+   *  `scopeEntries` order, since the entry objects themselves are replaced on every refresh;
+   *  `impure` is whether the tree's scope can produce different values next time. */
+  private cacheValues(signature: string, values: (ScopeValue | undefined)[], impure: boolean): void {
+    this.valueCache.set(signature, values, impure);
   }
 
   // RENDERING THE TREE
@@ -931,12 +949,13 @@ export class NumbatScopeView extends ItemView {
     this.selected = 0;
     this.renderResults();
     this.applySelection(false);
+    void this.fillResultFacts(query);
   }
 
   /** The candidate set, rebuilt only when the tree or the vocabulary behind it changes — not per
    *  keystroke. */
   private ensureCandidates(): SearchCandidate[] {
-    const vocab = getExpressionVocabulary();
+    const vocab = this.preludeVocab();
     if (vocab === null) {
       void this.loadVocabulary();
     } else {
@@ -953,23 +972,28 @@ export class NumbatScopeView extends ItemView {
   }
 
   /**
-   * The prelude context for signature / documentation lookups — but only if it already exists.
-   * Building one loads the whole standard library (~150 ms of synchronous wasm), which must happen
-   * on the background path in {@link loadVocabulary}, never while rendering a keystroke's results.
+   * The prelude-only scope that describes every built-in — what a signature or a documentation card
+   * for a bundled name is asked about.
    *
-   * Re-read every time rather than held in a field: the idle timer and a prelude change both free
-   * it.
+   * A spec rather than a context: this is inert data that can be produced inside a render and asked
+   * about outside one. The old shape was a live handle that had to already exist, because building
+   * one loads the whole standard library and that must never happen on a keystroke's render path.
+   * It cannot happen there now, because nothing here builds anything.
    */
-  private preludeContext(): Numbat | null {
-    if (getExpressionVocabulary() === null) {
-      return null; // no context yet — loadVocabulary is (or will be) building one
-    }
-    return ensureExpressionContext(this.plugin.settings.fetchExchangeRates);
+  private preludeSpec(): ScopeSpec {
+    return { chunks: [], applyRates: this.plugin.settings.fetchExchangeRates };
   }
 
-  /** Load the bundled prelude's vocabulary in the background (creating the context costs ~150 ms,
-   *  so it happens on first search rather than on panel open), then re-run the query so the
-   *  built-ins appear. */
+  /** The prelude's vocabulary, or `null` when it has not been fetched under the current
+   *  interpreter. Stamped rather than merely held: a prelude edit or a rate change moves the
+   *  generation, and a vocabulary from before it describes a standard library that is gone. */
+  private preludeVocab(): CompletionVocabulary | null {
+    return this.vocabGeneration === interpreterGeneration() ? this.vocab : null;
+  }
+
+  /** Fetch the bundled prelude's vocabulary in the background (building the context behind it loads
+   *  the whole standard library, so it happens on first search rather than on panel open), then
+   *  re-run the query so the built-ins appear. */
   private async loadVocabulary(): Promise<void> {
     if (this.loadingVocab) {
       return;
@@ -980,7 +1004,16 @@ export class NumbatScopeView extends ItemView {
       await ensureNumbatReady();
       await this.plugin.ensureExchangeRates();
       await this.plugin.ensurePrelude();
-      ensureExpressionContext(this.plugin.settings.fetchExchangeRates);
+
+      const stamp = interpreterGeneration();
+      const snapshot = await ask("snapshot", { kind: "scope", spec: this.preludeSpec() }, {
+        priority: "background",
+        group: "scope-vocab",
+      });
+      if (snapshot !== null) {
+        this.vocab = snapshot.vocab;
+        this.vocabGeneration = stamp;
+      }
     } catch (error) {
       console.error("Symbat: the scope search could not load the prelude vocabulary", error);
     } finally {
@@ -1121,7 +1154,6 @@ export class NumbatScopeView extends ItemView {
     }
 
     const shown = this.hits.slice(0, MAX_RESULT_ROWS);
-    const context = this.preludeContext();
     shown.forEach((hit, index) => {
       const { candidate } = hit;
       const row = this.resultsEl.createDiv({ cls: "numbat-scope-result" });
@@ -1133,7 +1165,7 @@ export class NumbatScopeView extends ItemView {
       renderExprSuggestion(
         row,
         { name: candidate.text, category: candidate.category },
-        this.signatureFor(hit, context),
+        this.signatureFor(hit),
         hit.matches,
       );
       row.createSpan({
@@ -1154,9 +1186,13 @@ export class NumbatScopeView extends ItemView {
     this.resultsEl.querySelector(".numbat-scope-result.is-selected")?.scrollIntoView({ block: "nearest" });
   }
 
-  /** The muted inline signature for a result row. A binding in the tree already has its type from
-   *  the evaluation pass, so only a built-in costs a `type()` call. */
-  private signatureFor(hit: SearchHit, context: Numbat | null): string | null {
+  /**
+   * The muted inline signature for a result row. A binding in the tree already has its type from
+   * the evaluation pass, so only a built-in needs the interpreter at all. It is *read* rather than
+   * asked for, because this runs inside a render, once per shown row, on every keystroke.
+   * {@link fillResultFacts} is what puts the answer there and redraws.
+   */
+  private signatureFor(hit: SearchHit): string | null {
     const { candidate } = hit;
     if (candidate.target.kind === "entry") {
       // `.numbat-signature` supplies its own leading `": "`, so drop the one the scope's type
@@ -1164,11 +1200,33 @@ export class NumbatScopeView extends ItemView {
       return candidate.target.entry.value?.type?.replace(LEADING_COLON, "") ?? null;
     }
 
-    if (candidate.target.kind === "builtin" && context !== null) {
-      return completionSignature(context, candidate.text);
+    if (candidate.target.kind === "builtin") {
+      return this.facts.knownFacts(candidate.text, WANT_SIGNATURE)?.signature ?? null;
     }
 
     return null;
+  }
+
+  /**
+   * Ask for the signatures the shown built-in rows want, and redraw once they are there.
+   *
+   * One request for a screenful rather than one interpreter call per row inside the render, and it
+   * redraws only if the query has not moved on in the meantime. It cannot loop: the redraw does not
+   * come back here, and a fill that answered nothing simply leaves the rows without signatures
+   * until the next query.
+   */
+  private async fillResultFacts(query: string): Promise<void> {
+    const probes = this.hits.slice(0, MAX_RESULT_ROWS)
+      .filter((hit) => hit.candidate.target.kind === "builtin")
+      .map((hit) => hit.candidate.text);
+    if (probes.length === 0) {
+      return;
+    }
+
+    await this.facts.facts(probes, WANT_SIGNATURE);
+    if (this.inputEl.value.trim() === query) {
+      this.renderResults();
+    }
   }
 
   /** Select the clicked result and act on it — reveal its tree row, or jump to its definition. */
@@ -1225,18 +1283,50 @@ export class NumbatScopeView extends ItemView {
 
     this.cancelDwell();
     this.dwellIndex = index;
+
+    // Start the lookup with the timer, not after it: the card wants the documentation body, which
+    // the row's signature fill did not ask for.
+    const candidate = this.hits[index]?.candidate;
+    if (candidate !== undefined && fromPreludeContext(candidate)) {
+      void this.facts.facts([candidate.text], WANT_INFO | WANT_SIGNATURE);
+    }
+
     this.dwellTimer = window.setTimeout(() => {
       this.dwellTimer = null;
       this.showDwell(index);
     }, COMPLETION_DWELL_MS);
   }
 
-  /** Show the documentation popup above result `index`, once its dwell elapses. Does nothing if the
-   *  row or the hit has gone while the timer ran. */
-  private showDwell(index: number): void {
+  /**
+   * Show the documentation popup above result `index`, once its dwell elapses. Does nothing if the
+   * row or the hit has gone while the timer ran.
+   *
+   * A prelude row's card is the interpreter's own, so it may still have to be asked for, and a
+   * dwell is the reader having *stopped*, so nothing will come back through here on its own. It
+   * asks and returns once, which is enough: a fill that answered nothing will answer nothing again.
+   */
+  private showDwell(index: number, retried = false): void {
     const hit = this.hits[index];
     const row = this.resultsEl.querySelector<HTMLElement>(`[data-numbat-result="${index}"]`);
     if (hit === undefined || row === null) {
+      return;
+    }
+
+    const { candidate } = hit;
+    if (
+      fromPreludeContext(candidate)
+      && this.facts.knownFacts(candidate.text, WANT_INFO | WANT_SIGNATURE) === undefined
+    ) {
+      if (retried) {
+        return;
+      }
+
+      void this.facts.facts([candidate.text], WANT_INFO | WANT_SIGNATURE).then(() => {
+        // Still the row being dwelt on: the pointer may have moved off it while the answer came.
+        if (this.dwellIndex === index) {
+          this.showDwell(index, true);
+        }
+      });
       return;
     }
 
@@ -1248,28 +1338,21 @@ export class NumbatScopeView extends ItemView {
 
   /**
    * What to show for a result: Numbat's own `print_info` documentation for a bundled item or a
-   * user-prelude declaration (both live in the prelude context), and a card describing the binding
-   * for everything the note itself defines.
+   * user-prelude declaration (see {@link fromPreludeContext} for why only those), and a card
+   * describing the binding for everything the note itself defines.
    *
-   * The `print_info` lookup is deliberately *not* attempted for a note's own binding: the prelude
-   * context has never seen it, so it would either find nothing or — where the name collides with a
-   * prelude entity, as `m` does with the metre — show that entity's documentation on the user's
-   * row.
+   * Reads only — {@link showDwell} is what asks, and does not call this until there is something to
+   * read.
    */
   private dwellContent(hit: SearchHit): HTMLElement | null {
     const { candidate } = hit;
-    const fromPrelude = candidate.origin === "builtin"
-      || (candidate.target.kind === "entry" && candidate.target.entry.sourceKind === "prelude");
-    if (fromPrelude) {
-      const context = this.preludeContext();
-      const info = context === null ? null : completionInfo(context, candidate.text);
+    if (fromPreludeContext(candidate)) {
+      const known = this.facts.knownFacts(candidate.text, WANT_INFO | WANT_SIGNATURE);
 
-      if (info !== null) {
+      if (known?.info != null) {
         // A function's `print_info` already prints its signature; anything else gains one.
-        const signature = candidate.category === "function" || context === null
-          ? null
-          : completionSignature(context, candidate.text);
-        return buildDocPopupContent(info, signature);
+        const signature = candidate.category === "function" ? null : known.signature;
+        return buildDocPopupContent(known.info, signature);
       }
     }
 
@@ -1345,6 +1428,19 @@ export class NumbatScopeView extends ItemView {
   private jumpTo(entry: ScopeEntry): void {
     jumpToDefinition(this.app, entry.defsite, this.currentPath);
   }
+}
+
+/**
+ * Whether the prelude context is the thing that can describe this candidate: a bundled item, or a
+ * declaration the user prelude makes — both of which live in it.
+ *
+ * A note's own binding is deliberately excluded. The prelude context has never seen it, so asking
+ * would either find nothing or — where the name collides with a prelude entity, as `m` does with
+ * the metre — put that entity's documentation on the user's row.
+ */
+function fromPreludeContext(candidate: SearchCandidate): boolean {
+  return candidate.origin === "builtin"
+    || (candidate.target.kind === "entry" && candidate.target.entry.sourceKind === "prelude");
 }
 
 /** Whether two node trails name the same set — i.e. the caret stayed within the same chain of

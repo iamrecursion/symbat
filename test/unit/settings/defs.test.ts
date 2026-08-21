@@ -94,7 +94,13 @@ const EXPECTED_EFFECTS: Record<string, readonly SettingEffect[]> = {
 
   // Read when the banner is next scheduled, which the next keystroke does.
   preludeErrorDelaySeconds: [],
+  // The one setting whose effect is not an invalidation but a *move*: it replaces the running
+  // interpreter with one on the other thread.
+  interpreterThread: ["applyInterpreterThread"],
   completionIdleSeconds: [],
+  // The one runtime knob that is *not* read live. No evaluation key names the time limit, so every
+  // cached answer would go on standing under the old one and the setting would look inert.
+  evaluationLimitMs: ["clearCaches"],
 };
 
 /** The key each descriptor is stored under. */
@@ -218,6 +224,9 @@ const EXPECTED_MINIMUMS: Record<string, number> = {
   // which is what the banner did before it was configurable.
   preludeErrorDelaySeconds: 0,
   completionIdleSeconds: 0,
+  // Zero is "no limit" — the feature, not a degenerate value — so the floor cannot be 1. See
+  // interpreter/budget.ts, where a non-positive budget runs the work unbudgeted.
+  evaluationLimitMs: 0,
 };
 
 /** The maximum each number setting declares. Sparse: only where a large value is actively harmful
@@ -251,6 +260,19 @@ test("out-of-range numbers are clamped to their declared minimum", () => {
   assert.equal(settings.exchangeRateRefreshHours, 1);
   assert.equal(settings.replHistoryLimit, 1);
   assert.equal(settings.replMaxLines, 1);
+});
+
+test("a negative evaluation limit is clamped to zero, which is the feature", () => {
+  // Both directions matter and they are not symmetric. A negative would reach
+  // interpreter/budget.ts's `budgetMs <= 0` branch and run unbudgeted, which is the same thing zero
+  // means — so clamping is what keeps "off" a choice the reader made rather than one a typo made.
+  assert.equal(normalizeSettings({ evaluationLimitMs: -1 }).evaluationLimitMs, 0);
+  assert.equal(normalizeSettings({ evaluationLimitMs: 0 }).evaluationLimitMs, 0, "off stands");
+  assert.equal(normalizeSettings({ evaluationLimitMs: 250 }).evaluationLimitMs, 250);
+  assert.equal(
+    normalizeSettings({ evaluationLimitMs: null }).evaluationLimitMs,
+    DEFAULT_SETTINGS.evaluationLimitMs,
+  );
 });
 
 test("an indent width outside its bounds is clamped at both ends", () => {

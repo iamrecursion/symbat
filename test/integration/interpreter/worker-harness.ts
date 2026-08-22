@@ -8,8 +8,8 @@
 // task answers the same thing over there as it does here, and that a `cancel` posted while a pass
 // is running is actually delivered.
 //
-// The shim is what makes a `node:worker_threads` worker look like a dedicated web worker:
-// `postMessage` on the global rather than on a port, and `onmessage` as an assignable property.
+// The shim is what makes a `node:worker_threads` worker look like a dedicated web worker: `self`,
+// with `postMessage` on it rather than on a port, and `onmessage` as an assignable property.
 // Anything the bundle needs beyond that — `atob`, `WebAssembly`, `TextDecoder` — node already has.
 
 import assert from "node:assert/strict";
@@ -21,10 +21,14 @@ import type { TaskMap, TaskName, TaskReply } from "../../../src/interpreter/prot
 import type { HostMessage, WorkerMessage } from "../../../src/interpreter/wire.ts";
 import { wasmBase64 } from "../wasm-pkg.ts";
 
+// `self` is the one name node does not already have. The worker bundle reaches its own scope
+// through it — see src/interpreter/worker/globals.ts — so without this line the bundle throws on
+// load and every test in this suite fails as "the worker did not start".
 const SHIM = `
 const { parentPort } = require("node:worker_threads");
-globalThis.postMessage = (message) => parentPort.postMessage(message);
-parentPort.on("message", (data) => { globalThis.onmessage?.({ data }); });
+global.self = global;
+self.postMessage = (message) => parentPort.postMessage(message);
+parentPort.on("message", (data) => { self.onmessage?.({ data }); });
 `;
 
 /** A live worker, and the four things a test does with one. */

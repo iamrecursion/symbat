@@ -139,11 +139,36 @@ wasm-bindgen --target web --out-dir @(str(out_dir)) --out-name numbat_wasm @(str
 # applies.
 (out_dir / "numbat_wasm_bg.wasm.d.ts").unlink(missing_ok=True)
 
-# Add a reset hook: after a Rust panic the wasm instance is unreliable, so the plugin reinitializes
-# it. wasm-bindgen's `init` refuses to re-run once `wasm` is set, so expose a function (in the
-# module scope) that clears it, letting the next `init()` build a fresh instance.
+# The glue needs two edits, for the same reason the declarations below do: it is committed, so it
+# is read by tools that are not ours.
+#
+#  * wasm-bindgen reaches WebCrypto as `globalThis.crypto`, in the shim behind `getrandom`.
+#    Obsidian's plugin review rejects `globalThis` wherever it appears, on the grounds that a plugin
+#    wanting the global object wants `window` or `activeWindow` so that it keeps working in a popout
+#    window. Neither applies here — this file is loaded by the worker, where there is no window at
+#    all — but the check does not know that, so the qualifier is dropped rather than swapped: bare
+#    `crypto` names the same object in a worker, in a window and under node, and this file is
+#    loaded in all three (the integration suite imports it directly). `self` would have been the
+#    idiomatic worker spelling, and is what src/interpreter/worker/globals.ts uses, but node does
+#    not define it.
+#
+#    Both checks are failures rather than no-ops. A generator that stops emitting the access has
+#    made the rewrite dead, and one that reaches for `globalThis` somewhere new needs a person to
+#    decide the spelling — neither should be discovered by Obsidian's reviewer.
+#  * A reset hook: after a Rust panic the wasm instance is unreliable, so the plugin reinitializes
+#    it. wasm-bindgen's `init` refuses to re-run once `wasm` is set, so expose a function (in the
+#    module scope) that clears it, letting the next `init()` build a fresh instance.
 glue = out_dir / "numbat_wasm.js"
-glue.write_text(glue.read_text() + "\nexport function __numbat_reset() { wasm = undefined; }\n")
+js, crypto_rewritten = re.subn(r"\bglobalThis\.crypto\b", "crypto", glue.read_text())
+if crypto_rewritten == 0:
+    sys.exit(
+        "numbat_wasm.js no longer reaches `globalThis.crypto`; drop the rewrite in this script."
+    )
+if "globalThis" in js:
+    sys.exit(
+        "numbat_wasm.js reaches `globalThis` somewhere new; pick a spelling for it in this script."
+    )
+glue.write_text(js + "\nexport function __numbat_reset() { wasm = undefined; }\n")
 
 # The declarations need four edits, all of them about the fact that this file is committed and so
 # gets linted by tools that are not ours.

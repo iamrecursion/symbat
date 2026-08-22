@@ -29,7 +29,14 @@ export interface WorkerScope {
 /**
  * This worker's global scope.
  *
- * A cast, because under `lib: ["DOM"]` the checker believes `globalThis` is a `Window`. It is not,
- * and the three members above are the extent of the difference that matters here.
+ * `self` rather than `globalThis`, and the choice is not stylistic. Obsidian's plugin review
+ * rejects `globalThis` wherever it appears, on the grounds that a plugin reaching for the global
+ * object wants `window` or `activeWindow` so that it keeps working in a popout window. Neither of
+ * those exists here — this is the one directory in the repository that provably does not run
+ * inside Obsidian — and `self` is a dedicated worker's own name for its scope, so it is at once
+ * the idiom, the same object, and the spelling that review accepts.
+ *
+ * A cast, because under `lib: ["DOM"]` the checker believes `self` is a `Window`. It is not, and
+ * the members above are the extent of the difference that matters here.
  */
-export const workerScope = globalThis as unknown as WorkerScope;
+export const workerScope = self as unknown as WorkerScope;

@@ -18,6 +18,8 @@ import {
   stripLineComment,
   wholeScopeKey,
 } from "../../../src/evaluation/inlay-parse.ts";
+import { EVALUATION_LIMIT_TEXT } from "../../../src/interpreter/budget.ts";
+import { escapeHtml } from "../../../src/interpreter/markup.ts";
 
 // HTML shapes below are copied from Numbat's real HtmlFormatter output (see the integration probe /
 // interpret.test.ts); the integration tests pin them against the live wasm so a version bump that
@@ -320,6 +322,63 @@ test("errorSummary: every other diagnostic is left exactly as it was", () => {
     "Could not solve the following constraint: Dim(T1)",
   );
   assert.equal(errorSummary("error: Could not solve the constraint\n  ┌─ art\n"), "Could not solve the constraint");
+});
+
+// The evaluation limit refuses by returning a plain sentence as an ordinary error result
+// (interpreter/numbat.ts's `interpret`), on the strength of this fallback. If a future rewrite of
+// `errorSummary` stops returning the first line for text that is not a codespan diagnostic, the
+// message becomes invisible everywhere at once — an inlay hint with no text, a property row with no
+// error — and nothing else would fail.
+test("errorSummary: the evaluation limit's refusal comes back whole", () => {
+  assert.equal(errorSummary(EVALUATION_LIMIT_TEXT), EVALUATION_LIMIT_TEXT);
+
+  // And through `escapeHtml`, which is the value `interpret` actually returns.
+  assert.equal(errorSummary(escapeHtml(EVALUATION_LIMIT_TEXT)), EVALUATION_LIMIT_TEXT);
+
+  // It carries a colon, which is the shape `error:` headers have. It must not be mistaken for one
+  // and truncated to its tail.
+  assert.match(errorSummary(EVALUATION_LIMIT_TEXT) ?? "", /^Symbat: /);
+});
+
+// A `LineInterpret` that answers `k` statements and then refuses everything after, exactly as
+// `interpret` does once a note's evaluation allowance is spent (interpreter/budget.ts).
+function refusingAfter(k: number) {
+  let served = 0;
+  return () => {
+    if (served >= k) {
+      return { output: escapeHtml(EVALUATION_LIMIT_TEXT), isError: true };
+    }
+    served += 1;
+    return { output: EXPR_RESULT, isError: false };
+  };
+}
+
+// What a block the evaluation limit cut off part-way actually looks like, which is the fact
+// evaluation/inlay.ts's arm is built on: the statements that ran keep their real hints, and every
+// one after says why it has none. Nothing has to be discarded to avoid a half-answered block
+// reading as a fully-answered one, because the refused lines are not silent.
+test("hintsForBlock: statements refused past the limit carry the reason, and earlier ones stand", () => {
+  const body = ["1 m", "2 m", "3 m", "4 m"];
+
+  const hints = hintsForBlock(refusingAfter(2), body);
+
+  assert.deepEqual(
+    hints.map((hint) => ({ line: hint.bodyLine, kind: hint.kind })),
+    [
+      { line: 0, kind: "result" },
+      { line: 1, kind: "result" },
+      { line: 2, kind: "error" },
+      { line: 3, kind: "error" },
+    ],
+  );
+  assert.equal(hints[2].content, EVALUATION_LIMIT_TEXT, "the limit's own sentence, not a bare header");
+
+  // A block the pass never opened a context for at all: inlay.ts synthesizes its hints by running
+  // it against a runner that refuses everything, so the whole block says so for no interpreter
+  // cost. Every line, and every hint an error.
+  const refused = hintsForBlock(() => ({ output: escapeHtml(EVALUATION_LIMIT_TEXT), isError: true }), body);
+  assert.deepEqual(refused.map((hint) => hint.bodyLine), [0, 1, 2, 3]);
+  assert.equal(refused.every((hint) => hint.kind === "error" && hint.content === EVALUATION_LIMIT_TEXT), true);
 });
 
 // --- groupStatements ----------------------------------------------------------

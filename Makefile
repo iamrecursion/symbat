@@ -68,8 +68,47 @@ test-integration: wasm ## Run the tests that drive the real Numbat interpreter
 .PHONY: test
 test: test-unit test-integration ## Run every test
 
+# The three import checks the worker boundary rests on, and the reason they are checked by grep
+# rather than left to review. Every one of these failure modes is silent and expensive:
+#
+#   * a second module importing the `.wasm` inlines a second 2.5 MB base64 literal, taking `main.js`
+#     from ~2.9 MB to ~5.5 MB, and nothing else in the build says so;
+#   * a second module importing the generated bindings puts a second interpreter into the bundle,
+#     and pulls the whole thing back onto the main thread;
+#   * a second module importing the built worker embeds a second copy of it in `main.js` and, worse,
+#     means two places believe they own the interpreter, of which Numbat's set-once exchange-rate
+#     store permits exactly one.
+#
+# The rule is "exactly this file", not "at most one file": a door that has moved is as much a
+# problem as a door that has been duplicated.
+.PHONY: doors
+doors: ## Assert only the intended modules import the wasm binary, its bindings and the worker
+	@fail=0; \
+	binary=$$(grep -rlE 'from "[^"]*\.wasm"' src --include='*.ts' | grep -v '^src/wasm/' | sort | tr '\n' ' '); \
+	if [ "$$binary" != "src/interpreter/wasm-binary.ts " ]; then \
+		echo "make doors: the .wasm binary must be imported by src/interpreter/wasm-binary.ts and nothing else." >&2; \
+		echo "  importers: $$binary" >&2; \
+		fail=1; \
+	fi; \
+	bindings=$$(grep -rlE 'wasm/pkg/numbat_wasm(\.js)?"' src --include='*.ts' | grep -v '^src/wasm/' | sort | tr '\n' ' '); \
+	if [ "$$bindings" != "src/interpreter/worker/engine.ts " ]; then \
+		echo "make doors: the generated bindings must be imported by src/interpreter/worker/engine.ts and nothing else." >&2; \
+		echo "  importers: $$bindings" >&2; \
+		fail=1; \
+	fi; \
+	worker=$$(grep -rl 'symbat:worker-source' src --include='*.ts' | sort | tr '\n' ' '); \
+	if [ "$$worker" != "src/interpreter/host.ts src/worker-source.d.ts " ]; then \
+		echo "make doors: the built worker must be imported by src/interpreter/host.ts and nothing else." >&2; \
+		echo "  importers: $$worker" >&2; \
+		fail=1; \
+	fi; \
+	[ $$fail -eq 0 ] && echo "All three interpreter import doors are where they should be."
+
+# `build` is in here for the two guards and the two budgets that only the bundler can enforce: a
+# worker that imports Obsidian, a second inlined copy of the wasm, and either half of the bundle
+# growing past what it is allowed to. None of them is visible to tsc, ESLint or the tests.
 .PHONY: check
-check: format-check typecheck lint test ## Everything CI checks
+check: format-check typecheck lint doors test build ## Everything CI checks
 
 # -- Installing -----------------------------------------------------------------------------------
 

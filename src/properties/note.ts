@@ -1,19 +1,13 @@
 // Bridges the pure preamble derivation (properties/parse.ts) to Obsidian: YAML parsing, the
 // vault-wide property-type assignments (the undocumented `metadataTypeManager`, the same registry
 // Obsidian's own property widgets and Better Properties use), the prelude-name reservation check,
-// and the settings gates. Every evaluation surface funnels through {@link notePreamble} + {@link
-// replayPreamble}, so property bindings behave identically in code blocks, inline spans, inlay
-// hints, and completion.
+// and the settings gates. Every evaluation surface funnels through {@link notePreamble} and
+// replays what {@link import("./parse").preambleChunks} makes of it, so property bindings behave
+// identically in code blocks, inline spans, inlay hints, and completion.
 
 import { type App, type EventRef, parseYaml } from "obsidian";
 import { collectImports, type ImportResolver, parseNumbatUse } from "../imports/parse";
-import {
-  ensureExpressionContext,
-  getExpressionVocabulary,
-  interpret,
-  isNumbatReady,
-  type Numbat,
-} from "../interpreter/numbat";
+import { ask, isNumbatReady } from "../interpreter/numbat";
 import type SymbatPlugin from "../main";
 import type { ImportGroup } from "../scope/model";
 import {
@@ -37,6 +31,7 @@ import {
   type ExportedProps,
   preambleStamp,
 } from "./preamble-cache";
+import { reservedNamesDiffer, type ReservedNamesRecord } from "./reserved-names";
 import { localZoneName, normalizeOffset, offsetForWallClock } from "./zone";
 
 export { bindingKey, EMPTY_PREAMBLE, frontmatterBody, type NotePreamble, scopeChunksAbove };
@@ -141,9 +136,7 @@ function plainBindings(plugin: SymbatPlugin): PlainBindings {
  * A *named* zone is resolved per value rather than once, because half the world's zones change
  * offset twice a year: `Europe/Berlin` owes a date in January `+01:00` and one in July `+02:00`,
  * and a single snapshot would be wrong for half the notes in a vault. A literal offset in the
- * setting is that offset whatever the date, which is the point of writing one. A blank setting is
- * the reader's own zone — the same instant a bare `date("…")` used to denote, but stated, so every
- * surface agrees on it and a vault carried to another zone still reads as it was written.
+ * setting is that offset whatever the date. A blank setting is the reader's own zone.
  */
 function defaultOffsetFor(plugin: SymbatPlugin): (isoLocal: string) => string | null {
   const setting = plugin.settings.notePropertyDefaultZone.trim();
@@ -158,43 +151,114 @@ function defaultOffsetFor(plugin: SymbatPlugin): (isoLocal: string) => string | 
 
 // The prelude's name set (units ∪ functions ∪ variables ∪ dimensions, including the user prelude
 // and currency units) — a property binding one of these is skipped rather than shadowing it: `m: 5`
-// would silently turn `5 m` into arithmetic. Built once off-path by {@link primeReservedNames} and
+// would silently turn `5 m` into arithmetic. Built once off-path by {@link ensureReservedNames} and
 // cached as plain strings, so the *synchronous* preamble derivation (and the cache signatures built
 // from it) stays stable even after the completion contexts are idle-released. Until it is primed
 // nothing reads as reserved — which only matters before any evaluation can happen anyway; the
 // preamble source shifts when the names arrive and the affected notes re-evaluate.
 let reservedNames: Set<string> | null = null;
 
+// Whether that set came from an interpreter, rather than from the seed the plugin restored at load
+// (properties/reserved-names.ts). A seeded set is used but not trusted: it is still asked for.
+let reservedNamesPrimed = false;
+
+// The build in flight, or `null`. Nine surfaces ask for this, most of them on every pass.
+let priming: Promise<void> | null = null;
+
+// Told when a set arrives from the interpreter, so the plugin can persist it. A callback rather
+// than an import, because this module cannot reach the plugin and should not learn how to.
+let onPrimed: (() => void) | null = null;
+
 // RESERVED NAMES
 // ================================================================================================
 
 /**
- * Build the reserved-name set if it is missing, on the shared expression context (created on
- * demand, ~70 ms once). Call from an async evaluation path — after `ensureNumbatReady()` — never
- * from a synchronous one.
+ * Build the reserved-name set if the interpreter has not been asked for it yet, and settle once it
+ * has answered.
+ *
+ * **Asynchronous even though the work behind it is not**, for the reason interpreter/facts.ts is:
+ * the vocabulary comes from an interpreter, and once that is behind a worker it comes back in a
+ * message. Every caller already treats this as a request rather than an answer (until the set lands
+ * nothing reads as reserved, and the epoch bump is what tells the notes derived in the meantime to
+ * look again) so the shape costs one tick and removes a promise nobody can come to rely on keeping.
+ *
+ * Does nothing while the wasm is down: the callers are evaluation paths with their own readiness
+ * gates, and none of them should be made to wait on a load here.
  */
-export function primeReservedNames(applyRates: boolean): void {
-  if (reservedNames !== null || !isNumbatReady()) {
-    return;
+export function ensureReservedNames(applyRates: boolean): Promise<void> {
+  if (reservedNamesPrimed || !isNumbatReady()) {
+    return Promise.resolve();
   }
 
-  ensureExpressionContext(applyRates);
-  const vocab = getExpressionVocabulary();
-  if (vocab === null) {
-    return;
+  // The prelude-only scope, which is what the reserved names are the vocabulary of. Asked for as a
+  // snapshot rather than built here: enumerating a scope is one round trip, and the context it
+  // enumerates is the one the completer is already keeping warm.
+  priming ??= ask(
+    "snapshot",
+    { kind: "scope", spec: { chunks: [], applyRates } },
+    { priority: "background", group: "reserved-names" },
+  ).then((snapshot) => {
+    if (snapshot === null) {
+      return;
+    }
+
+    const { vocab } = snapshot;
+    adoptReservedNames(
+      new Set([...vocab.functions, ...vocab.units, ...vocab.variables, ...vocab.dimensions]),
+    );
+  }).finally(() => {
+    priming = null;
+  });
+
+  return priming;
+}
+
+/**
+ * Take the set the interpreter produced, and announce it *only if it says something different*.
+ *
+ * Nothing else announces this: the set arrives from whichever evaluation happened to run first, and
+ * every preamble derived before it read no name as reserved. But a seeded set usually says exactly
+ * what the interpreter is about to say, and bumping the epoch anyway would re-derive every open
+ * note.
+ */
+function adoptReservedNames(names: Set<string>): void {
+  const changed = reservedNames === null || reservedNamesDiffer(reservedNames, names);
+  reservedNames = names;
+  reservedNamesPrimed = true;
+
+  if (changed) {
+    bumpReservedEpoch();
   }
+  onPrimed?.();
+}
 
-  reservedNames = new Set([...vocab.functions, ...vocab.units, ...vocab.variables, ...vocab.dimensions]);
+/**
+ * Restore a set persisted by an earlier session (properties/reserved-names.ts).
+ *
+ * No epoch bump: this runs before anything has been derived, so there is nothing to invalidate. The
+ * set is used but not trusted — {@link ensureReservedNames} still asks, and corrects it if the
+ * prelude turns out to have moved while the vault was closed.
+ */
+export function seedReservedNames(names: readonly string[]): void {
+  reservedNames = new Set(names);
+}
 
-  // Nothing else announces this: the set arrives from whichever evaluation happened to run first,
-  // and every preamble derived before it read no name as reserved.
-  bumpReservedEpoch();
+/** Register what to do when a set arrives from the interpreter — the plugin persisting it. */
+export function whenReservedNamesPrimed(fn: () => void): void {
+  onPrimed = fn;
+}
+
+/** The current set as a persistable record, or `null` when there is nothing worth persisting: only
+ *  a set an interpreter actually produced is written back. */
+export function reservedNamesRecord(key: string): ReservedNamesRecord | null {
+  return reservedNamesPrimed && reservedNames !== null ? { key, names: [...reservedNames] } : null;
 }
 
 /** Drop the cached reserved names (the prelude or exchange-rate settings changed — the set bakes
  *  both in). Rebuilt on the next evaluation. */
 export function invalidateReservedNames(): void {
   reservedNames = null;
+  reservedNamesPrimed = false;
   bumpReservedEpoch();
 }
 
@@ -522,35 +586,4 @@ export function preambleForFile(plugin: SymbatPlugin, sourcePath: string): NoteP
     preambleStamp(plugin.settings),
     () => attachImports(plugin, preambleFromRecord(plugin, record, sourcePath), sourcePath, record),
   );
-}
-
-// REPLAY
-// ================================================================================================
-
-/**
- * Replay the preamble into a fresh context, before anything else the surface evaluates. Errors are
- * absorbed (matching chunk replay everywhere else): the bindings that parsed remain in scope, and
- * the property widget surfaces a binding's own error where the user can see it.
- */
-export function replayPreamble(context: Numbat, preamble: NotePreamble): void {
-  // Cross-note imports open the scope, before this note's own bindings — each chunk in its own
-  // call, so one broken import does not sink the rest.
-  for (const chunk of preamble.imports ?? []) {
-    interpret(context, chunk);
-  }
-  for (const binding of preamble.bindings) {
-    // The definitions the binding's own expression needs (an array of objects' element type) come
-    // first; almost every binding has none.
-    for (const def of binding.defs) {
-      interpret(context, def);
-    }
-    interpret(context, binding.code);
-  }
-}
-
-/** {@link scopeChunksAbove}, replayed into `context`. */
-export function replayScopeAbove(context: Numbat, preamble: NotePreamble, key: string): void {
-  for (const chunk of scopeChunksAbove(preamble, key)) {
-    interpret(context, chunk);
-  }
 }

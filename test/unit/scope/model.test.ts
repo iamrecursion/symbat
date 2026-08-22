@@ -3,6 +3,8 @@ import { test } from "node:test";
 import { DEFAULT_INLINE_CONFIG, noteSignature, scanNote } from "../../../src/evaluation/inline-parse.ts";
 import { derivePreamble, EMPTY_PREAMBLE, PLAIN_ALL, PLAIN_NONE } from "../../../src/properties/parse.ts";
 import {
+  adoptScopeValues,
+  buildDocumentScopeTree,
   buildScopeTree,
   currentNodeId,
   currentNodePath,
@@ -10,6 +12,8 @@ import {
   findDefinition,
   isActiveLine,
   scopeDeclaration,
+  scopeEntries,
+  treeReadsClockOrRandom,
 } from "../../../src/scope/model.ts";
 
 const config = DEFAULT_INLINE_CONFIG;
@@ -54,6 +58,39 @@ function sampleTree() {
     importGroups: [{ notePath: "lib/Constants.md", chunks: ["let g = (9.81 m/s^2)"] }],
   });
 }
+
+// --- purity -------------------------------------------------------------------
+
+function treeOf(lines: string[], preamble = EMPTY_PREAMBLE) {
+  return buildScopeTree({ file: "N.md", lines, config, preamble, importGroups: [] });
+}
+
+test("treeReadsClockOrRandom is false for a note whose values cannot move", () => {
+  assert.equal(treeReadsClockOrRandom(sampleTree()), false);
+});
+
+test("treeReadsClockOrRandom sees a plain `numbat` block, which the units do not carry", () => {
+  // The case `noteReadsClockOrRandom` alone would miss: `scanNote` skips non-shared block bodies,
+  // so the blocks have to be scanned separately.
+  assert.equal(treeReadsClockOrRandom(treeOf(["```numbat", "let t = now()", "```"])), true);
+});
+
+test("treeReadsClockOrRandom sees a shared block and an inline span", () => {
+  assert.equal(treeReadsClockOrRandom(treeOf(["```numbat-shared", "let t = today()", "```"])), true);
+  assert.equal(treeReadsClockOrRandom(treeOf(["n`random()`"])), true);
+});
+
+test("treeReadsClockOrRandom sees the note's properties", () => {
+  const preamble = derivePreamble(
+    { started: "now()" },
+    { isNumbatTyped: () => true, isReserved: () => false, plain: PLAIN_NONE },
+  );
+  assert.equal(treeReadsClockOrRandom(treeOf(["---", "started: now()", "---"], preamble)), true);
+});
+
+test("treeReadsClockOrRandom ignores a comment, so an ordinary note stays cacheable", () => {
+  assert.equal(treeReadsClockOrRandom(treeOf(["```numbat", "# time to arrive", "let d = 4 km", "```"])), false);
+});
 
 // --- tree shape ---------------------------------------------------------------
 
@@ -650,4 +687,43 @@ test("findDefinition: the note's own object outranks an import of the same name"
   });
 
   assert.deepEqual(findDefinition(tree, "costs", "costs", 8)?.defsite, { notePath: null, line: 2, ch: 0 });
+});
+
+// The adoption is the one way values reach a tree that did not compute them, and it exists as a
+// named function because the route that needs it most is invisible: `evaluateScopeTree` fills the
+// entries it walks, so in process the caller's own tree comes back filled and the copy looks
+// redundant — right up until the evaluation is on a thread of its own and the tree it filled was a
+// structured clone of the one the caller is holding.
+test("adoptScopeValues pairs values with bindings in scopeEntries order", () => {
+  const tree = buildDocumentScopeTree({
+    file: "a.nbt",
+    label: "a",
+    lines: ["let one = 1", "let two = 2"],
+  });
+
+  const value = (plain: string) => ({
+    kind: "value" as const,
+    resultHtml: null,
+    valueHtml: null,
+    plain,
+    holeType: null,
+    errorText: null,
+    type: null,
+  });
+
+  adoptScopeValues(tree, [value("1"), value("2")]);
+  assert.deepEqual(scopeEntries(tree).map((entry) => entry.value?.plain), ["1", "2"]);
+});
+
+// What a pass that was cut short produces. The entries it never reached keep whatever they had,
+// which for a fresh tree is nothing — and an entry with no value renders as one.
+test("adoptScopeValues leaves the bindings a short answer does not reach", () => {
+  const tree = buildDocumentScopeTree({
+    file: "a.nbt",
+    label: "a",
+    lines: ["let one = 1", "let two = 2"],
+  });
+
+  adoptScopeValues(tree, []);
+  assert.deepEqual(scopeEntries(tree).map((entry) => entry.value), [undefined, undefined]);
 });

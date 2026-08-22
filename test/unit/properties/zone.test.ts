@@ -370,8 +370,8 @@ test("offsetAtInstant reads a pre-standard-time offset to the minute", () => {
 test("a pre-standard-time offset still reaches a wall clock, and is a real offset", () => {
   const offset = offsetForWallClock("Europe/Berlin", "1880-05-01T10:30");
   assert.equal(offset, "+00:53");
-  // Which is the point of truncating rather than rejecting: what comes back has to be something the
-  // widgets can write and this module can read back.
+  // Why we truncate rather than reject: what comes back has to be something the widgets can write
+  // and this module can read back.
   assert.equal(normalizeOffset(offset ?? ""), "+00:53");
 });
 

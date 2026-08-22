@@ -155,34 +155,3 @@ export function displayFromOutcome(outcome: EvaluatedValue): PropertyDisplay {
 
   return { kind: "empty" };
 }
-
-// REUSING A CONTEXT
-// ================================================================================================
-
-// A statement that puts a name into the environment.
-//
-// Numbat's five declaration forms plus `use`, which pulls a module's worth of them in. Decorators
-// may precede a declaration on the same line (`@aliases(m) unit metre = …`), so they are skipped
-// over rather than matched.
-const DEFINITION = /^\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:let|unit|fn|dimension|struct|use)\b/;
-
-// A decorator on a line of its own, which only ever precedes a declaration.
-const DECORATOR_LINE = /^\s*@\w+(?:\([^)]*\))?\s*$/;
-
-/**
- * Whether evaluating this text could leave anything behind in the context it is evaluated in.
- *
- * The question a **reused** context has to ask. Evaluating an expression is pure so a property's
- * value can be evaluated in a context that is already positioned at its scope and thus saves a
- * standard-library load per keystroke (properties/note-outcomes.ts). A *declaration* is not pure,
- * and hence one evaluated into a shared context is visible to every other reader of it, and would
- * collide with itself on the next keystroke.
- *
- * Deliberately conservative and textual: a `true` costs one fresh context, and the shapes it can
- * misjudge are ones a property has no business holding anyway. It errs towards `true`: a keyword
- * inside a string or a comment is read as a definition rather than looked through, since blanking
- * those to be sure would cost more than the context it saves.
- */
-export function definesNames(text: string): boolean {
-  return text.split("\n").some((line) => DEFINITION.test(line) || DECORATOR_LINE.test(line));
-}

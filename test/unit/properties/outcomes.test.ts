@@ -4,13 +4,10 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { EVALUATION_LIMIT_TEXT } from "../../../src/interpreter/budget.ts";
+import { escapeHtml } from "../../../src/interpreter/markup.ts";
 import { hintFromOutcome } from "../../../src/properties/frontmatter-inlay.ts";
-import {
-  type BindingOutcome,
-  definesNames,
-  displayFromOutcome,
-  evaluateBindings,
-} from "../../../src/properties/outcomes.ts";
+import { type BindingOutcome, displayFromOutcome, evaluateBindings } from "../../../src/properties/outcomes.ts";
 import type { NotePreamble, PropertyBinding } from "../../../src/properties/parse.ts";
 
 /** A binding whose chunks name themselves, so a recording run reads as a script. */
@@ -56,6 +53,19 @@ function outcome(extra: Partial<BindingOutcome> = {}): BindingOutcome {
     warning: null,
     written: "total-expr",
     ...extra,
+  };
+}
+
+/** A `LineInterpret` that answers `k` calls and then refuses, as `interpret` does once a note's
+ *  evaluation allowance is spent (interpreter/budget.ts). */
+function refusingAfter(k: number): (code: string) => { output: string; isError: boolean; } {
+  let served = 0;
+  return () => {
+    if (served >= k) {
+      return { output: escapeHtml(EVALUATION_LIMIT_TEXT), isError: true };
+    }
+    served += 1;
+    return { output: "", isError: false };
   };
 }
 
@@ -201,42 +211,38 @@ describe("displayFromOutcome", () => {
   });
 });
 
-describe("definesNames", () => {
-  it("passes the expressions a property is actually for", () => {
-    for (const text of ["2 + 2", "rate * n_hours", "3 m -> ft", "  now()  ", "sum([1, 2])", "# a comment"]) {
-      assert.equal(definesNames(text), false, text);
-    }
+// The property batch does not stop when the evaluation limit trips: one context serves the whole
+// pass, so it runs on and lets `interpret` refuse, which turns the properties it did not reach into
+// ordinary error outcomes. Those get filed as a widget that is told "no answer" keeps asking, and a
+// note that keeps being asked keeps spending the limit.
+describe("evaluateBindings under the evaluation limit", () => {
+  it("answers what it reached and reports the rest as the limit, in order", () => {
+    const preamble = preambleOf([binding("a"), binding("b"), binding("c")]);
+
+    // Each binding costs two calls (the expression, then its `let`), so two calls reaches exactly
+    // the first property.
+    const outcomes = evaluateBindings(refusingAfter(2), preamble);
+
+    assert.deepEqual(outcomes.map((entry) => entry.key), ["a", "b", "c"], "every property is reported on");
+    assert.equal(outcomes[0].kind !== "error", true, "the one it reached is not an error");
+    assert.deepEqual(
+      outcomes.slice(1).map((entry) => ({ kind: entry.kind, errorText: entry.errorText })),
+      [
+        { kind: "error", errorText: EVALUATION_LIMIT_TEXT },
+        { kind: "error", errorText: EVALUATION_LIMIT_TEXT },
+      ],
+    );
   });
 
-  it("catches every form that would leave something behind in a borrowed context", () => {
-    for (
-      const text of [
-        "let x = 5",
-        "unit foo = 2 m",
-        "fn double(x: Scalar) = 2 x",
-        "dimension Money",
-        "struct Point { x: Length }",
-        "use units::si",
-        "@aliases(m) unit metre = 1 m",
-        "1 + 1\nlet x = 5",
-        "@metric_prefixes",
-      ]
-    ) {
-      assert.equal(definesNames(text), true, text);
-    }
-  });
+  // This is the assertion that catches `errorSummary`'s first-line fallback regressing: without it
+  // the refusal reaches the reader as an empty error and the limit looks like a plugin bug.
+  it("carries the limit's own sentence rather than a bare failure", () => {
+    const outcomes = evaluateBindings(refusingAfter(0), preambleOf([binding("only")]));
 
-  it("reads a keyword, not a prefix of one", () => {
-    assert.equal(definesNames("let_me_be * 2"), false, "a name that merely starts like a keyword");
-    assert.equal(definesNames("units_sold * 3"), false);
-  });
-
-  it("errs towards refusing, since a wrong `false` is the expensive one", () => {
-    // A line of a *string* that reads like a declaration is answered as one. The cost of that is a
-    // single interpreter context; the cost of the opposite mistake is a shared context quietly
-    // gaining a name, so the reading is not worth the blanking pass it would take to be sure.
-    assert.equal(definesNames("\"one\nlet two\""), true);
-    // On one line there is no such doubt: the statement is an expression, whatever the string says.
-    assert.equal(definesNames("\"let x = 5\""), false);
+    assert.equal(outcomes.length, 1);
+    assert.equal(outcomes[0].kind, "error");
+    assert.equal(outcomes[0].errorText, EVALUATION_LIMIT_TEXT);
+    assert.deepEqual(displayFromOutcome(outcomes[0]), { kind: "error", text: EVALUATION_LIMIT_TEXT });
+    assert.deepEqual(hintFromOutcome(outcomes[0]), { key: "only", kind: "error", content: EVALUATION_LIMIT_TEXT });
   });
 });

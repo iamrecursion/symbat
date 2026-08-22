@@ -15,6 +15,7 @@
 // (evaluation/inline-reading.ts) provide the interpreter and DOM/CM layers around it.
 
 import { FenceWalk } from "../document/fences";
+import { readsClockOrRandom } from "../interpreter/purity";
 import { WORD_CHAR } from "../syntax/identifier";
 import {
   bindingValueRepeatsSource,
@@ -552,8 +553,8 @@ class NoteWalk {
 
 /**
  * Walk a note's lines in document order, yielding the {@link NoteUnit}s that feed inline
- * evaluation: each `numbat-shared` block's body (at the point it closes) and every inline span, per
- * the {@link NoteWalk} scoping rules.
+ * evaluation: each `numbat-shared` block's body (at the moment it closes) and every inline span,
+ * per the {@link NoteWalk} scoping rules.
  *
  * Accepts any iterable of lines, so the editor passes a CodeMirror line cursor and the reading-view
  * processor passes `text.split("\n")`; both share this ordering.
@@ -624,6 +625,24 @@ export function evalSignature(units: NoteUnit[], config: InlineEvalConfig): stri
         : `I:${spanDecimalPlaces(unit.span, config) ?? ""}:${unit.span.configText ?? ""}:${unit.span.expr}`
     )
     .join(" ");
+}
+
+/**
+ * Whether a note's inline evaluation can produce a different answer from the same text: the flag
+ * its cached results are filed with (interpreter/eval-cache.ts).
+ *
+ * The scope is the note preamble (its imports and property bindings), every `numbat-shared` body
+ * replayed into the session, and every inline expression. The user prelude sits above all of it
+ * and is *not* here: it is not a note's text, and its answer is decided once per reload rather
+ * than once per note (interpreter/numbat.ts's `preludeReadsClockOrRandom`), so the two callers or
+ * it in themselves.
+ *
+ * One flag for the whole note rather than one per span, and deliberately: an entry of this cache
+ * covers every unit of the note at once, so there is nothing finer to file it against.
+ */
+export function noteReadsClockOrRandom(preambleSource: string, units: NoteUnit[]): boolean {
+  return readsClockOrRandom(preambleSource)
+    || units.some((unit) => readsClockOrRandom(unit.kind === "shared" ? unit.code : unit.span.expr));
 }
 
 /**

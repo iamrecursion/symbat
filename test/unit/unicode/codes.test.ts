@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildUnicodeCodeList, codesMatching, unicodePrefixAt } from "../../../src/unicode/codes.ts";
+import { codesMatching, unicodePrefixAt } from "../../../src/unicode/codes.ts";
 
 // --- unicodePrefixAt ---------------------------------------------------------
 
@@ -37,37 +37,6 @@ test("unicodePrefixAt honors a multi-character leader", () => {
   assert.equal(unicodePrefixAt("q::al", "::"), "al");
   assert.equal(unicodePrefixAt("::", "::"), ""); // lone leader → empty prefix
   assert.equal(unicodePrefixAt("::alpha beta", "::"), null); // whitespace ends the run
-});
-
-// --- buildUnicodeCodeList ----------------------------------------------------
-
-// A stand-in for the wasm lookup: "\name" resolves iff name is a known code.
-const GLYPHS: Record<string, string> = { alpha: "α", beta: "β", pi: "π" };
-const lookup = (code: string): string | null => {
-  const name = code.startsWith("\\") ? code.slice(1) : code;
-  return GLYPHS[name] ?? null;
-};
-
-test("buildUnicodeCodeList keeps only names that resolve to a code, with glyphs", () => {
-  // Names as Numbat's get_completions_for would return them: codes mixed with keywords, functions,
-  // and units.
-  const names = ["alpha", "beta", "pi", "let", "sin", "meter"];
-  const codes = buildUnicodeCodeList(names, lookup);
-  assert.deepEqual(codes, [
-    { name: "alpha", replacement: "α" },
-    { name: "beta", replacement: "β" },
-    { name: "pi", replacement: "π" },
-  ]);
-});
-
-test("buildUnicodeCodeList sorts by name and de-duplicates", () => {
-  const codes = buildUnicodeCodeList(["pi", "alpha", "pi", "beta"], lookup);
-  assert.deepEqual(codes.map((c) => c.name), ["alpha", "beta", "pi"]);
-});
-
-test("buildUnicodeCodeList skips empty names", () => {
-  const codes = buildUnicodeCodeList(["", "alpha"], lookup);
-  assert.deepEqual(codes.map((c) => c.name), ["alpha"]);
 });
 
 // --- codesMatching -----------------------------------------------------------

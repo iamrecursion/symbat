@@ -1,25 +1,23 @@
 // The vault bridge for the note scope inspector (views/scope.ts): read the active note, derive its
 // scope tree (scope/model.ts), and fill in each binding's value off the render path
-// (scope/eval.ts). This is the only scope-inspector module that touches Obsidian and the wasm; the
-// model and the value probing stay pure.
+// (scope/eval.ts). This is the only scope-inspector module that touches Obsidian and asks for an
+// evaluation; the model and the value probing stay pure.
 
 import { MarkdownView, parseYaml, type TFile } from "obsidian";
 import { inlineConfig } from "../evaluation/inline";
-import {
-  createContext,
-  ensureNumbatReady,
-  freeQuietly,
-  interpret,
-  interpreterGeneration,
-  isNumbatReady,
-  restartNumbat,
-} from "../interpreter/numbat";
+import { ask, ensureNumbatReady, interpreterGeneration, isNumbatReady, restartNumbat } from "../interpreter/numbat";
 import type SymbatPlugin from "../main";
-import { importGroups, notePreamble, primeReservedNames } from "../properties/note";
+import { ensureReservedNames, importGroups, notePreamble } from "../properties/note";
 import { frontmatterBody } from "../properties/parse";
 import { VIEW_TYPE_NUMBAT_FILE } from "../views/nbt";
-import { evaluateScopeTree } from "./eval";
-import { buildDocumentScopeTree, buildScopeTree, type PreludeFileLines, type ScopeTree } from "./model";
+import {
+  adoptScopeValues,
+  buildDocumentScopeTree,
+  buildScopeTree,
+  type PreludeFileLines,
+  scopeEntries,
+  type ScopeTree,
+} from "./model";
 
 /** The active note's text: the live editor buffer when the note is open (accurate mid-edit), else
  *  the vault's last-saved copy — mirroring ModuleGraph.read's `cachedRead`. */
@@ -101,7 +99,7 @@ export async function gatherScope(plugin: SymbatPlugin, file: TFile): Promise<Sc
     wasmReady = false;
   }
   if (wasmReady && isNumbatReady()) {
-    primeReservedNames(plugin.settings.fetchExchangeRates);
+    void ensureReservedNames(plugin.settings.fetchExchangeRates);
   } else {
     wasmReady = false;
   }
@@ -174,30 +172,69 @@ function numbatFileText(plugin: SymbatPlugin, file: TFile): string | null {
   return null;
 }
 
+/** What one inspector evaluation produced, beyond the values it wrote into the tree. */
+export interface ScopeEvaluation {
+  /** Whether evaluation completed: `false` on a wasm failure, in which case the caller renders the
+   *  structure without values. */
+  ready: boolean;
+
+  /** Whether the evaluation limit refused anything. The caller needs it to decide what to cache:
+   *  an answer that was cut short must not be aged, since re-asking would spend the note's whole
+   *  allowance again to be told the same thing. */
+  exceeded: boolean;
+}
+
 /**
- * Fill every binding in `tree` with its evaluated value, off the render path. Returns whether
- * evaluation completed — false on a wasm failure, in which case the caller renders the structure
- * without values. Each interpreter context is built and freed here; a per-binding error is
- * isolated, a wasm panic caught (and a restart scheduled).
+ * Fill every binding in `tree` with its evaluated value, off the render path.
+ *
+ * The tree goes across and the *filled* tree comes back, rather than a list of values:
+ * `evaluateScopeTree` writes into the entries it walks, and the walk is what knows where each value
+ * belongs. Nothing in a tree is a handle, so it crosses as it is.
+ *
+ * **The answer has to be copied back, and that is not a formality.** A request is structured-cloned
+ * on its way to a worker, so the tree the evaluation filled is a different object from the one the
+ * caller is holding. The in-process path is the only one where they are the same, and relying on
+ * that is how the inspector came to show every binding without a value on the path it actually
+ * runs on. Positionally, in {@link scopeEntries} order, which is the same pairing the value cache
+ * in views/scope.ts already round-trips through.
  */
-export function evaluateScope(plugin: SymbatPlugin, tree: ScopeTree, preludeBefore?: string): boolean {
+export async function evaluateScope(
+  plugin: SymbatPlugin,
+  tree: ScopeTree,
+  notePath: string,
+  preludeBefore?: string,
+): Promise<ScopeEvaluation> {
   if (!isNumbatReady()) {
-    return false;
+    return { ready: false, exceeded: false };
   }
 
-  const applyRates = plugin.settings.fetchExchangeRates;
-  try {
-    evaluateScopeTree(() => {
-      // `preludeBefore` (a `.nbt` file being inspected) keeps the file's own declarations from
-      // arriving twice — once from the prelude, once from the replay — which a repeated `unit` or
-      // `dimension` would reject.
-      const context = createContext(applyRates, preludeBefore === undefined ? {} : { preludeBefore });
-      return { run: (code) => interpret(context, code), free: () => freeQuietly(context) };
-    }, tree);
-    return true;
-  } catch (error) {
-    console.error("Symbat: the scope inspector's evaluation crashed", error);
-    restartNumbat();
-    return false;
+  // The note's allowance, shared with whatever else is looking at the same note: the inspector is a
+  // second view of a note the reader usually has open, not a note of its own.
+  //
+  // No ledger: `views/scope.ts` caches these values against the tree's signature, so a refusal is
+  // found again on the next render for the cost of a map lookup, and it files a refused evaluation
+  // as unable to change, so that entry never ages out and asks again.
+  const answer = await ask("evalScopeTree", {
+    tree,
+    applyRates: plugin.settings.fetchExchangeRates,
+    // `preludeBefore` (a `.nbt` file being inspected) keeps the file's own declarations from
+    // arriving twice — once from the prelude, once from the replay — which a repeated `unit` or
+    // `dimension` would reject.
+    preludeBefore: preludeBefore ?? null,
+    budget: { budgetMs: plugin.settings.evaluationLimitMs, key: notePath === "" ? null : notePath },
+  }, { group: `scope:${notePath}`, note: notePath === "" ? undefined : notePath });
+
+  if (answer === null) {
+    // Superseded by a newer refresh, or the interpreter is down. Either way the caller renders the
+    // structure without values and the next refresh tries again.
+    return { ready: false, exceeded: false };
   }
+
+  if (answer.exceeded) {
+    plugin.reportEvaluationLimit(notePath);
+  }
+
+  adoptScopeValues(tree, scopeEntries(answer.value).map((entry) => entry.value));
+
+  return { ready: true, exceeded: answer.exceeded };
 }

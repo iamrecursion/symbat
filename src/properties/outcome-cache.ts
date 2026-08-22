@@ -13,16 +13,20 @@
 //     into, which is one row, evaluated on its own because the note batch has nothing to say about
 //     a value the note does not hold.
 //
-// **Entries carry their age**, because a key built from the frontmatter cannot see the one input
-// that is not in it: the clock. A property that says `now()` would freeze at whatever it read when
-// the reader first scrolled past it, and no invalidation hook could catch that, because nothing
-// *happened*. So a hit is used two different ways — see {@link OUTCOME_FRESH_MS}.
+// **Entries carry their age, and whether their age matters**, because a key built from the
+// frontmatter cannot see the one input that is not in it: the clock. A property that says `now()`
+// would freeze at whatever it read when the reader first scrolled past it, and no invalidation hook
+// could catch that. So a hit is used two different ways — see {@link IMPURE_FRESH_MS}.
+//
+// Ageing is used in notes that evaluate impure functions. The decision is the *writer's*, not the
+// reader's, because the writer is the one holding the scope — a reader that had to be told would be
+// a reader that could be told wrong.
 //
 // Nothing here imports Obsidian, CodeMirror or the interpreter: the keys arrive built, the
 // evaluation arrives injected. What that buys is that the coalescing — the part with a race in it —
 // is testable with a stub clock and a stub pass.
 
-import { OUTCOME_FRESH_MS, PROPERTY_LIVE_OUTCOME_ENTRIES, PROPERTY_NOTE_OUTCOME_ENTRIES } from "../tuning";
+import { IMPURE_FRESH_MS, PROPERTY_LIVE_OUTCOME_ENTRIES, PROPERTY_NOTE_OUTCOME_ENTRIES } from "../tuning";
 import type { PropertyDisplay } from "./display";
 import type { BindingOutcome } from "./outcomes";
 import { type NotePreamble, type PropertyBinding, scopeChunksAbove } from "./parse";
@@ -33,7 +37,7 @@ export interface CachedOutcome {
   /** What the evaluation produced, unprojected — see the note on the store below. */
   outcome: BindingOutcome;
 
-  /** Whether the caller may skip evaluating. See {@link OUTCOME_FRESH_MS}. */
+  /** Whether the caller may skip evaluating. See {@link IMPURE_FRESH_MS}. */
   fresh: boolean;
 }
 
@@ -52,10 +56,10 @@ export interface CachedDisplay {
  * `hintFromOutcome`. Storing either projection would leave the other to evaluate the note a second
  * time — which is what they used to do, in two contexts, for one set of answers.
  */
-const noteOutcomes = new Map<string, { text: string; outcome: BindingOutcome; at: number; }>();
+const noteOutcomes = new Map<string, { text: string; outcome: BindingOutcome; at: number; impure: boolean; }>();
 
 /** Outcomes for text of the moment, keyed by scope *and* text — a keystroke's key is its own. */
-const liveOutcomes = new Map<string, { display: PropertyDisplay; at: number; }>();
+const liveOutcomes = new Map<string, { display: PropertyDisplay; at: number; impure: boolean; }>();
 
 // Bumped whenever the caches are emptied. A pass that was still booting when that happened is
 // about to describe a world that has moved (a new prelude, refetched rates, a settings change), so
@@ -90,13 +94,20 @@ export function noteOutcome(key: string, text: string, now = performance.now()):
   }
 
   promote(noteOutcomes, key, hit);
-  return { outcome: hit.outcome, fresh: now - hit.at <= OUTCOME_FRESH_MS };
+  return { outcome: hit.outcome, fresh: isFresh(hit, now) };
 }
 
-/** Record what a note's property evaluated to, replacing whatever that scope held before: there is
- *  one committed value per property, so an older entry for the same key is simply out of date. */
-export function rememberNoteOutcome(key: string, text: string, outcome: BindingOutcome): void {
-  promote(noteOutcomes, key, { text, outcome, at: performance.now() });
+/**
+ * Record what a note's property evaluated to, replacing whatever that scope held before: there is
+ * one committed value per property, so an older entry for the same key is simply out of date.
+ *
+ * `impure` says whether *this binding's* scope can produce a different answer next time — the
+ * prelude, the imports, and the bindings above it, which is what the caller works out once per
+ * pass from `impureBindings` (interpreter/purity.ts). It travels with the entry rather than being
+ * asked of the reader so the two can never disagree; see {@link isFresh}.
+ */
+export function rememberNoteOutcome(key: string, text: string, outcome: BindingOutcome, impure: boolean): void {
+  promote(noteOutcomes, key, { text, outcome, at: performance.now(), impure });
   evict(noteOutcomes, PROPERTY_NOTE_OUTCOME_ENTRIES);
 }
 
@@ -108,15 +119,28 @@ export function liveOutcome(key: string, now = performance.now()): CachedDisplay
   }
 
   promote(liveOutcomes, key, hit);
-  return { display: hit.display, fresh: now - hit.at <= OUTCOME_FRESH_MS };
+  return { display: hit.display, fresh: isFresh(hit, now) };
 }
 
 /** Record an outcome for text of the moment. Called on the way out of every live evaluation,
  *  including for a row whose element has since gone: the value is still true, and the next render
- *  of that row wants it. */
-export function rememberLiveOutcome(key: string, display: PropertyDisplay): void {
-  promote(liveOutcomes, key, { display, at: performance.now() });
+ *  of that row wants it. `impure` is as on {@link rememberNoteOutcome}, over the row's own text as
+ *  well as its scope — this cache holds text the note does not, so the text is part of the
+ *  question. */
+export function rememberLiveOutcome(key: string, display: PropertyDisplay, impure: boolean): void {
+  promote(liveOutcomes, key, { display, at: performance.now(), impure });
   evict(liveOutcomes, PROPERTY_LIVE_OUTCOME_ENTRIES);
+}
+
+/**
+ * Whether a hit is recent enough to be the whole answer.
+ *
+ * A pure entry always is: nothing outside its text can have moved, so there is no newer answer to
+ * go and get. An impure one holds for {@link IMPURE_FRESH_MS} and is then merely something to
+ * paint while a fresher answer is fetched.
+ */
+function isFresh(hit: { at: number; impure: boolean; }, now: number): boolean {
+  return !hit.impure || now - hit.at <= IMPURE_FRESH_MS;
 }
 
 /**
@@ -239,8 +263,11 @@ export function knownOutcomes(keys: string[], bindings: PropertyBinding[]): Bind
  *
  * An entry that is merely *old* counts as unanswered, for the reason entries carry an age at all:
  * a property that reads the clock would otherwise be frozen at whatever it said when the note was
- * first rendered, since nothing about the note ever changes to invalidate it. A note's entries are
- * all written in one pass, so they age out together and the note re-evaluates whole.
+ * first rendered, since nothing about the note ever changes to invalidate it. But only an entry
+ * whose scope can actually change ages that way, and impurity is monotone down a note so the index
+ * this returns for a fully-answered note *is* the first impure binding, without anything here
+ * having to look one up. A note with thirty properties and `now()` in the last re-evaluates one
+ * property per window rather than thirty while a note with none re-evaluates nothing, ever.
  */
 export function firstStale(keys: string[], bindings: PropertyBinding[], now = performance.now()): number | null {
   for (const [index, key] of keys.entries()) {

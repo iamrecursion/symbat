@@ -21,7 +21,7 @@ import {
 } from "../../../src/properties/outcome-cache.ts";
 import type { BindingOutcome } from "../../../src/properties/outcomes.ts";
 import { type NotePreamble, type PropertyBinding, scopeChunksAbove } from "../../../src/properties/parse.ts";
-import { OUTCOME_FRESH_MS, PROPERTY_LIVE_OUTCOME_ENTRIES, PROPERTY_NOTE_OUTCOME_ENTRIES } from "../../../src/tuning.ts";
+import { IMPURE_FRESH_MS, PROPERTY_LIVE_OUTCOME_ENTRIES, PROPERTY_NOTE_OUTCOME_ENTRIES } from "../../../src/tuning.ts";
 
 // The note cache stores the outcome itself, so the two surfaces that read it can each project it
 // their own way. Nothing here cares which field carries the marker, only that it comes back intact.
@@ -54,7 +54,7 @@ beforeEach(() => {
 
 describe("the note cache", () => {
   it("answers for the text it was told about, and only that one", () => {
-    rememberNoteOutcome("k", "2 + 2", outcomeOf("four"));
+    rememberNoteOutcome("k", "2 + 2", outcomeOf("four"), true);
 
     assert.deepEqual(noteOutcome("k", "2 + 2")?.outcome, outcomeOf("four"));
     // The row has been edited since: a display computed for the old value is not this one's answer.
@@ -65,7 +65,7 @@ describe("the note cache", () => {
   it("keeps one entry per property, replacing what that scope held before", () => {
     const last = PROPERTY_NOTE_OUTCOME_ENTRIES + 9;
     for (let i = 0; i <= last; i += 1) {
-      rememberNoteOutcome("k", `expr ${i}`, outcomeOf(`v${i}`));
+      rememberNoteOutcome("k", `expr ${i}`, outcomeOf(`v${i}`), true);
     }
 
     // Well past the cap, and one key: a property has one committed value, so an older entry for it
@@ -76,7 +76,7 @@ describe("the note cache", () => {
 
   it("evicts least-recently-used past the cap", () => {
     for (let i = 0; i <= PROPERTY_NOTE_OUTCOME_ENTRIES; i += 1) {
-      rememberNoteOutcome(`k${i}`, "e", outcomeOf("v"));
+      rememberNoteOutcome(`k${i}`, "e", outcomeOf("v"), true);
     }
 
     assert.equal(noteOutcome("k0", "e"), null, "with nothing read, the first written is the first dropped");
@@ -90,12 +90,12 @@ describe("the note cache", () => {
   // use"; writing says only "arrived".
   it("keeps an entry that is still being read, whatever it was written", () => {
     for (let i = 0; i < PROPERTY_NOTE_OUTCOME_ENTRIES; i += 1) {
-      rememberNoteOutcome(`k${i}`, "e", outcomeOf("v"));
+      rememberNoteOutcome(`k${i}`, "e", outcomeOf("v"), true);
     }
 
     // The oldest write, read once — as a re-rendered row reads it.
     assert.notEqual(noteOutcome("k0", "e"), null);
-    rememberNoteOutcome("fresh", "e", outcomeOf("v"));
+    rememberNoteOutcome("fresh", "e", outcomeOf("v"), true);
 
     assert.notEqual(noteOutcome("k0", "e"), null, "the entry that was read survives");
     assert.equal(noteOutcome("k1", "e"), null, "and the one that was not is what goes");
@@ -107,31 +107,52 @@ describe("the note cache", () => {
   // since, which is the one entry in the cache that certainly is not stale.
   it("moves a re-answered property to the young end, not the position its old answer held", () => {
     for (let i = 0; i < PROPERTY_NOTE_OUTCOME_ENTRIES; i += 1) {
-      rememberNoteOutcome(`k${i}`, "e", outcomeOf("v"));
+      rememberNoteOutcome(`k${i}`, "e", outcomeOf("v"), true);
     }
 
-    rememberNoteOutcome("k0", "edited", outcomeOf("v2"));
-    rememberNoteOutcome("fresh", "e", outcomeOf("v"));
+    rememberNoteOutcome("k0", "edited", outcomeOf("v2"), true);
+    rememberNoteOutcome("fresh", "e", outcomeOf("v"), true);
 
     assert.deepEqual(noteOutcome("k0", "edited")?.outcome, outcomeOf("v2"), "the answer just written survives");
     assert.equal(noteOutcome("k1", "e"), null, "and the one nobody has touched is what goes");
   });
 
-  it("stops being fresh once it is older than the window", () => {
+  it("stops being fresh once it is older than the window, if it could have changed", () => {
     const at = performance.now();
-    rememberNoteOutcome("k", "e", outcomeOf("v"));
+    rememberNoteOutcome("k", "e", outcomeOf("v"), true);
 
-    assert.equal(noteOutcome("k", "e", at + OUTCOME_FRESH_MS - 1)?.fresh, true);
-    assert.equal(noteOutcome("k", "e", at + OUTCOME_FRESH_MS + 1)?.fresh, false);
+    assert.equal(noteOutcome("k", "e", at + IMPURE_FRESH_MS - 1)?.fresh, true);
+    assert.equal(noteOutcome("k", "e", at + IMPURE_FRESH_MS + 1)?.fresh, false);
     // Still the answer to paint, though — an old value beats a raw expression.
-    assert.deepEqual(noteOutcome("k", "e", at + OUTCOME_FRESH_MS + 1)?.outcome, outcomeOf("v"));
+    assert.deepEqual(noteOutcome("k", "e", at + IMPURE_FRESH_MS + 1)?.outcome, outcomeOf("v"));
+  });
+
+  // The Bases case, and the largest avoidable cost conditional freshness removes: a hundred
+  // clock-free notes used to pay a standard-library load each, every ten seconds, forever, to
+  // reproduce values that could not have moved.
+  it("never stops being fresh when nothing in its scope reads the clock", () => {
+    const at = performance.now();
+    rememberNoteOutcome("k", "e", outcomeOf("v"), false);
+
+    assert.equal(noteOutcome("k", "e", at + IMPURE_FRESH_MS + 1)?.fresh, true);
+    assert.equal(noteOutcome("k", "e", at + IMPURE_FRESH_MS * 1000)?.fresh, true);
+  });
+
+  it("judges each entry by its own scope, not by the note's youngest", () => {
+    const at = performance.now();
+    rememberNoteOutcome("pure", "e", outcomeOf("v"), false);
+    rememberNoteOutcome("clock", "e", outcomeOf("v"), true);
+
+    const later = at + IMPURE_FRESH_MS + 1;
+    assert.equal(noteOutcome("pure", "e", later)?.fresh, true);
+    assert.equal(noteOutcome("clock", "e", later)?.fresh, false);
   });
 });
 
 describe("the live cache", () => {
   it("keeps one entry per keystroke and evicts least-recently-used", () => {
     for (let i = 0; i <= PROPERTY_LIVE_OUTCOME_ENTRIES; i += 1) {
-      rememberLiveOutcome(liveKey("scope", `3 m +${i}`), shown(`v${i}`));
+      rememberLiveOutcome(liveKey("scope", `3 m +${i}`), shown(`v${i}`), true);
     }
 
     assert.equal(liveOutcome(liveKey("scope", "3 m +0")), null);
@@ -140,21 +161,31 @@ describe("the live cache", () => {
 
   it("moves a re-answered keystroke to the young end", () => {
     for (let i = 0; i < PROPERTY_LIVE_OUTCOME_ENTRIES; i += 1) {
-      rememberLiveOutcome(liveKey("scope", `3 m +${i}`), shown(`v${i}`));
+      rememberLiveOutcome(liveKey("scope", `3 m +${i}`), shown(`v${i}`), true);
     }
 
     // The same text answered again — an entry that aged out of the freshness window and was
     // re-evaluated, which is a write onto a key that is already there.
-    rememberLiveOutcome(liveKey("scope", "3 m +0"), shown("v0 again"));
-    rememberLiveOutcome(liveKey("scope", "fresh"), shown("v"));
+    rememberLiveOutcome(liveKey("scope", "3 m +0"), shown("v0 again"), true);
+    rememberLiveOutcome(liveKey("scope", "fresh"), shown("v"), true);
 
     assert.deepEqual(liveOutcome(liveKey("scope", "3 m +0"))?.display, shown("v0 again"));
     assert.equal(liveOutcome(liveKey("scope", "3 m +1")), null);
   });
 
+  it("ages a clock-reading keystroke and keeps a pure one", () => {
+    const at = performance.now();
+    rememberLiveOutcome(liveKey("scope", "now()"), shown("v"), true);
+    rememberLiveOutcome(liveKey("scope", "2 + 2"), shown("4"), false);
+
+    const later = at + IMPURE_FRESH_MS + 1;
+    assert.equal(liveOutcome(liveKey("scope", "now()"), later)?.fresh, false);
+    assert.equal(liveOutcome(liveKey("scope", "2 + 2"), later)?.fresh, true);
+  });
+
   it("separates two texts in one scope, and one text in two scopes", () => {
-    rememberLiveOutcome(liveKey("scope", "a"), shown("1"));
-    rememberLiveOutcome(liveKey("other", "a"), shown("2"));
+    rememberLiveOutcome(liveKey("scope", "a"), shown("1"), true);
+    rememberLiveOutcome(liveKey("other", "a"), shown("2"), true);
 
     assert.deepEqual(liveOutcome(liveKey("scope", "a"))?.display, shown("1"));
     assert.deepEqual(liveOutcome(liveKey("other", "a"))?.display, shown("2"));
@@ -214,11 +245,16 @@ describe("the keys", () => {
 describe("firstStale", () => {
   const note = () => preambleOf([binding("a", "1"), binding("b", "a * 2"), binding("c", "b + 1")]);
 
-  /** Fill the cache as a completed pass would. */
-  function fill(preamble: NotePreamble): string[] {
+  /**
+   * Fill the cache as a completed pass would, filing each entry with whether its own scope can
+   * change — which is what `fileOutcomes` works out from `impureBindings`. `impureFrom` is the
+   * first index that can; `null` is a note that reads no clock anywhere.
+   */
+  function fill(preamble: NotePreamble, impureFrom: number | null = 0): string[] {
     const keys = outcomeKeys(true, preamble);
     for (const [index, key] of keys.entries()) {
-      rememberNoteOutcome(key, preamble.bindings[index].expr, outcomeOf(preamble.bindings[index].key));
+      const impure = impureFrom !== null && index >= impureFrom;
+      rememberNoteOutcome(key, preamble.bindings[index].expr, outcomeOf(preamble.bindings[index].key), impure);
     }
     return keys;
   }
@@ -250,14 +286,44 @@ describe("firstStale", () => {
     const preamble = note();
     const keys = fill(preamble);
 
-    assert.equal(firstStale(keys, preamble.bindings, performance.now() + OUTCOME_FRESH_MS + 1), 0);
+    assert.equal(firstStale(keys, preamble.bindings, performance.now() + IMPURE_FRESH_MS + 1), 0);
+  });
+
+  it("leaves a note that reads no clock alone, however old its answers are", () => {
+    const preamble = note();
+    const keys = fill(preamble, null);
+
+    assert.equal(firstStale(keys, preamble.bindings, performance.now() + IMPURE_FRESH_MS + 1), null);
+    assert.equal(firstStale(keys, preamble.bindings, performance.now() + IMPURE_FRESH_MS * 1000), null);
+  });
+
+  // The resume index falls out of the entries rather than being looked up: impurity is monotone
+  // down a note, so the first entry that ages is the first binding whose scope reads the clock.
+  it("resumes at the first binding that can have changed, not at the top", () => {
+    const preamble = note();
+    const keys = fill(preamble, 2);
+
+    const later = performance.now() + IMPURE_FRESH_MS + 1;
+    assert.equal(firstStale(keys, preamble.bindings, later), 2);
+    // And the two above it are still there to paint and to build on.
+    assert.deepEqual(noteOutcome(keys[0], "1", later)?.outcome, outcomeOf("a"));
+    assert.deepEqual(noteOutcome(keys[1], "a * 2", later)?.outcome, outcomeOf("b"));
+  });
+
+  // An edit still wins over purity: the key moved, so there is no entry at all to be fresh.
+  it("still starts at an edited property in a note that reads no clock", () => {
+    fill(note(), null);
+    const edited = note();
+    edited.bindings[1] = binding("b", "a * 3");
+
+    assert.equal(firstStale(outcomeKeys(true, edited), edited.bindings), 1);
   });
 });
 
 describe("clearPropertyOutcomes", () => {
   it("empties both caches and moves the epoch, so a pass in flight knows to drop what it has", () => {
-    rememberNoteOutcome("k", "e", outcomeOf("v"));
-    rememberLiveOutcome(liveKey("k", "e"), shown("v"));
+    rememberNoteOutcome("k", "e", outcomeOf("v"), true);
+    rememberLiveOutcome(liveKey("k", "e"), shown("v"), true);
     const before = outcomeEpoch();
 
     clearPropertyOutcomes();

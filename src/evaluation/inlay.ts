@@ -32,24 +32,26 @@ import { blockRangesOf, frontmatterBodyOf } from "../document/doc-cache";
 import { sourcePathOf } from "../document/editor-file";
 import { type NumbatBlockRange } from "../document/fences";
 import { FRONTMATTER_CLOSE, FRONTMATTER_OPEN } from "../document/frontmatter";
+import { EvaluationCache } from "../interpreter/eval-cache";
+import type { FactsHost } from "../interpreter/facts";
 import {
-  createContext,
+  ask,
   ensureNumbatReady,
-  freeQuietly,
-  interpret,
   interpreterGeneration,
   isNumbatReady,
+  preludeReadsClockOrRandom,
   restartNumbat,
 } from "../interpreter/numbat";
+import { readsClockOrRandom } from "../interpreter/purity";
 import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
 import { hintPlacesOnKey, hintsFromOutcomes } from "../properties/frontmatter-inlay";
-import { notePreamble, primeReservedNames, replayPreamble } from "../properties/note";
+import { ensureReservedNames, notePreamble } from "../properties/note";
 import { requestNoteOutcomes } from "../properties/note-outcomes";
 import { firstStale, knownOutcomes, outcomeKeys } from "../properties/outcome-cache";
 import { frontmatterKeySites } from "../properties/parse";
 import { INLAY_CACHE_ENTRIES, INLAY_DEBOUNCE_MS } from "../tuning";
-import { blockKey, endPadding, type Hint, hintsForBlock, holeForm, wholeScopeKey } from "./inlay-parse";
+import { blockKey, endPadding, type Hint, holeForm, wholeScopeKey } from "./inlay-parse";
 
 /** Dispatched after an off-path evaluation populates the cache, so the plugin rebuilds its
  *  decorations to include the newly-available hints. Also dispatched by {@link refreshNumbatInlays}
@@ -184,7 +186,7 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
       decorations: DecorationSet;
 
       /** Cached hints per block, keyed by {@link blockKey}. */
-      private readonly cache = new Map<string, Hint[]>();
+      private readonly cache = new EvaluationCache<Hint[]>(INLAY_CACHE_ENTRIES);
 
       /** Stops waiting on the property batch, where a pass has been asked for. Held because the
        *  batch outlives a view: a destroyed plugin left in the waiter set dispatches into a view
@@ -249,12 +251,21 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         const placements: { from: number; widget: InlayWidget; }[] = [];
         for (const block of visible) {
           const key = blockKey(interpreterGeneration(), preamble.source, block, blocks);
-          const hints = this.cache.get(key);
+          const hit = this.cache.get(key);
 
-          if (hints === undefined) {
+          if (hit === null) {
             pending.push(block);
             continue;
           }
+
+          // Stale is not absent. A block whose scope reads the clock is re-evaluated, but its last
+          // answer keeps painting until the new one lands, otherwise every hint in the note would
+          // blank for the length of a standard-library load, once per freshness window.
+          if (!hit.fresh) {
+            pending.push(block);
+          }
+
+          const hints = hit.value;
 
           for (const hint of hints) {
             if (!hintEnabled(hint, filter)) {
@@ -417,46 +428,90 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         }
 
         const applyRates = plugin.settings.fetchExchangeRates;
-        primeReservedNames(applyRates);
+        void ensureReservedNames(applyRates);
 
         // The note preamble (property bindings) opens every block's scope; it is part of each cache
         // key, so a property edit re-evaluates the hints.
         const { doc } = view.state;
-        const preamble = notePreamble(plugin, frontmatterBodyOf(doc), sourcePathOf(view));
-        let evaluated = false;
+        const notePath = sourcePathOf(view);
+        const preamble = notePreamble(plugin, frontmatterBodyOf(doc), notePath);
 
-        for (const block of pending) {
-          const key = blockKey(interpreterGeneration(), preamble.source, block, allBlocks);
-          if (block.body.length === 0 || this.cache.has(key)) {
-            continue;
+        // One flag for the note rather than one per block, and deliberately conservative: a
+        // `numbat-shared` block's scope is every shared block above it, so per-block precision
+        // would mean carrying a running prefix through a loop that already replays quadratically.
+        // The coarseness costs a pure block in a clock-reading note one re-evaluation per window,
+        // and this pass is viewport-filtered, so what that bounds is a screenful.
+        const noteImpure = preludeReadsClockOrRandom()
+          || readsClockOrRandom(preamble.source)
+          || allBlocks.some((entry) => readsClockOrRandom(entry.body.join("\n")));
+
+        // What to evaluate, and under which key each answer is filed. An empty block is dropped
+        // here rather than sent and skipped: it has nothing to evaluate and no hints to show, and
+        // the cache would only fill with entries nothing ever reads.
+        //
+        // A block already answered is dropped too. `build` decides what is *pending* from the
+        // viewport; this is the second gate, and it is the one that survives the debounce. The
+        // cache may have been filled by another pass while this one was waiting.
+        const requests = pending
+          .filter((block) => block.body.length > 0)
+          .map((block) => ({
+            id: blockKey(interpreterGeneration(), preamble.source, block, allBlocks),
+            body: block.body,
+            // Replayed so shared state is deterministic, independent of the order anything
+            // rendered in. An independent block sends nothing.
+            before: block.shared
+              ? allBlocks.filter((e) => e.shared && e.openLine < block.openLine).map((e) => e.body.join("\n"))
+              : [],
+          }))
+          .filter((request) => !this.cache.hasFresh(request.id));
+
+        // A superseded or unanswerable pass still falls through to the frontmatter below: that is a
+        // separate question, owned by the property batch, and the answer to it does not depend on
+        // anything asked above.
+        if (requests.length > 0 && !this.destroyed) {
+          // The note's allowance, keyed on the note, so this pass, the inline pass and the property
+          // batch draw on one allowance rather than three: the reader asked for a note that cannot
+          // take ten seconds, not for three surfaces that may each take ten.
+          //
+          // Grouped by note, so a reader typing supersedes their own previous request rather than
+          // queueing one standard-library load per block per keystroke behind it.
+          const answer = await ask("evalBlocks", {
+            blocks: requests,
+            preamble,
+            applyRates,
+            budget: { budgetMs: plugin.settings.evaluationLimitMs, key: notePath },
+          }, { group: `inlay:${notePath ?? ""}`, note: notePath ?? undefined });
+
+          if (this.destroyed) {
+            return;
           }
 
-          const context = createContext(applyRates);
-          try {
-            replayPreamble(context, preamble);
-            if (block.shared) {
-              // Replay earlier shared blocks so shared state is deterministic.
-              for (const earlier of allBlocks) {
-                if (earlier.shared && earlier.openLine < block.openLine) {
-                  interpret(context, earlier.body.join("\n"));
-                }
-              }
-            }
-            this.remember(key, hintsForBlock((code) => interpret(context, code), block.body));
-            evaluated = true;
-          } catch (error) {
-            // A wasm panic: schedule a restart and stop this pass (the interpreter reinitializes
-            // before the next evaluation).
-            console.error("Symbat: inlay-hint evaluation crashed", error);
-            restartNumbat();
-            break;
-          } finally {
-            freeQuietly(context);
+          for (const block of answer?.value ?? []) {
+            // A block the pass never opened a context for is filed as unable to change, whatever
+            // the note reads: a refusal is not a value the clock moves, and only an edit to the
+            // note can make the answer different. Filing it at all is what stops `build` from
+            // finding the block pending and rescheduling this pass every debounce for the rest of
+            // the session.
+            this.remember(block.id, [...block.hints], block.evaluated && noteImpure);
           }
-        }
 
-        if (evaluated && !this.destroyed) {
-          view.dispatch({ effects: inlayReady.of() });
+          // Reported but not filed in the refusal ledger, unlike the reading-view surfaces: this
+          // pass caches its answers against the note *buffer*, so the refusal is found again on the
+          // next repaint for the cost of a map lookup and nothing re-evaluates. What it _does_ owe
+          // the reader is the half the hint beside the line cannot carry: which note, and where the
+          // setting is.
+          if (answer?.exceeded === true) {
+            // Nothing this pass evaluated may age either. The note cannot be re-read inside its
+            // allowance, so asking again would only spend the allowance again which, for a note
+            // that reads the clock, would be a freeze the length of the limit once per window for
+            // the rest of the session.
+            this.cache.freeze(answer.value.filter((block) => block.evaluated).map((block) => block.id));
+            plugin.reportEvaluationLimit(notePath ?? "");
+          }
+
+          if (answer !== null) {
+            view.dispatch({ effects: inlayReady.of() });
+          }
         }
 
         // The frontmatter properties are asked for rather than evaluated: the property batch owns
@@ -465,7 +520,7 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         if (evalFrontmatter && preamble.bindings.length > 0) {
           const keys = outcomeKeys(applyRates, preamble);
           this.unwaitFrontmatter?.();
-          this.unwaitFrontmatter = requestNoteOutcomes(plugin, preamble, () => {
+          this.unwaitFrontmatter = requestNoteOutcomes(plugin, preamble, notePath ?? "", () => {
             this.unwaitFrontmatter = null;
 
             // Only when the pass actually answered this scope. A dispatch rebuilds, a rebuild that
@@ -479,18 +534,10 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         }
       }
 
-      /** Store a block's hints, evicting the oldest entries past the cap. */
-      private remember(key: string, hints: Hint[]): void {
-        this.cache.set(key, hints);
-
-        while (this.cache.size > INLAY_CACHE_ENTRIES) {
-          const oldest = this.cache.keys().next().value;
-          if (oldest === undefined) {
-            break;
-          }
-
-          this.cache.delete(oldest);
-        }
+      /** Store a block's hints. `impure` is whether the block's scope can produce a different
+       *  answer next time (interpreter/eval-cache.ts). */
+      private remember(key: string, hints: Hint[], impure: boolean): void {
+        this.cache.set(key, hints, impure);
       }
     },
     { decorations: (value) => value.decorations },
@@ -524,7 +571,7 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
       /** Cached hints for the document, keyed by its full text and the interpreter generation. A
        * prelude edit changes what the file's own statements mean without changing a character of it
        * (see {@link wholeScopeKey}). */
-      private readonly cache = new Map<string, Hint[]>();
+      private readonly cache = new EvaluationCache<Hint[]>(INLAY_CACHE_ENTRIES);
 
       /** The pending debounced evaluation, or `null` when none is scheduled. */
       private timer: number | null = null;
@@ -569,11 +616,18 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
         };
 
         const { doc } = view.state;
-        const hints = this.cache.get(wholeScopeKey(interpreterGeneration(), doc.toString()));
-        if (hints === undefined) {
+        const hit = this.cache.get(wholeScopeKey(interpreterGeneration(), doc.toString()));
+        if (hit === null) {
           this.scheduleEvaluation(view);
           return Decoration.none;
         }
+
+        // As in the block plugin: a stale answer keeps painting while a newer one is fetched.
+        if (!hit.fresh) {
+          this.scheduleEvaluation(view);
+        }
+
+        const hints = hit.value;
 
         const builder = new RangeSetBuilder<Decoration>();
         for (const hint of hints) {
@@ -633,38 +687,45 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
         const applyRates = plugin.settings.fetchExchangeRates;
         const text = view.state.doc.toString();
         const key = wholeScopeKey(interpreterGeneration(), text);
-        if (this.cache.has(key)) {
+        if (this.cache.hasFresh(key)) {
           return;
         }
+
+        const impure = preludeReadsClockOrRandom() || readsClockOrRandom(text);
 
         const path = filePath();
-        const context = createContext(applyRates, path === null ? {} : { preludeBefore: path });
-        try {
-          this.remember(key, hintsForBlock((code) => interpret(context, code), text.split("\n")));
-        } catch (error) {
-          console.error("Symbat: the Numbat file's inlay evaluation crashed", error);
-          restartNumbat();
+
+        // The file's own allowance. No head check and no ledger, for the same reason the editor's
+        // inline pass needs neither: one context serves the whole document, so past the deadline
+        // that pass runs on and every refused statement comes back as the ordinary error hint that
+        // says so. The whole thing is filed under a key that moves with the text, so the answer is
+        // found again on the next repaint rather than re-evaluated.
+        const answer = await ask("evalDocument", {
+          text,
+          applyRates,
+          preludeBefore: path,
+          budget: { budgetMs: plugin.settings.evaluationLimitMs, key: path },
+        }, { group: `nbt-inlay:${path ?? ""}`, note: path ?? undefined });
+
+        if (answer === null || this.destroyed) {
           return;
-        } finally {
-          freeQuietly(context);
         }
-        if (!this.destroyed) {
-          view.dispatch({ effects: inlayReady.of() });
+
+        // As in the block plugin, a refusal is filed as unable to change: re-asking would spend
+        // the file's whole allowance again to be told the same thing.
+        this.remember(key, [...answer.value], !answer.exceeded && impure);
+
+        if (answer.exceeded) {
+          plugin.reportEvaluationLimit(path ?? "");
         }
+
+        view.dispatch({ effects: inlayReady.of() });
       }
 
-      /** Store the document's hints, evicting the oldest entries past the cap (the key moves with
-       *  every edit, so the map would otherwise grow unbounded). */
-      private remember(key: string, hints: Hint[]): void {
-        this.cache.set(key, hints);
-
-        while (this.cache.size > INLAY_CACHE_ENTRIES) {
-          const oldest = this.cache.keys().next().value;
-          if (oldest === undefined) {
-            break;
-          }
-          this.cache.delete(oldest);
-        }
+      /** Store the document's hints. The cap matters here because the key moves with every edit, so
+       *  the cache would otherwise grow unbounded over a session. */
+      private remember(key: string, hints: Hint[], impure: boolean): void {
+        this.cache.set(key, hints, impure);
       }
     },
     { decorations: (value) => value.decorations },
@@ -676,41 +737,50 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
 
 /**
  * The REPL-input counterpart of the inlay hints: shows only the incomplete expression (typed-hole)
- * placeholder at the end of the input, evaluated against the REPL's live session context through
- * `holeType`. Unlike code blocks this needs no fence scan, fresh context, or debounce — the session
- * context is loaded and a single small input evaluates synchronously.
+ * placeholder at the end of the input, typed against whatever scope the input belongs to through
+ * the facts layer (interpreter/facts.ts). Unlike code blocks this needs no fence scan and no
+ * debounce as the two cheap gates below keep a complete expression from asking anything at all.
  *
  * Scoped to a single-line input: a multi-line entry's earlier statements would have to be replayed
  * to type the last line's hole, and running them on the live session context would define them
  * before the user submits. A single incomplete line's hole form is always a type error, so it never
- * mutates the session.
+ * mutates the scope it is typed against.
+ *
+ * **A decoration builder cannot wait**, which is why the answer is read rather than computed here:
+ * `knownHoleType` is a map lookup, and a miss asks and redraws. The ask is fired at most once per
+ * distinct line, so a scope that cannot answer leaves the hint absent rather than looping between
+ * asking and repainting.
  *
  * Gated by the same inlay type-hint settings; views/input.ts toggles it live via a compartment (so
  * a disabled/enabled change fully adds or removes it), and this also self-gates in case it is left
  * installed.
  */
-export function numbatReplHoleHint(plugin: SymbatPlugin, holeType: (input: string) => string | null) {
+export function numbatReplHoleHint(plugin: SymbatPlugin, host: FactsHost) {
   return ViewPlugin.fromClass(
     class {
       /** The hole widget CodeMirror is painting — at most one. */
       decorations: DecorationSet;
+
+      /** The line an answer has already been asked for, so a scope that cannot answer is not asked
+       *  again on the repaint its own reply triggers. */
+      private asked: string | null = null;
 
       /** Paint the initial input, which is usually empty and so yields nothing. */
       constructor(view: EditorView) {
         this.decorations = this.build(view);
       }
 
-      /** Rebuild on every edit: the hint tracks the input character by character. */
+      /** Rebuild on every edit, and when an answer arrives. */
       update(update: ViewUpdate): void {
-        if (update.docChanged || update.viewportChanged) {
+        const arrived = update.transactions.some((tr) => tr.effects.some((e) => e.is(inlayReady)));
+        if (update.docChanged || update.viewportChanged || arrived) {
           this.decorations = this.build(update.view);
         }
       }
 
       /**
-       * Type the input's trailing hole, if it has one. Synchronous — the session context is already
-       * loaded, and the two cheap gates below (single line, `holeForm` matches) keep a complete
-       * expression from costing an interpret on every keystroke.
+       * Type the input's trailing hole, if it has one. The two cheap gates below (single line,
+       * `holeForm` matches) keep a complete expression from asking anything.
        */
       private build(view: EditorView): DecorationSet {
         if (!plugin.settings.inlayHints || !plugin.settings.inlayTypes) {
@@ -723,13 +793,23 @@ export function numbatReplHoleHint(plugin: SymbatPlugin, holeType: (input: strin
         }
         const line = doc.line(1);
 
-        // Only evaluate when the line actually looks incomplete (ends in an operand-expecting
-        // slot), so a complete expression costs no interpret.
+        // Only ask when the line actually looks incomplete (ends in an operand-expecting slot), so
+        // a complete expression costs nothing.
         if (holeForm(line.text) === null) {
           return Decoration.none;
         }
 
-        const type = holeType(line.text);
+        const type = host.knownHoleType(line.text);
+        if (type === undefined) {
+          if (this.asked !== line.text) {
+            this.asked = line.text;
+            void host.holeType(line.text).then(() => {
+              refreshNumbatInlays(view);
+            });
+          }
+
+          return Decoration.none;
+        }
         if (type === null) {
           return Decoration.none;
         }

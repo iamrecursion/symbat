@@ -13,8 +13,9 @@
 import { numbatBlockRanges } from "../document/fences";
 import { FRONTMATTER_CLOSE, FRONTMATTER_OPEN } from "../document/frontmatter";
 import { blankStrings, groupStatements, stripLineComment } from "../evaluation/inlay-parse";
-import { type InlineEvalConfig, noteSignature, scanNote } from "../evaluation/inline-parse";
+import { type InlineEvalConfig, noteReadsClockOrRandom, noteSignature, scanNote } from "../evaluation/inline-parse";
 import { escapeHtml } from "../interpreter/markup";
+import { readsClockOrRandom } from "../interpreter/purity";
 import {
   EMPTY_PREAMBLE,
   frontmatterKeySites,
@@ -972,6 +973,26 @@ export function buildDocumentScopeTree(input: {
 // QUERYING THE TREE
 // ================================================================================================
 
+/**
+ * Whether this tree's evaluated values can differ next time. This is the flag the inspector files
+ * with (interpreter/eval-cache.ts), so that a note reading `now()` refreshes and one reading no
+ * clock is never re-evaluated at all.
+ *
+ * Covers the same text {@link ScopeTree.signature} is built from, minus the interpreter generation
+ * (a number) and the user prelude. The prelude is the caller's to add: it is not the note's text,
+ * and its answer is decided once per reload rather than once per tree
+ * (interpreter/numbat.ts's `preludeReadsClockOrRandom`).
+ *
+ * `blocks` is scanned whole rather than filtered to the unexported ones as the signature does. The
+ * signature can skip the exported ones because they reappear in `units`; here the redundancy is
+ * free, and it is what makes the same call correct for a `.nbt` document tree, whose entire file is
+ * one exported block.
+ */
+export function treeReadsClockOrRandom(tree: ScopeTree): boolean {
+  return noteReadsClockOrRandom(tree.preamble.source, tree.units)
+    || tree.blocks.some((block) => readsClockOrRandom(block.wholeBody));
+}
+
 /** Every binding in the tree, in a fixed order (imports, properties, block statements, inline,
  *  prelude) — the positional basis for caching values by signature. */
 export function scopeEntries(tree: ScopeTree): ScopeEntry[] {
@@ -984,6 +1005,29 @@ export function scopeEntries(tree: ScopeTree): ScopeEntry[] {
     ...tree.inline,
     ...tree.prelude.flatMap((file) => file.entries),
   ];
+}
+
+/**
+ * Write `values` into `tree`'s bindings, pairing them by {@link scopeEntries} order.
+ *
+ * The one way values reach a tree that did not compute them, and there are two such routes: the
+ * value cache in views/scope.ts, which stores them positionally because the entry objects
+ * themselves are rebuilt on every refresh, and the evaluation itself, whose answer is a *different
+ * tree* whenever the interpreter is on a thread of its own.
+ *
+ * That second route is the reason this is a named function rather than a `forEach` at each site.
+ * `evaluateScopeTree` fills the entries it walks, so in process the caller's own tree comes back
+ * filled and copying looks like a no-op somebody forgot to delete; across a boundary the request
+ * was structured-cloned and the caller's tree is untouched. Writing the adoption out once, where
+ * both callers can see the same comment, is what keeps that from reading as ceremony.
+ *
+ * A shorter `values` leaves the remaining entries as they were, which is what a pass that was cut
+ * short produces and is the right outcome for it: an entry with no value renders as one.
+ */
+export function adoptScopeValues(tree: ScopeTree, values: readonly (ScopeValue | undefined)[]): void {
+  scopeEntries(tree).forEach((entry, index) => {
+    entry.value = values[index];
+  });
 }
 
 /**

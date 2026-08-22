@@ -45,6 +45,26 @@ export type ReplVimMode = "match" | "on" | "off";
 /** How a rendered inline evaluation shows in reading view. */
 export type InlineReadingStyle = "value" | "expression";
 
+/**
+ * Where the Numbat interpreter runs.
+ *
+ * The two options are **not equivalent**. Only a worker can be terminated, and termination is the
+ * only remedy the platform offers for stopping a Numbat evaluation that has already started.
+ *
+ * Because they are not two speeds, `worker` does **not** quietly become `main` when a worker cannot
+ * be started. It stops, says so, and leaves the choice with the reader: moving somebody onto a
+ * weaker guarantee without telling them would be a violation of good UX. The one exception is an
+ * attempt to start the engine before the workspace is ready, as this would run in process and then
+ * be replaced by a worker as soon as spawning is permitted.
+ *
+ * The same two words as `InterpreterPath` in interpreter/transport.ts, and deliberately a separate
+ * type rather than a shared one: this is what the reader _asked_ for, that is what they _got_.
+ * Asking for a worker can fail, and the gap between the two is what the version card reports. The
+ * link is prose rather than a `{@link}` because this module is settings-only and importing the
+ * transport to name it would put the interpreter behind every settings import.
+ */
+export type InterpreterThread = "worker" | "main";
+
 /** User-configurable settings, persisted through Obsidian's plugin data. */
 export interface SymbatSettings {
   /** Fetch live currency exchange rates over the network (opt-in). */
@@ -208,6 +228,15 @@ export interface SymbatSettings {
    *  loaded). */
   completionIdleSeconds: number;
 
+  /** Where the interpreter runs: `worker` requires a Web Worker and evaluates nothing without one,
+   *  `main` keeps it on this thread. See {@link InterpreterThread} for why the two are not
+   *  equivalent. */
+  interpreterThread: InterpreterThread;
+
+  /** Milliseconds one note's evaluation may spend in the interpreter before the rest of it is
+   *  skipped (0 removes the limit). */
+  evaluationLimitMs: number;
+
   /** The time zone a date, or a time written without an offset, is read in — an IANA name
    *  (`Europe/Berlin`) or a literal offset (`+02:00`). Blank means the reader's own zone. */
   notePropertyDefaultZone: string;
@@ -269,6 +298,8 @@ export const DEFAULT_SETTINGS: SymbatSettings = {
   replMaxLines: 200,
   preludeErrorDelaySeconds: 2,
   completionIdleSeconds: 60,
+  interpreterThread: "worker",
+  evaluationLimitMs: 10_000,
   notePropertyDefaultZone: "",
 };
 
@@ -368,12 +399,16 @@ export function validateTimeZone(value: string): string | undefined {
  * it, in one `switch` — the single place where "what changed" meets "what to do about it".
  */
 export type SettingEffect =
+  /** Throw away every cached evaluation, so everything on screen is judged again. */
+  | "clearCaches"
   /** Fetch (or, when the toggle is off, clear) the live exchange rates. */
   | "ensureExchangeRates"
   /** Rebuild the shared completion context and the property reserved-name set, both of which bake
    *  in the current unit vocabulary. */
 
   | "invalidateCompletionVocabulary"
+  /** Start the interpreter where the reader has just asked for it, replacing what is running. */
+  | "applyInterpreterThread"
   /** Reload the user prelude into every interpreter context. */
   | "markPreludeDirty"
   | "refreshHover"
@@ -407,7 +442,8 @@ export type SettingControl =
     validate?: (value: string) => string | undefined;
   }
   | { type: "dropdown"; key: "replVimMode"; options: Record<ReplVimMode, string>; }
-  | { type: "dropdown"; key: "inlineEvalReadingStyle"; options: Record<InlineReadingStyle, string>; };
+  | { type: "dropdown"; key: "inlineEvalReadingStyle"; options: Record<InlineReadingStyle, string>; }
+  | { type: "dropdown"; key: "interpreterThread"; options: Record<InterpreterThread, string>; };
 
 /** One row of the settings tab. */
 export interface SettingDescriptor {
@@ -869,11 +905,40 @@ export const SETTING_BLOCKS: readonly SettingBlock[] = [
     heading: "Runtime",
     settings: [
       {
+        name: "Interpreter thread",
+        desc: "Where Numbat runs, and the two are not two speeds of the same thing. Worker thread keeps "
+          + "the interpreter off Obsidian's own thread, which is the only arrangement in which an "
+          + "evaluation that has already started can be stopped; if no worker can be started, Symbat "
+          + "says so and evaluates nothing, rather than moving you somewhere weaker without asking. "
+          + "Main thread always works, but a note that will never finish evaluating cannot be "
+          + "interrupted at all: the REPL's stop button and the `Stop all running evaluations` command "
+          + "do nothing there, and the time limit below bounds what comes after a runaway expression "
+          + "rather than the expression itself. Which is in force is on the version card at the bottom "
+          + "of this tab.",
+        control: {
+          type: "dropdown",
+          key: "interpreterThread",
+          options: { worker: "Worker thread", main: "Main thread" },
+        },
+        effects: ["applyInterpreterThread"],
+      },
+      {
         name: "Free the interpreter when idle (seconds)",
         desc: "Release the cached completion interpreters after this many seconds without a completion, reclaiming "
           + "the memory they hold (a large code block replays into one). They rebuild on next use, taking a "
           + "moment. Set to 0 to keep them loaded.",
         control: { type: "number", key: "completionIdleSeconds", min: 0 },
+      },
+      {
+        name: "Stop evaluating a note after (milliseconds)",
+        desc: "How long Symbat may spend evaluating one note before it gives up on the rest of it, so a note "
+          + "full of Numbat cannot lock up Obsidian. What it already worked out is kept; the rest reads "
+          + "`evaluation time limit reached` until the note is edited. An expression that has already started "
+          + "still runs to the end, as Numbat has no way to interrupt one. Set to 0 to remove the limit.",
+        control: { type: "number", key: "evaluationLimitMs", min: 0 },
+        // No evaluation key names this, so nothing else would notice it moved and the setting would
+        // look inert until every affected note happened to change.
+        effects: ["clearCaches"],
       },
     ],
   },

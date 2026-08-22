@@ -12,6 +12,7 @@ import {
   inlineResultFor,
   inlineScopeAt,
   inlineValueHtml,
+  noteReadsClockOrRandom,
   noteSignature,
   type NoteUnit,
   scanNote,
@@ -460,6 +461,35 @@ test("noteSignature separates the generation from the preamble", () => {
   const after = noteSignature(2, "", units, DEFAULT_INLINE_CONFIG);
   assert.notEqual(before, after);
   assert.equal(noteSignature(1, "", units, DEFAULT_INLINE_CONFIG), before, "and is stable");
+});
+
+// --- noteReadsClockOrRandom --------------------------------------------------
+
+test("noteReadsClockOrRandom is false for a note whose scope cannot change", () => {
+  const units = scanNote(["n`2 m + 3 m`", "```numbat-shared", "let k = 4", "```"], DEFAULT_INLINE_CONFIG);
+  assert.equal(noteReadsClockOrRandom("let a = 1", units), false);
+});
+
+test("noteReadsClockOrRandom sees an inline span that reads the clock", () => {
+  const units = scanNote(["n`now()`"], DEFAULT_INLINE_CONFIG);
+  assert.equal(noteReadsClockOrRandom("", units), true);
+});
+
+test("noteReadsClockOrRandom sees a shared block that reads the clock", () => {
+  // The span itself says nothing impure; the session it is evaluated in does.
+  const units = scanNote(["```numbat-shared", "let t = now()", "```", "n`t`"], DEFAULT_INLINE_CONFIG);
+  assert.equal(noteReadsClockOrRandom("", units), true);
+});
+
+test("noteReadsClockOrRandom sees the preamble, which carries the note's imports", () => {
+  const units = scanNote(["n`2 m`"], DEFAULT_INLINE_CONFIG);
+  assert.equal(noteReadsClockOrRandom("let started = today()", units), true);
+});
+
+test("noteReadsClockOrRandom ignores a comment in a shared block", () => {
+  // Where an unstripped scan would fire: `time` is a prelude function and an ordinary English word.
+  const units = scanNote(["```numbat-shared", "# time to destination", "let d = 4 km", "```"], DEFAULT_INLINE_CONFIG);
+  assert.equal(noteReadsClockOrRandom("", units), false);
 });
 
 test("noteSignature cannot confuse a generation with a preamble", () => {

@@ -18,10 +18,10 @@ import { inlineConfig, inlineSpanAtCursor } from "../evaluation/inline";
 import { findInlineSpans, scanNote } from "../evaluation/inline-parse";
 import type SymbatPlugin from "../main";
 import {
+  ensureReservedNames,
   frontmatterBody,
   isNumbatTypedKey,
   notePreamble,
-  primeReservedNames,
   scopeChunksAbove,
 } from "../properties/note";
 import { propertyValueAt, type PropertyValueSite } from "../properties/parse";
@@ -105,7 +105,7 @@ export function replayChunksAt(
   // Property bindings open the note's scope everywhere, so they replay first on every path. The
   // whole frontmatter is used — the preamble is note-global, and it always sits above any Numbat
   // code.
-  primeReservedNames(plugin.settings.fetchExchangeRates);
+  void ensureReservedNames(plugin.settings.fetchExchangeRates);
   const preamble = notePreamble(plugin, frontmatterBody(editor.getValue().split("\n")), notePath);
 
   const propertySite = numbatPropertySiteAt(plugin.app, editor, position);

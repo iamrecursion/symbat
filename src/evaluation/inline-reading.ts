@@ -11,18 +11,28 @@
 // from the note's source instead — see collectMatches and the pairing in processInlineEval.
 
 import type { MarkdownPostProcessorContext } from "obsidian";
-import { ensureNumbatReady, interpreterGeneration, isNumbatReady, restartNumbat } from "../interpreter/numbat";
+import { EvaluationCache } from "../interpreter/eval-cache";
+import {
+  ask,
+  ensureNumbatReady,
+  interpreterGeneration,
+  isNumbatReady,
+  preludeReadsClockOrRandom,
+  restartNumbat,
+} from "../interpreter/numbat";
+import { refusedRecently, rememberRefusal } from "../interpreter/refusals";
 import { setNumbatHtml } from "../interpreter/render";
 import type SymbatPlugin from "../main";
-import { type NotePreamble, preambleForDoc, preambleForFile, primeReservedNames } from "../properties/note";
+import { ensureReservedNames, type NotePreamble, preambleForDoc, preambleForFile } from "../properties/note";
 import { READING_EVAL_CACHE_ENTRIES } from "../tuning";
-import { displayValueHtml, evaluateExprs, evaluateNoteUnits, inlineConfig } from "./inline";
+import { displayValueHtml, inlineConfig } from "./inline";
 import {
   configDecimalPlaces,
   configError,
   contentParts,
   type InlineEvalConfig,
   type InlineResult,
+  noteReadsClockOrRandom,
   noteSignature,
   type NoteUnit,
   scanNote,
@@ -31,7 +41,7 @@ import {
 
 /** A small, bounded cache of whole-note evaluations, so the many sections of one reading-view
  *  render share a single replay. Keyed by the note's eval signature. */
-const evalCache = new Map<string, InlineResult[]>();
+const evalCache = new EvaluationCache<InlineResult[]>(READING_EVAL_CACHE_ENTRIES);
 
 /** A rendered inline-eval span located in the DOM. */
 interface DomMatch {
@@ -110,13 +120,40 @@ async function processInlineEval(
   // rewrote has none of its own.
   const resultOf = new Map<DomMatch, { result: InlineResult; expr: string; }>();
   const info = ctx.getSectionInfo(el);
-  primeReservedNames(plugin.settings.fetchExchangeRates);
+  void ensureReservedNames(plugin.settings.fetchExchangeRates);
+
+  // As in the code-block processor: a note that gave up recently is left alone until the cool-down
+  // passes. This path caches results for the branch that has the section text, but a re-render
+  // still arrives with a refilled allowance and would spend it all over again, and the branch
+  // without section text caches nothing at all.
+  if (refusedRecently(ctx.sourcePath, interpreterGeneration())) {
+    return;
+  }
 
   try {
+    // The same note allowance every other surface of this note draws on (interpreter/budget.ts).
+    // Reading view calls this once per rendered *section* rather than once per note, so an
+    // allowance scoped to the call would bound a section and nothing else. Live preview renders
+    // through this path too, and source mode reaches the note through the editor's own inline pass
+    // under this same key, so all three modes spend one ten seconds between them rather than one
+    // each.
+    //
+    // The cache entry this render filled, if it filled one. Held because whether it may age is not
+    // known until the answer comes back — see the freeze below.
+    let evaluated: string | null = null;
+    let exceeded = false;
+
     if (info) {
       const units = scanNote(info.text.split("\n"), config);
       const preamble = preambleForDoc(plugin, info.text, ctx.sourcePath);
-      const results = evaluateCached(units, plugin.settings.fetchExchangeRates, config, preamble);
+      const evaluation = await evaluateCached(plugin, units, config, preamble, ctx.sourcePath);
+      if (evaluation === null) {
+        return;
+      }
+
+      const { results } = evaluation;
+      evaluated = evaluation.signature;
+      exceeded = evaluation.exceeded;
       const sectionInline = inlineUnitsInRange(units, info.lineStart, info.lineEnd);
 
       matches.forEach((match, index) => {
@@ -126,9 +163,9 @@ async function processInlineEval(
         }
 
         // The by-order pairing is guarded by an expression check, so a desync leaves the span
-        // untouched rather than showing the wrong value. A span another plugin has rewritten has no
-        // expression to check against — the source is then the only account of it, and position is
-        // all we have.
+        // untouched rather than showing the wrong value. A span another plugin has rewritten has
+        // no expression to check against — the source is then the only account of it, and
+        // position is all we have.
         if (match.expr !== null && match.expr !== entry.unit.span.expr) {
           return;
         }
@@ -141,17 +178,37 @@ async function processInlineEval(
     } else {
       // No section text: only spans that still carry their own expression can be evaluated at all.
       const readable = matches.filter((match) => match.expr !== null);
-      const results = evaluateExprs(
-        readable.map((m) => ({ expr: m.expr as string, dp: m.dp, error: m.configError })),
-        plugin.settings.fetchExchangeRates,
-        preambleForFile(plugin, ctx.sourcePath),
-      );
+      const evaluation = await ask("evalExprs", {
+        entries: readable.map((m) => ({ expr: m.expr as string, dp: m.dp, error: m.configError })),
+        applyRates: plugin.settings.fetchExchangeRates,
+        preamble: preambleForFile(plugin, ctx.sourcePath),
+        budget: { budgetMs: plugin.settings.evaluationLimitMs, key: ctx.sourcePath },
+      }, { note: ctx.sourcePath });
+      if (evaluation === null) {
+        return;
+      }
+
+      exceeded = evaluation.exceeded;
       readable.forEach((match, index) => {
-        const result = results[index];
+        const result = evaluation.value[index];
         if (result !== undefined) {
           resultOf.set(match, { result, expr: match.expr as string });
         }
       });
+    }
+
+    // A refusal, not merely a slow render — `exceeded` distinguishes them.
+    if (exceeded) {
+      // What this render evaluated may not age: the note cannot be re-read inside its allowance, so
+      // a clock-reading note would otherwise spend the whole limit again every window. The ledger
+      // below bounds how often the note is *tried*; this bounds what a successful-looking cache
+      // entry can cause on its own.
+      if (evaluated !== null) {
+        evalCache.freeze([evaluated]);
+      }
+
+      rememberRefusal(ctx.sourcePath, interpreterGeneration());
+      plugin.reportEvaluationLimit(ctx.sourcePath);
     }
   } catch (error) {
     console.error("Symbat: inline evaluation (reading view) crashed", error);
@@ -256,31 +313,47 @@ function inlineUnitsInRange(
 // EVALUATION AND RENDERING
 // ================================================================================================
 
-/** Evaluate a note's units, reusing a cached result when its signature is unchanged. */
-function evaluateCached(
+/**
+ * Evaluate a note's units, reusing a cached result when its signature is unchanged.
+ *
+ * A stale hit is treated as a miss here, with none of the flicker that would cause elsewhere: this
+ * function re-evaluates in place and returns the answer, so the reader never sees the gap. The
+ * surfaces that paint first and schedule after (the two editor extensions) have to keep the
+ * distinction.
+ */
+async function evaluateCached(
+  plugin: SymbatPlugin,
   units: NoteUnit[],
-  applyRates: boolean,
   config: InlineEvalConfig,
   preamble: NotePreamble,
-): InlineResult[] {
+  notePath: string,
+): Promise<{ results: readonly InlineResult[]; signature: string; exceeded: boolean; } | null> {
   const signature = noteSignature(interpreterGeneration(), preamble.source, units, config);
   const cached = evalCache.get(signature);
-  if (cached !== undefined) {
-    return cached;
+  if (cached !== null && cached.fresh) {
+    return { results: cached.value, signature, exceeded: false };
   }
 
-  const results = evaluateNoteUnits(units, applyRates, config, preamble);
-  evalCache.set(signature, results);
-
-  while (evalCache.size > READING_EVAL_CACHE_ENTRIES) {
-    const oldest = evalCache.keys().next().value;
-    if (oldest === undefined) {
-      break;
-    }
-    evalCache.delete(oldest);
+  const evaluation = await ask("evalNoteUnits", {
+    units,
+    applyRates: plugin.settings.fetchExchangeRates,
+    config,
+    preamble,
+    budget: { budgetMs: plugin.settings.evaluationLimitMs, key: notePath },
+  }, { note: notePath });
+  if (evaluation === null) {
+    return null;
   }
 
-  return results;
+  evalCache.set(
+    signature,
+    [...evaluation.value],
+    preludeReadsClockOrRandom() || noteReadsClockOrRandom(preamble.source, units),
+  );
+
+  // The signature rides back out so the caller can freeze this entry if the pass turned out to
+  // exceed the note's allowance, which it cannot know from in here.
+  return { results: evaluation.value, signature, exceeded: evaluation.exceeded };
 }
 
 /** Strip the prefix from its text node and replace the rendered span with the value (or `expression

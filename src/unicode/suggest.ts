@@ -19,9 +19,9 @@ import {
 } from "obsidian";
 import { insideNumbatFence } from "../document/fences";
 import { inlineSpanAtCursor } from "../evaluation/inline";
-import { listUnicodeCompletions, primeUnicodeCompletion } from "../interpreter/numbat";
 import type SymbatPlugin from "../main";
 import { type UnicodeCode, unicodePrefixAt } from "./codes";
+import { listUnicodeCompletions } from "./expand";
 
 /** Maximum rows shown at once (both popovers). */
 const SUGGESTION_LIMIT = 50;
@@ -130,8 +130,6 @@ export class NumbatUnicodeEditorSuggest extends EditorSuggest<UnicodeCode> {
     if (!insideNumbatFence(preceding) && inlineSpanAtCursor(this.plugin, editor, cursor) === null) {
       return null;
     }
-    primeUnicodeCompletion();
-
     return {
       start: { line: cursor.line, ch: cursor.ch - prefix.length - leader.length }, // the leader + code
       end: cursor,

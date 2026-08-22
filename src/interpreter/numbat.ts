@@ -78,12 +78,16 @@ let exchangeRatesFetchedAt = 0;
 
 /** The outcome of {@link loadExchangeRates}. */
 export interface ExchangeRatesLoad {
-  /** Whether rates are available for conversions — freshly fetched, or a still-valid in-memory/disk
-   *  cache. */
+  /**
+   * Whether rates are available for conversions — freshly fetched, or a still-valid in-memory/disk
+   * cache.
+   */
   available: boolean;
 
-  /** The XML fetched on this call (for the caller to persist to disk), or `null` when nothing new
-   *  was fetched — a cache hit, a timeout, or a failed request. */
+  /**
+   * The XML fetched on this call (for the caller to persist to disk), or `null` when nothing new
+   * was fetched — a cache hit, a timeout, or a failed request.
+   */
   fetched: string | null;
 }
 
@@ -242,9 +246,11 @@ export function preludeReadsClockOrRandom(): boolean {
   return userPreludeImpure;
 }
 
-/** Hand the interpreter everything it cannot find out for itself. Called from each of the four
- *  places that can change it, rather than assembled at the point of use, so the two halves of the
- *  environment can never be posted separately. */
+/**
+ * Hand the interpreter everything it cannot find out for itself. Called from each of the four
+ * places that can change it, rather than assembled at the point of use, so the two halves of the
+ * environment can never be posted separately.
+ */
 function publishEnvironment(): void {
   setInterpreterEnv({ ratesXml: exchangeRatesXml, prelude: userPreludeParts });
 }

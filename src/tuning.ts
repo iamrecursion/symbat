@@ -10,35 +10,45 @@
 // cache one entry per *block*, so a large note needs many; the others cache one entry per *note*,
 // so a handful covers realistic use.
 
-/** Cached block evaluations for inlay hints. Bounded so a very large note cannot grow memory
- *  without limit; an evicted block re-evaluates in a moment. */
+/**
+ * Cached block evaluations for inlay hints. Bounded so a very large note cannot grow memory
+ * without limit; an evicted block re-evaluates in a moment.
+ */
 export const INLAY_CACHE_ENTRIES = 200;
 
 /** Cached whole-note evaluations for inline expressions, keyed by signature. */
 export const INLINE_EVAL_CACHE_ENTRIES = 32;
 
-/** Cached per-note values for the scope inspector, matching the inline-eval cache because it is the
- *  same unit: one entry per note visited. */
+/**
+ * Cached per-note values for the scope inspector, matching the inline-eval cache because it is the
+ * same unit: one entry per note visited.
+ */
 export const SCOPE_VALUE_CACHE_ENTRIES = 32;
 
-/** Cached whole-note evaluations for the reading view. Smaller than the editor's because it exists
- * only so the many sections of a single render share one replay, not to span a browsing session. */
+/**
+ * Cached whole-note evaluations for the reading view. Smaller than the editor's because it exists
+ * only so the many sections of a single render share one replay, not to span a browsing session.
+ */
 export const READING_EVAL_CACHE_ENTRIES = 16;
 
-/** Cached answers to point questions about one name in one scope (interpreter/facts.ts).
+/**
+ * Cached answers to point questions about one name in one scope (interpreter/facts.ts).
  *
- *  The unit is smaller than the four above (a name rather than a note) but so is the response, and
- *  the number of *live* scopes is one or two: the key carries the code above the cursor, so moving
- *  to another line is a different scope entirely. What the size has to cover is a completion
- *  popover's worth of rows in the scope being typed in, plus whatever the reader hovered just
- *  before, and an evicted entry costs one lookup. */
+ * The unit is smaller than the four above (a name rather than a note) but so is the response, and
+ * the number of *live* scopes is one or two: the key carries the code above the cursor, so moving
+ * to another line is a different scope entirely. What the size has to cover is a completion
+ * popover's worth of rows in the scope being typed in, plus whatever the reader hovered just
+ * before, and an evicted entry costs one lookup.
+ */
 export const FACTS_CACHE_ENTRIES = 128;
 
-/** Cached types for the trailing hole of a half-written expression (interpreter/facts.ts).
+/**
+ * Cached types for the trailing hole of a half-written expression (interpreter/facts.ts).
  *
- *  Bigger than it looks like it needs to be, because the unit is a *keystroke*: typing `12 km / 3 `
- *  asks about every prefix of it that ends in an operand slot, and each is its own entry. What the
- *  size buys is that backspacing over a word finds every step of the way back already answered. */
+ * Bigger than it looks like it needs to be, because the unit is a *keystroke*: typing `12 km / 3 `
+ * asks about every prefix of it that ends in an operand slot, and each is its own entry. What the
+ * size buys is that backspacing over a word finds every step of the way back already answered.
+ */
 export const HOLE_CACHE_ENTRIES = 64;
 
 // THE CONTEXT POOL
@@ -74,17 +84,23 @@ export const PRISTINE_POOL_ENTRIES = 4;
 // table, and under write order a table longer than its cap evicts precisely the rows the reader is
 // scrolling back to. A cheap miss repeated on every row of every scroll stops being cheap.
 
-/** Preambles derived from the metadata cache, one per note. Sized for a Bases table: every visible
- *  row derives its own note's preamble, and scrolling back should not have to redo them. */
+/**
+ * Preambles derived from the metadata cache, one per note. Sized for a Bases table: every visible
+ * row derives its own note's preamble, and scrolling back should not have to redo them.
+ */
 export const PREAMBLE_FILE_CACHE_ENTRIES = 128;
 
-/** Preambles derived from frontmatter *text*, one per open editor's current content. Small because
- *  the key moves with every keystroke in frontmatter — the entries this holds are the surfaces of
- *  one note agreeing with each other, not a browsing history. */
+/**
+ * Preambles derived from frontmatter *text*, one per open editor's current content. Small because
+ * the key moves with every keystroke in frontmatter — the entries this holds are the surfaces of
+ * one note agreeing with each other, not a browsing history.
+ */
 export const PREAMBLE_BODY_CACHE_ENTRIES = 16;
 
-/** What imported notes export, one per imported note. Sized against the notes being imported rather
- *  than the ones importing, because one importer can pull in many. */
+/**
+ * What imported notes export, one per imported note. Sized against the notes being imported rather
+ * than the ones importing, because one importer can pull in many.
+ */
 export const PREAMBLE_EXPORT_CACHE_ENTRIES = 64;
 
 /**
@@ -179,7 +195,7 @@ export const IMPURE_FRESH_MS = 10_000;
 // What keeps a note full of Numbat from locking up the app (interpreter/budget.ts).
 //
 // None of these is the limit itself as that is a user setting, because how long a note may take is
-// a judgement about the reader's machine and not something this file can know. These instead
+// a judgment about the reader's machine and not something this file can know. These instead
 // describe the surrounding mechanics: what counts as one note's evaluation, and how long a note
 // that could not finish is left alone afterwards.
 
@@ -199,9 +215,11 @@ export const IMPURE_FRESH_MS = 10_000;
  */
 export const BUDGET_REFILL_IDLE_MS = 1_000;
 
-/** Notes with an allowance part-spent, one entry each. Only notes being evaluated right now hold
- *  one — an entry outlives its burst by {@link BUDGET_REFILL_IDLE_MS} and is then meaningless — so
- *  this is sized against the surfaces rendering at once, not against a browsing session. */
+/**
+ * Notes with an allowance part-spent, one entry each. Only notes being evaluated right now hold
+ * one — an entry outlives its burst by {@link BUDGET_REFILL_IDLE_MS} and is then meaningless — so
+ * this is sized against the surfaces rendering at once, not against a browsing session.
+ */
 export const BUDGET_BUCKET_ENTRIES = 16;
 
 /**
@@ -236,8 +254,10 @@ export const OVER_BUDGET_COOLDOWN_MS = 60_000;
  */
 export const EVALUATION_LIMIT_NOTICE_MS = 60_000;
 
-/** Notes waiting out a cool-down, one entry each. Small because a note that cannot finish is rare,
- *  and because an evicted entry is a retry rather than a wrong answer. */
+/**
+ * Notes waiting out a cool-down, one entry each. Small because a note that cannot finish is rare,
+ * and because an evicted entry is a retry rather than a wrong answer.
+ */
 export const REFUSAL_LEDGER_ENTRIES = 32;
 
 // THE INTERPRETER'S THREAD
@@ -261,14 +281,18 @@ export const REFUSAL_LEDGER_ENTRIES = 32;
  */
 export const WORKER_READY_TIMEOUT_MS = 5_000;
 
-/** How many restarts inside {@link RESPAWN_STORM_WINDOW_MS} mean something is wrong with the setup
- *  rather than with one note. Above this the host stops trying the same thing again — see
- *  `host.ts`, which has two quite different answers depending on whether a personal prelude is
- *  configured. */
+/**
+ * How many restarts inside {@link RESPAWN_STORM_WINDOW_MS} mean something is wrong with the setup
+ * rather than with one note. Above this the host stops trying the same thing again — see
+ * `host.ts`, which has two quite different answers depending on whether a personal prelude is
+ * configured.
+ */
 export const RESPAWN_STORM_LIMIT = 3;
 
-/** The window the restarts above are counted in. A minute is long enough that two unrelated crashes
- *  in one session do not add up, and short enough that a genuine storm trips it at once. */
+/**
+ * The window the restarts above are counted in. A minute is long enough that two unrelated crashes
+ * in one session do not add up, and short enough that a genuine storm trips it at once.
+ */
 export const RESPAWN_STORM_WINDOW_MS = 60_000;
 
 /**
@@ -314,14 +338,18 @@ export const STOP_GRACE_MS = 250;
 /** How long to wait after the last edit before re-evaluating changed blocks. */
 export const INLAY_DEBOUNCE_MS = 200;
 
-/** How long to wait after the last edit before re-evaluating the note's inline expressions. Matches
- *  {@link INLAY_DEBOUNCE_MS}: both react to typing in the editor, and a shared value keeps the two
- *  updates visually simultaneous. */
+/**
+ * How long to wait after the last edit before re-evaluating the note's inline expressions. Matches
+ * {@link INLAY_DEBOUNCE_MS}: both react to typing in the editor, and a shared value keeps the two
+ * updates visually simultaneous.
+ */
 export const INLINE_EVAL_DEBOUNCE_MS = 200;
 
-/** How long after the last keystroke a property widget re-evaluates. Longer than the editor
- *  debounces: a property is a single short expression being typed in full, so re-evaluating
- *  mid-word is noise rather than feedback. */
+/**
+ * How long after the last keystroke a property widget re-evaluates. Longer than the editor
+ * debounces: a property is a single short expression being typed in full, so re-evaluating
+ * mid-word is noise rather than feedback.
+ */
 export const PROPERTY_EVAL_DEBOUNCE_MS = 300;
 
 /**
@@ -337,8 +365,10 @@ export const TYPE_CHANGE_COALESCE_MS = 50;
 // DWELL INTERVALS
 // ================================================================================================
 
-/** How long a completion or search result must stay selected before its documentation opens.
+/**
+ * How long a completion or search result must stay selected before its documentation opens.
  *
- *  Genuinely shared: the code-block completer, the Numbat input's completer and the scope inspector
- *  are one interaction to a user, and three different delays would read as a bug. */
+ * Genuinely shared: the code-block completer, the Numbat input's completer and the scope inspector
+ * are one interaction to a user, and three different delays would read as a bug.
+ */
 export const COMPLETION_DWELL_MS = 500;

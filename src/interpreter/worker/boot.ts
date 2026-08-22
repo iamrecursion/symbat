@@ -26,8 +26,10 @@ function post(message: WorkerMessage): void {
   workerScope.postMessage(message);
 }
 
-/** Report something that broke the loop itself, as distinct from a panic inside a task — which
- *  rides back on that task's reply envelope and is the host's cue to restart, not to give up. */
+/**
+ * Report something that broke the loop itself, as distinct from a panic inside a task — which
+ * rides back on that task's reply envelope and is the host's cue to restart, not to give up.
+ */
 function fault(error: unknown, what: string): void {
   post({ kind: "fault", message: `${what}: ${describeError(error)}` });
 }

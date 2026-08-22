@@ -16,8 +16,10 @@ export const KEYBOARD_EVENTS: readonly (readonly [string, boolean])[] = [
   ["keyboardDidHide", false],
 ];
 
-/** Just the event names, for a listener that reads the height from the event itself rather than
- *  from whether the event means "up". */
+/**
+ * Just the event names, for a listener that reads the height from the event itself rather than
+ * from whether the event means "up".
+ */
 export const KEYBOARD_EVENT_NAMES: readonly string[] = KEYBOARD_EVENTS.map(([name]) => name);
 
 /**

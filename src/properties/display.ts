@@ -24,8 +24,10 @@ export type PropertyDisplay =
    */
   | { kind: "value" | "binding"; resultHtml: string; valueHtml: string; };
 
-/** How an outcome is to be read: the same evaluation says one thing beside an editor and another in
- *  a cell that has none. */
+/**
+ * How an outcome is to be read: the same evaluation says one thing beside an editor and another in
+ * a cell that has none.
+ */
 export interface DisplayMode {
   /**
    * Show the **bare value** rather than the `= value` fragment.
@@ -46,8 +48,10 @@ export interface DisplayMode {
   fallback: string;
 }
 
-/** What the widget is to write. Separated from the writing so the decision — which is all of the
- *  display behavior worth testing — can be tested without a DOM. */
+/**
+ * What the widget is to write. Separated from the writing so the decision — which is all of the
+ * display behavior worth testing — can be tested without a DOM.
+ */
 export type DisplayPlan =
   | { paint: "none"; }
   | { paint: "text"; text: string; cls: "error" | "warning" | null; }

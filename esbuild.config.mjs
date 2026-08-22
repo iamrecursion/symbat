@@ -67,8 +67,10 @@ let workerBytes = 0;
 // NUMBAT_TAG moves and says nothing at all about the code. These are sized so that each fails for
 // one reason, and names it.
 
-/** The worker's own code. Tight enough that pulling a whole subsystem across the seam fails here
- *  rather than in review. */
+/**
+ * The worker's own code. Tight enough that pulling a whole subsystem across the seam fails here
+ * rather than in review.
+ */
 const WORKER_BUDGET = 64 * 1024;
 
 /** `main.js` with the inlined module subtracted, which is the part anyone can affect. */

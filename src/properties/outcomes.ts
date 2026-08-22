@@ -50,8 +50,10 @@ export interface EvaluatedValue {
   errorText: string | null;
 }
 
-/** What evaluating one property *binding* produced: the value, plus what the note's derivation has
- *  to say about the property it came from. */
+/**
+ * What evaluating one property *binding* produced: the value, plus what the note's derivation has
+ * to say about the property it came from.
+ */
 export interface BindingOutcome extends EvaluatedValue {
   /** The property this is the outcome of: its dotted key, as {@link PropertyBinding.key}. */
   key: string;
@@ -62,9 +64,11 @@ export interface BindingOutcome extends EvaluatedValue {
   /** The binding's derivation advisory, if it has one. See {@link PropertyBinding.warning}. */
   warning: string | null;
 
-  /** The value as the reader wrote it ({@link PropertyBinding.written}, falling back to the
-   *  expression): what "the value restates its source" is judged against, since a substituted zero
-   *  is still restating itself on the page whatever it was rewritten to underneath. */
+  /**
+   * The value as the reader wrote it ({@link PropertyBinding.written}, falling back to the
+   * expression): what "the value restates its source" is judged against, since a substituted zero
+   * is still restating itself on the page whatever it was rewritten to underneath.
+   */
   written: string;
 }
 
@@ -113,8 +117,10 @@ export function evaluateBindings(run: LineInterpret, preamble: NotePreamble, fro
   return outcomes;
 }
 
-/** One binding's {@link BindingOutcome}, from the binding and what evaluating its expression
- *  produced. */
+/**
+ * One binding's {@link BindingOutcome}, from the binding and what evaluating its expression
+ * produced.
+ */
 function outcomeFor(binding: PropertyBinding, result: ReturnType<typeof inlineResultFor>): BindingOutcome {
   return {
     key: binding.key,

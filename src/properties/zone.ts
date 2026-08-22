@@ -23,12 +23,16 @@ export interface ZonedValue {
   /** `YYYY-MM-DD`. Always present — a value with no date is not one of these. */
   date: string;
 
-  /** `HH:MM`, or `null` for a date with no time of day. Seconds are dropped; see {@link
-   *  plainForm}. */
+  /**
+   * `HH:MM`, or `null` for a date with no time of day. Seconds are dropped; see {@link
+   * plainForm}.
+   */
   time: string | null;
 
-  /** A normalized `±HH:MM`, or `null` when the value carries no offset of its own and the reader's
-   *  default zone therefore applies. */
+  /**
+   * A normalized `±HH:MM`, or `null` when the value carries no offset of its own and the reader's
+   * default zone therefore applies.
+   */
   offset: string | null;
 
   /**
@@ -42,8 +46,10 @@ export interface ZonedValue {
   zone: string | null;
 }
 
-/** The widest and the narrowest offsets in real-world use (Etc/GMT-14 and Etc/GMT+12). Values
- *  outside this are a typo rather than a zone, and are rejected rather than carried. */
+/**
+ * The widest and the narrowest offsets in real-world use (Etc/GMT-14 and Etc/GMT+12). Values
+ * outside this are a typo rather than a zone, and are rejected rather than carried.
+ */
 const MIN_OFFSET_MINUTES = -12 * 60;
 const MAX_OFFSET_MINUTES = 14 * 60;
 
@@ -90,7 +96,7 @@ export function normalizeOffset(raw: string): string | null {
  * An offset as signed minutes east of UTC, or `null` when it is not an offset.
  *
  * Unlike {@link normalizeOffset} this does **not** apply the ±14/−12 bounds: it is a reading of a
- * spelling, not a judgement about whether the spelling names a real zone. Its callers only ever
+ * spelling, not a judgment about whether the spelling names a real zone. Its callers only ever
  * feed it an offset {@link offsetAtInstant} produced or {@link normalizeOffset} already vetted, so
  * the wider domain is unreachable today — but a caller reaching for it as a general parser wants
  * the vetted function instead.
@@ -113,8 +119,10 @@ export function offsetMinutes(offset: string): number | null {
   return sign === "-" ? -magnitude : magnitude;
 }
 
-/** Signed minutes east of UTC as `±HH:MM`. The inverse of {@link offsetMinutes}, and zero is
- *  positive. */
+/**
+ * Signed minutes east of UTC as `±HH:MM`. The inverse of {@link offsetMinutes}, and zero is
+ * positive.
+ */
 export function formatOffset(minutes: number): string {
   const sign = minutes < 0 ? "-" : "+";
   const magnitude = Math.abs(Math.trunc(minutes));
@@ -278,9 +286,11 @@ export function applyZone(plain: string, zone: string | null, offset: string | n
   return offset === null ? plain : `${plain}${gap}${offset}`;
 }
 
-/** What separates a date from the zone written after it. See {@link applyZone} for why it is only
- *  ever a date, and properties/parse.ts's `DATE_TEXT` for the grammar that already admitted it —
- *  which is what makes every value written before this still read as itself. */
+/**
+ * What separates a date from the zone written after it. See {@link applyZone} for why it is only
+ * ever a date, and properties/parse.ts's `DATE_TEXT` for the grammar that already admitted it —
+ * which is what makes every value written before this still read as itself.
+ */
 const ZONE_GAP = " ";
 
 /** `2026-07-27T10:30` → `2026-07-27T10:30:00`, leaving a value that already has seconds alone. */
@@ -369,8 +379,10 @@ function memoized<T>(cache: Map<string, T>, zone: string, compute: () => T): T {
  */
 const OFFSET_IDENTIFIER = /^[+−-]/;
 
-/** Whether the platform's ICU knows this zone **name**. Asked of `Intl` rather than of {@link
- *  availableZones} so that aliases (`Etc/GMT+5`) and `UTC` itself answer correctly. */
+/**
+ * Whether the platform's ICU knows this zone **name**. Asked of `Intl` rather than of {@link
+ * availableZones} so that aliases (`Etc/GMT+5`) and `UTC` itself answer correctly.
+ */
 export function knownZone(zone: string): boolean {
   if (OFFSET_IDENTIFIER.test(zone.trim())) {
     return false; // not a name, and not cached: an offset is a different question — see above
@@ -489,8 +501,10 @@ export function offsetForWallClock(zone: string, isoLocal: string): string | nul
 // THE CHOICES A WIDGET OFFERS
 // ================================================================================================
 
-/** One entry of a zone picker. A named zone resolves its offset per value (so DST is right for
- *  the date in hand); a fixed offset is itself, whatever the date. */
+/**
+ * One entry of a zone picker. A named zone resolves its offset per value (so DST is right for
+ * the date in hand); a fixed offset is itself, whatever the date.
+ */
 export interface ZoneChoice {
   /** Stable identity — an IANA name, an offset, or `local`. What the `<option>` carries. */
   id: string;
@@ -498,8 +512,10 @@ export interface ZoneChoice {
   /** What the reader sees. */
   label: string;
 
-  /** The IANA name this writes into the value, or `null` for a fixed offset. This is what decides
-   *  whether the value floats. */
+  /**
+   * The IANA name this writes into the value, or `null` for a fixed offset. This is what decides
+   * whether the value floats.
+   */
   zone: string | null;
 
   /** The offset to write for a value at this wall clock, or `null` if it cannot be resolved. */
@@ -557,8 +573,10 @@ export function offsetChoice(offset: string, label = offset): ZoneChoice {
   return { id: offset, label, zone: null, offsetAt: () => offset };
 }
 
-/** A choice for a named zone, resolving DST per value and writing the name so the value floats.
- *  `null` when the platform cannot read it. */
+/**
+ * A choice for a named zone, resolving DST per value and writing the name so the value floats.
+ * `null` when the platform cannot read it.
+ */
 export function zoneForName(zone: string, label = zone): ZoneChoice | null {
   if (!knownZone(zone)) {
     return null;

@@ -71,8 +71,10 @@ export function appendDefinitionLink(
   });
 }
 
-/** How a definition's location reads on the link: the source note for a binding from another file,
- *  else where in this note it is (`frontmatter, line 5`). */
+/**
+ * How a definition's location reads on the link: the source note for a binding from another file,
+ * else where in this note it is (`frontmatter, line 5`).
+ */
 function definitionWhere(match: DefinitionMatch, fromPath: string | null): string {
   const { notePath, line } = match.defsite;
 

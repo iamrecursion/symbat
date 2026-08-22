@@ -27,21 +27,27 @@ import {
 } from "../scope/model";
 import { frontmatterRecord, preludeFiles } from "../scope/source";
 
-/** One note's structural scope tree, cached against the text it was built from — hovering
- *  repeatedly in an unchanged note parses it once. One entry is enough: hovers happen where the
- *  cursor is, which is one note at a time. */
+/**
+ * One note's structural scope tree, cached against the text it was built from — hovering
+ * repeatedly in an unchanged note parses it once. One entry is enough: hovers happen where the
+ * cursor is, which is one note at a time.
+ */
 let cached: { path: string; text: string; tree: ScopeTree; } | null = null;
 
-/** The user prelude's files, read in the background so the lookup can stay synchronous. Empty until
- *  the first read completes — a prelude binding then simply has no jump for a moment, which is the
- *  right trade for a card that appears. */
+/**
+ * The user prelude's files, read in the background so the lookup can stay synchronous. Empty until
+ * the first read completes — a prelude binding then simply has no jump for a moment, which is the
+ * right trade for a card that appears.
+ */
 let prelude: PreludeFileLines[] = [];
 // Guards against stacking reads: the lookup is called per hover, and each miss would otherwise
 // start another pass over the same files.
 let preludeLoading = false;
 
-/** Drop the cached tree and prelude (plugin unload, a prelude change, or a settings change that
- *  alters what the note's scope contains). */
+/**
+ * Drop the cached tree and prelude (plugin unload, a prelude change, or a settings change that
+ * alters what the note's scope contains).
+ */
 export function invalidateDefinitions(): void {
   cached = null;
   prelude = [];
@@ -96,9 +102,11 @@ export function definitionAt(
   return findDefinition(cached.tree, probe, name, line);
 }
 
-/** The note's structural scope tree, from the text alone. Mirrors `gatherScope`
- *  (scope/source.ts) minus the interpreter and the value probing, both of which a definition
- *  lookup has no use for. */
+/**
+ * The note's structural scope tree, from the text alone. Mirrors `gatherScope`
+ * (scope/source.ts) minus the interpreter and the value probing, both of which a definition
+ * lookup has no use for.
+ */
 function buildTree(plugin: SymbatPlugin, path: string, text: string): ScopeTree {
   const lines = text.split("\n");
   const body = frontmatterBody(lines);

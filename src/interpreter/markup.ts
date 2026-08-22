@@ -21,9 +21,11 @@ export function escapeHtmlStrict(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** A trailing run of Unicode superscript digits (and the superscript minus) — Numbat prints a
- *  dimension's exponent this way (`Length³`, `Time⁻¹`), inside the same span as the dimension name,
- *  so it is stripped before recognizing the name. */
+/**
+ * A trailing run of Unicode superscript digits (and the superscript minus) — Numbat prints a
+ * dimension's exponent this way (`Length³`, `Time⁻¹`), inside the same span as the dimension name,
+ * so it is stripped before recognizing the name.
+ */
 const SUPERSCRIPT_TAIL = /[⁰¹²³⁴-⁹⁻]+$/;
 
 /**

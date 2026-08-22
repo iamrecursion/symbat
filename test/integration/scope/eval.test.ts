@@ -34,8 +34,10 @@ function makeContextFactory(mod: any) {
 
 const config = DEFAULT_INLINE_CONFIG;
 const plain = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ");
-/** `plain`, with the entities Numbat escapes into decoded — a signature's `->` arrives as
- *  `-&gt;`. */
+/**
+ * `plain`, with the entities Numbat escapes into decoded — a signature's `->` arrives as
+ * `-&gt;`.
+ */
 const text = (html: string) => plain(html).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
 function byName(entries: ScopeEntry[]): Map<string, ScopeEntry> {

@@ -14,9 +14,11 @@ import type { LineInterpret } from "../evaluation/inlay-parse";
 import { type BindingOutcome, evaluateBindings } from "./outcomes";
 import type { NotePreamble } from "./parse";
 
-/** One frontmatter property's evaluated inlay — its `= value` (or a typed-hole / error
- *  placeholder), keyed by property name so the editor can anchor it on the property's line.
- *  `content` is formatter HTML for a result, plain text otherwise. */
+/**
+ * One frontmatter property's evaluated inlay — its `= value` (or a typed-hole / error
+ * placeholder), keyed by property name so the editor can anchor it on the property's line.
+ * `content` is formatter HTML for a result, plain text otherwise.
+ */
 export interface FmHint {
   /** The property name the hint belongs to — how the editor finds its line. */
   key: string;
@@ -30,8 +32,10 @@ export interface FmHint {
    */
   kind: "result" | "hole" | "error" | "warning";
 
-  /** Formatter HTML for a `result`, plain text for a `hole` type, an `error` summary or a
-   *  `warning`. */
+  /**
+   * Formatter HTML for a `result`, plain text for a `hole` type, an `error` summary or a
+   * `warning`.
+   */
   content: string;
 }
 
@@ -99,8 +103,10 @@ export function hintFromOutcome(outcome: BindingOutcome): FmHint | null {
   return null;
 }
 
-/** Whether an evaluated value merely restates its source expression (`80.5` → `80.5`), so showing
- *  it would be noise. Whitespace-insensitive. */
+/**
+ * Whether an evaluated value merely restates its source expression (`80.5` → `80.5`), so showing
+ * it would be noise. Whitespace-insensitive.
+ */
 export function valueRepeatsExpr(plain: string | null, expr: string): boolean {
   return plain !== null && plain.replace(/\s+/g, "") === expr.replace(/\s+/g, "");
 }

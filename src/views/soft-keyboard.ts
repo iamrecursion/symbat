@@ -16,14 +16,18 @@ export interface SoftKeyboardTrackerOptions {
   /** The element whose bottom edge the obstruction is measured against — the view's `contentEl`. */
   target: HTMLElement;
 
-  /** Also dodge Obsidian's desktop status bar, which floats over the bottom-right of the workspace
-   *  and so covers a view docked in the sidebar's bottom split. Off by default: a view that only
-   *  ever fills the main area has nothing to dodge there. */
+  /**
+   * Also dodge Obsidian's desktop status bar, which floats over the bottom-right of the workspace
+   * and so covers a view docked in the sidebar's bottom split. Off by default: a view that only
+   * ever fills the main area has nothing to dodge there.
+   */
   statusBar?: boolean;
 
-  /** Called when {@link SoftKeyboardTracker.inset} or {@link SoftKeyboardTracker.isUp} moved —
-   *  never for a re-measurement that landed on the same values. Both read back off the tracker, and
-   *  both are already the new ones by the time this runs. */
+  /**
+   * Called when {@link SoftKeyboardTracker.inset} or {@link SoftKeyboardTracker.isUp} moved —
+   * never for a re-measurement that landed on the same values. Both read back off the tracker, and
+   * both are already the new ones by the time this runs.
+   */
   changed(): void;
 }
 
@@ -49,21 +53,29 @@ export class SoftKeyboardTracker {
   /** What is being measured, and who to notify. */
   private readonly options: SoftKeyboardTrackerOptions;
 
-  /** Height (CSS px) of the on-screen keyboard from Capacitor's keyboard events; `0` while it is
-   *  closed, and always `0` on desktop (the events never fire there). */
+  /**
+   * Height (CSS px) of the on-screen keyboard from Capacitor's keyboard events; `0` while it is
+   * closed, and always `0` on desktop (the events never fire there).
+   */
   private keyboardHeight = 0;
 
-  /** The overlap as of the last measurement — what {@link inset} answers with, and what `changed`
-   *  fires on a move away from. Seeded in the constructor so the caller's opening read is a real
-   *  measurement rather than a zero it would have to correct. */
+  /**
+   * The overlap as of the last measurement — what {@link inset} answers with, and what `changed`
+   * fires on a move away from. Seeded in the constructor so the caller's opening read is a real
+   * measurement rather than a zero it would have to correct.
+   */
   private lastInset: number;
 
-  /** The last `isUp()` reported, so `changed` fires only on a real move: the keyboard's height can
-   *  change (a predictive-text row appearing) without the inset moving, and vice versa. */
+  /**
+   * The last `isUp()` reported, so `changed` fires only on a real move: the keyboard's height can
+   * change (a predictive-text row appearing) without the inset moving, and vice versa.
+   */
   private lastUp = false;
 
-  /** @param owner the component whose lifetime the listeners share.
-   *  @param options what to measure, and who to tell. */
+  /**
+   * @param owner the component whose lifetime the listeners share.
+   * @param options what to measure, and who to tell.
+   */
   constructor(owner: Component, options: SoftKeyboardTrackerOptions) {
     this.options = options;
     this.lastInset = this.measure();
@@ -120,8 +132,10 @@ export class SoftKeyboardTracker {
     return this.lastInset;
   }
 
-  /** Measure the overlap now. Private because a caller wanting a fresh number wants the change
-   *  detection around it — see {@link remeasure}. */
+  /**
+   * Measure the overlap now. Private because a caller wanting a fresh number wants the change
+   * detection around it — see {@link remeasure}.
+   */
   private measure(): number {
     const rect = this.options.target.getBoundingClientRect();
     let inset = 0;

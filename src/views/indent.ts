@@ -22,18 +22,23 @@ import { getIndentUnit, indentString, indentUnit } from "@codemirror/language";
 import { type ChangeSpec, countColumn, EditorSelection, type Extension, type StateCommand } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
 
-/** The narrowest indent the editor accepts. A hard floor, not a preference: `indentUnit`'s facet
- *  combiner *throws* on an empty string, and it does so inside `EditorState.create` — so a width of
- *  zero would take the whole `.nbt` view down on open rather than degrade to something usable. */
+/**
+ * The narrowest indent the editor accepts. A hard floor, not a preference: `indentUnit`'s facet
+ * combiner *throws* on an empty string, and it does so inside `EditorState.create` — so a width of
+ * zero would take the whole `.nbt` view down on open rather than degrade to something usable.
+ */
 export const MIN_INDENT_WIDTH = 1;
 
-/** The widest indent the editor accepts. The width becomes `" ".repeat(width)` on every indented
- *  line, so an unbounded one is a way to make the editor unusable (or hang) from a settings field.
+/**
+ * The widest indent the editor accepts. The width becomes `" ".repeat(width)` on every indented
+ * line, so an unbounded one is a way to make the editor unusable (or hang) from a settings field.
  */
 export const MAX_INDENT_WIDTH = 8;
 
-/** The indent width a `.nbt` editor uses when the setting has not been read (and the setting's own
- *  default). Two spaces: Numbat's own examples and prelude are written that way. */
+/**
+ * The indent width a `.nbt` editor uses when the setting has not been read (and the setting's own
+ * default). Two spaces: Numbat's own examples and prelude are written that way.
+ */
 export const DEFAULT_INDENT_WIDTH = 2;
 
 /**

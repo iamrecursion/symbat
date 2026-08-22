@@ -16,9 +16,11 @@ export type VimMode =
   | "visual-line"
   | "visual-block";
 
-/** The payload `@replit/codemirror-vim` signals with `vim-mode-change`. Both fields are optional
- *  here because the library omits `subMode` outside visual mode, and this is an undocumented shape
- *  crossing a package boundary. */
+/**
+ * The payload `@replit/codemirror-vim` signals with `vim-mode-change`. Both fields are optional
+ * here because the library omits `subMode` outside visual mode, and this is an undocumented shape
+ * crossing a package boundary.
+ */
 export interface VimModeEvent {
   /** `"normal"`, `"insert"`, `"replace"` or `"visual"`. */
   mode?: string;
@@ -35,8 +37,10 @@ export interface VimModeFlags {
   visualBlock?: boolean;
 }
 
-/** The mode a `vim-mode-change` event announces. An unrecognized mode reads as normal — that is
- *  where a Vim session sits by default, and it is the mode in which no button lights up. */
+/**
+ * The mode a `vim-mode-change` event announces. An unrecognized mode reads as normal — that is
+ * where a Vim session sits by default, and it is the mode in which no button lights up.
+ */
 export function vimModeFrom(event: VimModeEvent): VimMode {
   switch (event.mode) {
     case "insert":

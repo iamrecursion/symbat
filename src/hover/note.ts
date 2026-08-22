@@ -27,13 +27,17 @@ import { definitionAt } from "./definition";
 import { dismissHover, type HoverMiss, type HoverOutcome, type HoverSource, numbatHover } from "./hover";
 import { type HoverSymbol, hoverSymbolAt } from "./parse";
 
-/** Where in a note a position sits, when it is Numbat source at all. A property's value carries the
- *  column its expression starts at — the key half is YAML. A fence is kept apart from the other
- *  two: it is the only one whose body holds statements rather than a single expression. */
+/**
+ * Where in a note a position sits, when it is Numbat source at all. A property's value carries the
+ * column its expression starts at — the key half is YAML. A fence is kept apart from the other
+ * two: it is the only one whose body holds statements rather than a single expression.
+ */
 type NumbatRegion = { kind: "fence"; } | { kind: "inline"; } | { kind: "property"; valueCh: number; };
 
-/** The active editor and note path behind a CodeMirror view, or `null` when the view is not a note
- *  (the REPL input, a property field — those hover through their own host). */
+/**
+ * The active editor and note path behind a CodeMirror view, or `null` when the view is not a note
+ * (the REPL input, a property field — those hover through their own host).
+ */
 function editorFor(view: EditorView): { editor: Editor; path: string | null; } | null {
   const info = view.state.field(editorInfoField, false);
   const editor = info?.editor;
@@ -101,9 +105,11 @@ function completerOpen(): boolean {
   return false;
 }
 
-/** What a hover landed on: the symbol, the note holding it, and the scope it resolves against.
- *  Shared by the resolve and the prewarm, so the two cannot come to disagree about which name in
- *  which scope the reader is asking about. */
+/**
+ * What a hover landed on: the symbol, the note holding it, and the scope it resolves against.
+ * Shared by the resolve and the prewarm, so the two cannot come to disagree about which name in
+ * which scope the reader is asking about.
+ */
 interface HoverSite {
   /** The note's editor, for the definition search. */
   editor: Editor;
@@ -127,8 +133,10 @@ interface HoverSite {
   key: string;
 }
 
-/** The site at `pos`, or why there is nothing there. Every `miss` is user-facing: the command and
- *  the Vim key report it. */
+/**
+ * The site at `pos`, or why there is nothing there. Every `miss` is user-facing: the command and
+ * the Vim key report it.
+ */
 function hoverSiteAt(plugin: SymbatPlugin, view: EditorView, pos: number): HoverSite | HoverMiss {
   const target = editorFor(view);
   if (target === null) {
@@ -179,8 +187,10 @@ function hoverSiteAt(plugin: SymbatPlugin, view: EditorView, pos: number): Hover
   };
 }
 
-/** Start the lookup this site needs, and settle when its answer is in the cache. Batched at one
- *  name because that is all a hover asks about; the completer rows are what will send forty. */
+/**
+ * Start the lookup this site needs, and settle when its answer is in the cache. Batched at one
+ * name because that is all a hover asks about; the completer rows are what will send forty.
+ */
 function fillFacts(plugin: SymbatPlugin, site: HoverSite): Promise<void> {
   return ensureFacts(
     site.key,
@@ -190,8 +200,10 @@ function fillFacts(plugin: SymbatPlugin, site: HoverSite): Promise<void> {
   );
 }
 
-/** Resolve the symbol at `pos`: the card, why there is none, or the lookup that would produce
- *  one. */
+/**
+ * Resolve the symbol at `pos`: the card, why there is none, or the lookup that would produce
+ * one.
+ */
 function resolveInNote(
   plugin: SymbatPlugin,
   view: EditorView,
@@ -313,8 +325,10 @@ function numbatRegionAt(
   return site === null ? null : { kind: "property", valueCh: site.valueCh };
 }
 
-/** Register the hover for note editors. Called from `refreshHover`, through the mutable extension
- *  array, so the settings apply live. */
+/**
+ * Register the hover for note editors. Called from `refreshHover`, through the mutable extension
+ * array, so the settings apply live.
+ */
 export function noteHoverExtension(plugin: SymbatPlugin) {
   return numbatHover(plugin, noteHoverSource(plugin));
 }

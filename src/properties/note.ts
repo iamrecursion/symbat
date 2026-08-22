@@ -39,32 +39,42 @@ export { bindingKey, EMPTY_PREAMBLE, frontmatterBody, type NotePreamble, scopeCh
 // THE NUMBAT PROPERTY TYPE
 // ================================================================================================
 
-/** The id the numbat property type registers under — namespaced (like Better Properties'
- *  `better-properties:*` types) so it can never collide with a core type. Persisted by Obsidian in
- *  `types.json` per assigned property name. */
+/**
+ * The id the numbat property type registers under — namespaced (like Better Properties'
+ * `better-properties:*` types) so it can never collide with a core type. Persisted by Obsidian in
+ * `types.json` per assigned property name.
+ */
 export const NUMBAT_PROPERTY_TYPE = "numbat:expression";
 
-/** The slice of Obsidian's undocumented `metadataTypeManager` this plugin touches. Every access is
- *  optional — a future Obsidian that renames any of it degrades to "no numbat-typed properties",
- *  never a crash. */
+/**
+ * The slice of Obsidian's undocumented `metadataTypeManager` this plugin touches. Every access is
+ * optional — a future Obsidian that renames any of it degrades to "no numbat-typed properties",
+ * never a crash.
+ */
 export interface PropertyTypeManager {
   /** The widget registry, keyed by type name — where the Numbat type is installed. */
   registeredTypeWidgets?: Record<string, unknown>;
 
-  /** The type assigned to a property name, or `null` when it has none. This is the only way to tell
-   *  a Numbat-typed property from an ordinary one. */
+  /**
+   * The type assigned to a property name, or `null` when it has none. This is the only way to tell
+   * a Numbat-typed property from an ordinary one.
+   */
   getAssignedWidget?: (key: string) => string | null;
 
   /** Fire a manager event; used to announce a newly registered widget. */
   trigger?: (name: string) => void;
 
-  /** Subscribe to type-assignment changes, so the plugin can re-evaluate when a property is
-   *  retyped. */
+  /**
+   * Subscribe to type-assignment changes, so the plugin can re-evaluate when a property is
+   * retyped.
+   */
   on?: (name: "changed", callback: () => void) => EventRef;
 }
 
-/** The slice of the (undocumented) render context Obsidian passes a property widget. Every field is
- *  optional and accessed defensively. */
+/**
+ * The slice of the (undocumented) render context Obsidian passes a property widget. Every field is
+ * optional and accessed defensively.
+ */
 export interface PropertyWidgetContext {
   /** The frontmatter key this widget is editing. */
   key?: string;
@@ -98,8 +108,10 @@ export interface PropertyWidget {
   /** Whether a value is assignable to this type. */
   validate?: (value: unknown) => boolean;
 
-  /** Draw the editor into `el`. Documented as returning `{ focus }`, but treated as returning
-   *  whatever it returns — see properties/date-type.ts. */
+  /**
+   * Draw the editor into `el`. Documented as returning `{ focus }`, but treated as returning
+   * whatever it returns — see properties/date-type.ts.
+   */
   render?: (el: HTMLElement, value: unknown, ctx: PropertyWidgetContext) => unknown;
 }
 
@@ -119,8 +131,10 @@ export function isNumbatTypedKey(app: App, key: string): boolean {
   return assignedPropertyType(app, key) === NUMBAT_PROPERTY_TYPE;
 }
 
-/** Which untyped values ride along, per the settings — one sub-toggle each, since they differ in
- *  how much of a note's frontmatter they put into its namespace. */
+/**
+ * Which untyped values ride along, per the settings — one sub-toggle each, since they differ in
+ * how much of a note's frontmatter they put into its namespace.
+ */
 function plainBindings(plugin: SymbatPlugin): PlainBindings {
   return {
     numbers: plugin.settings.notePropertyNumbers,
@@ -248,14 +262,18 @@ export function whenReservedNamesPrimed(fn: () => void): void {
   onPrimed = fn;
 }
 
-/** The current set as a persistable record, or `null` when there is nothing worth persisting: only
- *  a set an interpreter actually produced is written back. */
+/**
+ * The current set as a persistable record, or `null` when there is nothing worth persisting: only
+ * a set an interpreter actually produced is written back.
+ */
 export function reservedNamesRecord(key: string): ReservedNamesRecord | null {
   return reservedNamesPrimed && reservedNames !== null ? { key, names: [...reservedNames] } : null;
 }
 
-/** Drop the cached reserved names (the prelude or exchange-rate settings changed — the set bakes
- *  both in). Rebuilt on the next evaluation. */
+/**
+ * Drop the cached reserved names (the prelude or exchange-rate settings changed — the set bakes
+ * both in). Rebuilt on the next evaluation.
+ */
 export function invalidateReservedNames(): void {
   reservedNames = null;
   reservedNamesPrimed = false;
@@ -267,8 +285,10 @@ function isReservedName(name: string): boolean {
   return reservedNames?.has(name) ?? false;
 }
 
-/** Keys Obsidian's frontmatter cache mixes into the record that are not properties (the parse
- *  position). */
+/**
+ * Keys Obsidian's frontmatter cache mixes into the record that are not properties (the parse
+ * position).
+ */
 const NON_PROPERTY_KEYS = new Set(["position"]);
 
 /**
@@ -326,9 +346,11 @@ const SCOPE_SEPARATOR = String.fromCharCode(0);
 // a re-resolve of an already-emitted note stays a no-throw even if the graph is gone.
 function buildImportResolver(plugin: SymbatPlugin): {
   resolver: ImportResolver;
-  /** Each visited note's contribution, kept as it is built so {@link importGroups} needs no second
-   *  pass — `collectImports` calls `node` exactly once per note it emits, and deriving a preamble
-   *  is the expensive half of that. Populated as `node` is called. */
+  /**
+   * Each visited note's contribution, kept as it is built so {@link importGroups} needs no second
+   * pass — `collectImports` calls `node` exactly once per note it emits, and deriving a preamble
+   * is the expensive half of that. Populated as `node` is called.
+   */
   contributions: Map<string, ImportGroup>;
 } {
   const { app } = plugin;
@@ -387,10 +409,12 @@ function importChunksFor(plugin: SymbatPlugin, sourcePath: string, record: Recor
   ).chunks;
 }
 
-/** The note's cross-note imports grouped by source note, in the same dependency order {@link
- *  importChunksFor} flattens — each note's contributed chunks (typed properties and `numbat-shared`
- *  blocks) kept under its own path. For the note scope inspector, which lists imported bindings
- *  under the note they came from. Empty when imports are off, none are named, or none resolve. */
+/**
+ * The note's cross-note imports grouped by source note, in the same dependency order {@link
+ * importChunksFor} flattens — each note's contributed chunks (typed properties and `numbat-shared`
+ * blocks) kept under its own path. For the note scope inspector, which lists imported bindings
+ * under the note they came from. Empty when imports are off, none are named, or none resolve.
+ */
 export function importGroups(
   plugin: SymbatPlugin,
   sourcePath: string,
@@ -471,9 +495,11 @@ function deriveExports(
   };
 }
 
-/** Attach the note's cross-note imports to its preamble (folding the import chunks into {@link
- *  NotePreamble.source} so every evaluation cache key invalidates when an import changes). A no-op
- *  without a `sourcePath` (some surfaces have none) or when nothing is imported. */
+/**
+ * Attach the note's cross-note imports to its preamble (folding the import chunks into {@link
+ * NotePreamble.source} so every evaluation cache key invalidates when an import changes). A no-op
+ * without a `sourcePath` (some surfaces have none) or when nothing is imported.
+ */
 function attachImports(
   plugin: SymbatPlugin,
   preamble: NotePreamble,
@@ -555,9 +581,11 @@ function deriveNotePreamble(
   return attachImports(plugin, preambleFromRecord(plugin, record, sourcePath), sourcePath, record);
 }
 
-/** {@link notePreamble} from a whole document's text (reading view, code-block post-processors —
- *  wherever `getSectionInfo` provides it). `sourcePath`, when known, roots the note's cross-note
- *  imports. */
+/**
+ * {@link notePreamble} from a whole document's text (reading view, code-block post-processors —
+ * wherever `getSectionInfo` provides it). `sourcePath`, when known, roots the note's cross-note
+ * imports.
+ */
 export function preambleForDoc(plugin: SymbatPlugin, docText: string, sourcePath: string | null = null): NotePreamble {
   return notePreamble(plugin, frontmatterBody(docText.split("\n")), sourcePath);
 }

@@ -56,29 +56,39 @@ import { evaluateScope, gatherDocumentScope, gatherScope } from "../scope/source
 import { COMPLETION_DWELL_MS, SCOPE_VALUE_CACHE_ENTRIES } from "../tuning";
 import { KEYBOARD_EVENTS, keyboardHeightOf } from "./mobile-keyboard";
 
-/** Persisted in the vault's `workspace.json` — see the note on `VIEW_TYPE_NUMBAT_FILE` in
- *  views/nbt.ts. Renaming it orphans open inspector panes. */
+/**
+ * Persisted in the vault's `workspace.json` — see the note on `VIEW_TYPE_NUMBAT_FILE` in
+ * views/nbt.ts. Renaming it orphans open inspector panes.
+ */
 export const VIEW_TYPE_NUMBAT_SCOPE = "numbat-scope";
 
 /** Debounce for rebuilding after an edit / note switch (ms). */
 const REFRESH_DELAY = 150;
 
-/** Debounce between a keystroke in the search box and re-ranking (ms). Ranking itself is cheap;
- *  this batches the tree repaint a selection change triggers. */
+/**
+ * Debounce between a keystroke in the search box and re-ranking (ms). Ranking itself is cheap;
+ * this batches the tree repaint a selection change triggers.
+ */
 const QUERY_DELAY = 50;
 
-/** How many result rows to draw. Ranking covers every match — this only bounds the DOM (and the
- *  `type()` lookups the bundled-prelude rows need); the remainder is reported rather than dropped
- *  silently. */
+/**
+ * How many result rows to draw. Ranking covers every match — this only bounds the DOM (and the
+ * `type()` lookups the bundled-prelude rows need); the remainder is reported rather than dropped
+ * silently.
+ */
 const MAX_RESULT_ROWS = 25;
 
-/** The gap left between the search bar and the soft keyboard (px), matching the REPL's input row
- *  (see {@link NumbatScopeView.trackSoftKeyboard}). */
+/**
+ * The gap left between the search bar and the soft keyboard (px), matching the REPL's input row
+ * (see {@link NumbatScopeView.trackSoftKeyboard}).
+ */
 const KEYBOARD_GAP_PX = 8;
 
-/** The `: ` a scope type fragment opens with (see scope-eval's `COLON_SPAN`). The shared
- *  `.numbat-signature` styling supplies its own, so it is stripped before a type is reused as a
- *  completer-style signature. */
+/**
+ * The `: ` a scope type fragment opens with (see scope-eval's `COLON_SPAN`). The shared
+ * `.numbat-signature` styling supplies its own, so it is stripped before a type is reused as a
+ * completer-style signature.
+ */
 const LEADING_COLON = /^\s*<span class="numbat-operator">:<\/span>\s*/;
 
 /**
@@ -92,8 +102,10 @@ const LEADING_COLON = /^\s*<span class="numbat-operator">:<\/span>\s*/;
 export class NumbatScopeView extends ItemView {
   /** Read for settings, the prelude, and the vault; also the source of the tree. */
   private readonly plugin: SymbatPlugin;
-  /** The container the tree rows are rendered into. Definitely assigned in {@link onOpen}, which
-   *  Obsidian calls before anything can reach the view. */
+  /**
+   * The container the tree rows are rendered into. Definitely assigned in {@link onOpen}, which
+   * Obsidian calls before anything can reach the view.
+   */
   private treeEl!: HTMLElement;
 
   /** The note currently displayed, or null when none is. */
@@ -105,33 +117,43 @@ export class NumbatScopeView extends ItemView {
   /** The caret's 0-indexed line in the current note, or null (not in its editor). */
   private caretLine: number | null = null;
 
-  /** The id of the node the caret is in — always highlighted, and force-expanded and scrolled to
-   *  while revealing is on. */
+  /**
+   * The id of the node the caret is in — always highlighted, and force-expanded and scrolled to
+   * while revealing is on.
+   */
   private currentId: string | null = null;
 
-  /** The current node's ancestors, itself included — a nested node is only visible if every node
-   *  containing it is expanded too. */
+  /**
+   * The current node's ancestors, itself included — a nested node is only visible if every node
+   * containing it is expanded too.
+   */
   private currentTrail: Set<string> | null = null;
 
   /** Whether the interpreter was ready last refresh (else values are absent). */
   private wasmReady = true;
 
-  /** Per-node expansion overrides (a header click); while revealing, the caret still force-expands
-   *  its node. Keyed by the stable node id so it survives a refresh. */
+  /**
+   * Per-node expansion overrides (a header click); while revealing, the caret still force-expands
+   * its node. Keyed by the stable node id so it survives a refresh.
+   */
   private readonly expanded = new Map<string, boolean>();
 
   /** Cached values by tree signature (values only — structure is always rebuilt). */
   private readonly valueCache = new EvaluationCache<(ScopeValue | undefined)[]>(SCOPE_VALUE_CACHE_ENTRIES);
 
-  /** Whether the caret's node is revealed — force-expanded and scrolled to (the "reveal active
-   *  line" toggle). The highlight follows the caret either way. */
+  /**
+   * Whether the caret's node is revealed — force-expanded and scrolled to (the "reveal active
+   * line" toggle). The highlight follows the caret either way.
+   */
   private trackCursor = true;
 
   /** The reveal toggle button, so its active state can be re-styled. */
   private trackButtonEl: HTMLElement | null = null;
 
-  /** Who the next render should scroll to. Two things want to scroll the tree — the caret and the
-   *  search selection — so the owner is explicit rather than a flag. */
+  /**
+   * Who the next render should scroll to. Two things want to scroll the tree — the caret and the
+   * search selection — so the owner is explicit rather than a flag.
+   */
   private pendingReveal: "caret" | "search" | null = null;
 
   /** The pending debounced refresh, or `null` when none is scheduled. */
@@ -152,8 +174,10 @@ export class NumbatScopeView extends ItemView {
   /** The query field itself, for focus and key handling the component does not expose. */
   private inputEl!: HTMLInputElement;
 
-  /** The selected result's row key, and the node ids that must be force-expanded to reveal it. Held
-   *  *outside* `expanded` so clearing the query restores the tree exactly as the user had it. */
+  /**
+   * The selected result's row key, and the node ids that must be force-expanded to reveal it. Held
+   * *outside* `expanded` so clearing the query restores the tree exactly as the user had it.
+   */
   private searchKey: string | null = null;
 
   /** The node ids to force-expand so {@link searchKey}'s row is visible. */
@@ -162,8 +186,10 @@ export class NumbatScopeView extends ItemView {
   /** The current query's matches, best first. */
   private hits: SearchHit[] = [];
 
-  /** What the interpreter has said about the names in the prelude context — read synchronously by
-   *  the result rows and the dwell card, filled by {@link fillResultFacts} and {@link armDwell}. */
+  /**
+   * What the interpreter has said about the names in the prelude context — read synchronously by
+   * the result rows and the dwell card, filled by {@link fillResultFacts} and {@link armDwell}.
+   */
   private readonly facts = scopeFactsHost(
     () => this.preludeSpec(),
     () => this.plugin.settings.completionIdleSeconds * 1000,
@@ -172,8 +198,10 @@ export class NumbatScopeView extends ItemView {
   /** Index into {@link hits} of the highlighted result. */
   private selected = 0;
 
-  /** Candidates, and the tree/vocabulary they were built from — rebuilt only when one of those
-   *  changes, not per keystroke. */
+  /**
+   * Candidates, and the tree/vocabulary they were built from — rebuilt only when one of those
+   * changes, not per keystroke.
+   */
   private candidates: SearchCandidate[] | null = null;
 
   /** The tree {@link candidates} was built from; a different one rebuilds them. */
@@ -185,15 +213,19 @@ export class NumbatScopeView extends ItemView {
   /** Whether a bundled-prelude vocabulary load is in flight. */
   private loadingVocab = false;
 
-  /** The prelude's categorized vocabulary, once fetched, and the interpreter generation it
-   *  describes. Held here rather than read back from the interpreter on every keystroke, which is
-   *  what a synchronous façade used to allow: a snapshot is a request now, so the answer has to be
-   *  kept. The stamp is what a prelude edit invalidates it with. */
+  /**
+   * The prelude's categorized vocabulary, once fetched, and the interpreter generation it
+   * describes. Held here rather than read back from the interpreter on every keystroke, which is
+   * what a synchronous façade used to allow: a snapshot is a request now, so the answer has to be
+   * kept. The stamp is what a prelude edit invalidates it with.
+   */
   private vocab: CompletionVocabulary | null = null;
   private vocabGeneration = -1;
 
-  /** The rendered tree rows by stable key, for revealing a search hit. Rebuilt each render; keys
-   *  (not entry objects) because a refresh replaces every entry. */
+  /**
+   * The rendered tree rows by stable key, for revealing a search hit. Rebuilt each render; keys
+   * (not entry objects) because a refresh replaces every entry.
+   */
   private readonly rows = new Map<string, { el: HTMLElement; entry: ScopeEntry | null; }>();
 
   /** The shared floating documentation popup, shown on dwell. */
@@ -208,8 +240,10 @@ export class NumbatScopeView extends ItemView {
   /** The pending debounced re-query, so typing a word scores the candidates once. */
   private queryTimer: number | null = null;
 
-  /** Height (CSS px) of the soft keyboard from Obsidian's mobile keyboard events; `0` while it is
-   *  closed (see {@link trackSoftKeyboard}). */
+  /**
+   * Height (CSS px) of the soft keyboard from Obsidian's mobile keyboard events; `0` while it is
+   * closed (see {@link trackSoftKeyboard}).
+   */
   private keyboardHeight = 0;
 
   // LIFECYCLE
@@ -284,8 +318,10 @@ export class NumbatScopeView extends ItemView {
     this.requestRefresh();
   }
 
-  /** Release everything the view holds: its three timers, the documentation popup, and the rendered
-   *  rows. */
+  /**
+   * Release everything the view holds: its three timers, the documentation popup, and the rendered
+   * rows.
+   */
   async onClose(): Promise<void> {
     for (const timer of [this.refreshTimer, this.queryTimer, this.dwellTimer]) {
       if (timer !== null) {
@@ -304,8 +340,10 @@ export class NumbatScopeView extends ItemView {
   // BUILDING THE PANEL
   // ==============================================================================================
 
-  /** The row of controls pinned above the tree: expand all, collapse all, and the
-   *  reveal-active-line toggle. */
+  /**
+   * The row of controls pinned above the tree: expand all, collapse all, and the
+   * reveal-active-line toggle.
+   */
   private buildControls(root: HTMLElement): void {
     const controls = root.createDiv({ cls: "numbat-scope-controls" });
     const button = (icon: string, label: string, onClick: () => void): HTMLElement => {
@@ -321,9 +359,11 @@ export class NumbatScopeView extends ItemView {
     this.trackButtonEl.toggleClass("is-active", this.trackCursor);
   }
 
-  /** The results list and the query input, pinned below the tree. Results grow upward from the
-   *  input, compressing the tree rather than covering it, so a selection can be watched revealing
-   *  itself above. */
+  /**
+   * The results list and the query input, pinned below the tree. Results grow upward from the
+   * input, compressing the tree rather than covering it, so a selection can be watched revealing
+   * itself above.
+   */
   private buildSearch(root: HTMLElement): void {
     this.resultsEl = root.createDiv({ cls: "numbat-scope-results" });
     const bar = root.createDiv({ cls: "numbat-scope-searchbar" });
@@ -431,9 +471,11 @@ export class NumbatScopeView extends ItemView {
     this.registerEvent(this.app.workspace.on("resize", () => this.syncKeyboardPadding()));
   }
 
-  /** Pad the panel so the soft keyboard cannot cover its last rows. Recomputed whenever the
-   *  keyboard or the view's own rectangle moves; a no-op on desktop, where the keyboard height
-   *  stays zero. */
+  /**
+   * Pad the panel so the soft keyboard cannot cover its last rows. Recomputed whenever the
+   * keyboard or the view's own rectangle moves; a no-op on desktop, where the keyboard height
+   * stays zero.
+   */
   private syncKeyboardPadding(): void {
     const el = this.contentEl;
     if (this.keyboardHeight <= 0) {
@@ -480,8 +522,10 @@ export class NumbatScopeView extends ItemView {
     this.renderTree();
   }
 
-  /** Flip "reveal active line" and re-render, so the caret's node is force-expanded and scrolled to
-   *  — or stops being. */
+  /**
+   * Flip "reveal active line" and re-render, so the caret's node is force-expanded and scrolled to
+   * — or stops being.
+   */
   private toggleTrackCursor(): void {
     this.trackCursor = !this.trackCursor;
     this.trackButtonEl?.toggleClass("is-active", this.trackCursor);
@@ -500,8 +544,10 @@ export class NumbatScopeView extends ItemView {
   // REFRESHING
   // ==============================================================================================
 
-  /** Rebuild on the next tick (coalescing a burst of events). Public so the plugin can nudge the
-   *  view on an import / property-type change. */
+  /**
+   * Rebuild on the next tick (coalescing a burst of events). Public so the plugin can nudge the
+   * view on an import / property-type change.
+   */
   requestRefresh(): void {
     if (this.refreshTimer !== null) {
       window.clearTimeout(this.refreshTimer);
@@ -513,8 +559,10 @@ export class NumbatScopeView extends ItemView {
     }, REFRESH_DELAY);
   }
 
-  /** The caret moved in some editor (reported by the plugin's cursor listener). When it is the
-   *  current note's, re-pick the current node and repaint expansion — no re-evaluation. */
+  /**
+   * The caret moved in some editor (reported by the plugin's cursor listener). When it is the
+   * current note's, re-pick the current node and repaint expansion — no re-evaluation.
+   */
   onCursor(path: string, line: number): void {
     if (path !== this.currentPath || this.tree === null || line === this.caretLine) {
       return;
@@ -530,7 +578,7 @@ export class NumbatScopeView extends ItemView {
     this.pendingReveal = this.trackCursor && this.searchKey === null ? "caret" : null;
 
     // A caret move usually only moves two classes: the current node's and the active row's.
-    // Rebuilding the tree for that meant re-parsing and re-sanitising every entry's HTML on every
+    // Rebuilding the tree for that meant re-parsing and re-sanitizing every entry's HTML on every
     // line crossed — holding ArrowDown through a note with a large shared block re-rendered the
     // whole panel per line. The tree is only rebuilt when the *expansion* changes, which is when
     // the chain of containing nodes moves and reveal is on.
@@ -542,8 +590,10 @@ export class NumbatScopeView extends ItemView {
     this.resolveReveal();
   }
 
-  /** Move the "current node" and "active row" classes to wherever the caret is now, without
-   *  rebuilding any DOM. */
+  /**
+   * Move the "current node" and "active row" classes to wherever the caret is now, without
+   * rebuilding any DOM.
+   */
   private repaintCurrentMarkers(): void {
     for (const { el, entry } of this.rows.values()) {
       el.toggleClass("numbat-scope-current-row", entry !== null && isActiveLine(entry, this.caretLine));
@@ -555,17 +605,21 @@ export class NumbatScopeView extends ItemView {
     }
   }
 
-  /** The active file when it has a Numbat scope to show — a note, or a standalone `.nbt` file —
-   *  else null. */
+  /**
+   * The active file when it has a Numbat scope to show — a note, or a standalone `.nbt` file —
+   * else null.
+   */
   private activeFile(): TFile | null {
     const file = this.app.workspace.getActiveFile();
     return file !== null && (file.extension === "md" || file.extension === "nbt") ? file : null;
   }
 
-  /** The caret line in the given note, if it is open in a pane. Searches every markdown leaf (not
-   *  just the active one), so the current node still resolves when the scope panel itself holds
-   *  focus. A `.nbt` file reports its own caret through the plugin instead (see {@link onCursor}),
-   *  since it is not one. */
+  /**
+   * The caret line in the given note, if it is open in a pane. Searches every markdown leaf (not
+   * just the active one), so the current node still resolves when the scope panel itself holds
+   * focus. A `.nbt` file reports its own caret through the plugin instead (see {@link onCursor}),
+   * since it is not one.
+   */
   private caretLineFor(path: string): number | null {
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const { view } = leaf;
@@ -577,9 +631,11 @@ export class NumbatScopeView extends ItemView {
     return path === this.currentPath ? this.caretLine : null;
   }
 
-  /** Rebuild the tree for the active note and render it. Structure is always rebuilt fresh (so
-   *  definition lines are current); values come from the cache when the signature is unchanged,
-   *  else a fresh off-path evaluation. */
+  /**
+   * Rebuild the tree for the active note and render it. Structure is always rebuilt fresh (so
+   * definition lines are current); values come from the cache when the signature is unchanged,
+   * else a fresh off-path evaluation.
+   */
   private async refresh(): Promise<void> {
     const file = this.activeFile();
     const generation = ++this.generation;
@@ -652,9 +708,11 @@ export class NumbatScopeView extends ItemView {
     this.renderTree();
   }
 
-  /** Remember a tree's evaluated values against its signature. Values are stored positionally, in
-   *  `scopeEntries` order, since the entry objects themselves are replaced on every refresh;
-   *  `impure` is whether the tree's scope can produce different values next time. */
+  /**
+   * Remember a tree's evaluated values against its signature. Values are stored positionally, in
+   * `scopeEntries` order, since the entry objects themselves are replaced on every refresh;
+   * `impure` is whether the tree's scope can produce different values next time.
+   */
   private cacheValues(signature: string, values: (ScopeValue | undefined)[], impure: boolean): void {
     this.valueCache.set(signature, values, impure);
   }
@@ -662,15 +720,19 @@ export class NumbatScopeView extends ItemView {
   // RENDERING THE TREE
   // ==============================================================================================
 
-  /** Replace the tree with a single explanatory line — no note open, an empty scope, or the
-   *  interpreter unavailable. */
+  /**
+   * Replace the tree with a single explanatory line — no note open, an empty scope, or the
+   * interpreter unavailable.
+   */
   private renderEmpty(message: string): void {
     this.treeEl.empty();
     this.treeEl.createDiv({ cls: "numbat-scope-empty", text: message });
   }
 
-  /** End the search session: the selection describes a scope that is no longer on screen. The query
-   *  text stays, ready to be re-run against whatever opens next. */
+  /**
+   * End the search session: the selection describes a scope that is no longer on screen. The query
+   * text stays, ready to be re-run against whatever opens next.
+   */
   private endSearchSession(): void {
     this.hits = [];
     this.selected = 0;
@@ -713,10 +775,12 @@ export class NumbatScopeView extends ItemView {
     this.resolveReveal();
   }
 
-  /** Scroll whoever owns this render into view: the selected search result, or the active row (or,
-   *  when its node is collapsed, that node's header). Only just after the caret moved or the
-   *  selection changed, so a plain refresh never yanks the panel away from where the user scrolled
-   *  it. */
+  /**
+   * Scroll whoever owns this render into view: the selected search result, or the active row (or,
+   * when its node is collapsed, that node's header). Only just after the caret moved or the
+   * selection changed, so a plain refresh never yanks the panel away from where the user scrolled
+   * it.
+   */
   private resolveReveal(): void {
     const reveal = this.pendingReveal;
     this.pendingReveal = null;
@@ -743,9 +807,11 @@ export class NumbatScopeView extends ItemView {
     this.currentTrail = trail.length === 0 ? null : new Set(trail);
   }
 
-  /** Whether the caret is in `node` — the "current" node. Highlighting is unconditional: knowing
-   *  where you are does not depend on the reveal toggle, which only controls whether the node is
-   *  force-expanded and scrolled to. */
+  /**
+   * Whether the caret is in `node` — the "current" node. Highlighting is unconditional: knowing
+   * where you are does not depend on the reveal toggle, which only controls whether the node is
+   * force-expanded and scrolled to.
+   */
   private isCurrent(node: ScopeNode): boolean {
     return this.currentId !== null && node.id === this.currentId;
   }
@@ -799,8 +865,10 @@ export class NumbatScopeView extends ItemView {
     }
   }
 
-  /** Draw one binding's row and index it under `key`, which is what search-reveal and the
-   *  `data-numbat-key` attribute both look it up by. */
+  /**
+   * Draw one binding's row and index it under `key`, which is what search-reveal and the
+   * `data-numbat-key` attribute both look it up by.
+   */
   private renderEntry(container: HTMLElement, entry: ScopeEntry, key: string): void {
     const row = container.createDiv({ cls: "numbat-scope-row" });
     row.dataset.numbatKey = key;
@@ -840,8 +908,10 @@ export class NumbatScopeView extends ItemView {
     this.renderValue(row.createSpan({ cls: "numbat-scope-value" }), entry.value);
   }
 
-  /** A click anywhere in the tree: a header toggles its node, a row jumps to its binding. Delegated
-   *  — see the listener registration in `onOpen`. */
+  /**
+   * A click anywhere in the tree: a header toggles its node, a row jumps to its binding. Delegated
+   * — see the listener registration in `onOpen`.
+   */
   private onTreeClick(event: MouseEvent): void {
     const target = event.target as HTMLElement | null;
     const row = target?.closest<HTMLElement>("[data-numbat-key]");
@@ -884,9 +954,11 @@ export class NumbatScopeView extends ItemView {
     return this.tree === null ? null : walk(this.tree.nodes);
   }
 
-  /** Draw a binding's evaluated value into `el` — its result, a typed-hole placeholder, or an error
-   *  summary. Draws nothing when the binding has no value yet, which is the case whenever the
-   *  interpreter was unavailable. */
+  /**
+   * Draw a binding's evaluated value into `el` — its result, a typed-hole placeholder, or an error
+   * summary. Draws nothing when the binding has no value yet, which is the case whenever the
+   * interpreter was unavailable.
+   */
   private renderValue(el: HTMLElement, value: ScopeValue | undefined): void {
     if (value === undefined) {
       return; // not evaluated (wasm not ready)
@@ -904,8 +976,10 @@ export class NumbatScopeView extends ItemView {
     }
   }
 
-  /** Draw a skipped property's row — the key and why it bound nothing — and index it under `key` so
-   *  search can still reveal it. */
+  /**
+   * Draw a skipped property's row — the key and why it bound nothing — and index it under `key` so
+   * search can still reveal it.
+   */
   private renderSkip(container: HTMLElement, skip: SkipEntry, key: string): void {
     const row = container.createDiv({ cls: "numbat-scope-skip" });
 
@@ -936,8 +1010,10 @@ export class NumbatScopeView extends ItemView {
     }, QUERY_DELAY);
   }
 
-  /** Score the candidates against the query box and show the results. Called off the debounce, so a
-   *  typed word is ranked once rather than per character. */
+  /**
+   * Score the candidates against the query box and show the results. Called off the debounce, so a
+   * typed word is ranked once rather than per character.
+   */
   private runQuery(): void {
     const query = this.inputEl.value.trim();
     if (query === "") {
@@ -952,8 +1028,10 @@ export class NumbatScopeView extends ItemView {
     void this.fillResultFacts(query);
   }
 
-  /** The candidate set, rebuilt only when the tree or the vocabulary behind it changes — not per
-   *  keystroke. */
+  /**
+   * The candidate set, rebuilt only when the tree or the vocabulary behind it changes — not per
+   * keystroke.
+   */
   private ensureCandidates(): SearchCandidate[] {
     const vocab = this.preludeVocab();
     if (vocab === null) {
@@ -984,16 +1062,20 @@ export class NumbatScopeView extends ItemView {
     return { chunks: [], applyRates: this.plugin.settings.fetchExchangeRates };
   }
 
-  /** The prelude's vocabulary, or `null` when it has not been fetched under the current
-   *  interpreter. Stamped rather than merely held: a prelude edit or a rate change moves the
-   *  generation, and a vocabulary from before it describes a standard library that is gone. */
+  /**
+   * The prelude's vocabulary, or `null` when it has not been fetched under the current
+   * interpreter. Stamped rather than merely held: a prelude edit or a rate change moves the
+   * generation, and a vocabulary from before it describes a standard library that is gone.
+   */
   private preludeVocab(): CompletionVocabulary | null {
     return this.vocabGeneration === interpreterGeneration() ? this.vocab : null;
   }
 
-  /** Fetch the bundled prelude's vocabulary in the background (building the context behind it loads
-   *  the whole standard library, so it happens on first search rather than on panel open), then
-   *  re-run the query so the built-ins appear. */
+  /**
+   * Fetch the bundled prelude's vocabulary in the background (building the context behind it loads
+   * the whole standard library, so it happens on first search rather than on panel open), then
+   * re-run the query so the built-ins appear.
+   */
   private async loadVocabulary(): Promise<void> {
     if (this.loadingVocab) {
       return;
@@ -1025,8 +1107,10 @@ export class NumbatScopeView extends ItemView {
     }
   }
 
-  /** Drop the query and its selection, restoring the tree to exactly the shape the user had it in
-   *  (search expansion never touched `expanded`). */
+  /**
+   * Drop the query and its selection, restoring the tree to exactly the shape the user had it in
+   * (search expansion never touched `expanded`).
+   */
   private clearSearch(): void {
     this.hits = [];
     this.selected = 0;
@@ -1039,8 +1123,10 @@ export class NumbatScopeView extends ItemView {
     this.renderTree();
   }
 
-  /** Drive the results list from the query box: arrows (or Ctrl-N/P) move the selection, Enter
-   *  accepts it, Escape ends the search session. */
+  /**
+   * Drive the results list from the query box: arrows (or Ctrl-N/P) move the selection, Enter
+   * accepts it, Escape ends the search session.
+   */
   private onSearchKey(event: KeyboardEvent): void {
     const down = event.key === "ArrowDown" || (event.ctrlKey && event.key === "n");
     const up = event.key === "ArrowUp" || (event.ctrlKey && event.key === "p");
@@ -1063,8 +1149,10 @@ export class NumbatScopeView extends ItemView {
     }
   }
 
-  /** Move the selection, clamped at both ends — wrapping while the tree scrolls to follow would be
-   *  disorienting. */
+  /**
+   * Move the selection, clamped at both ends — wrapping while the tree scrolls to follow would be
+   * disorienting.
+   */
   private moveSelection(delta: number): void {
     const shown = Math.min(this.hits.length, MAX_RESULT_ROWS);
     if (shown === 0) {
@@ -1129,16 +1217,20 @@ export class NumbatScopeView extends ItemView {
     this.resetQuery();
   }
 
-  /** Empty the query and take the results down with it, keeping Obsidian's own field (and so its
-   *  clear button) in step. */
+  /**
+   * Empty the query and take the results down with it, keeping Obsidian's own field (and so its
+   * clear button) in step.
+   */
   private resetQuery(): void {
     this.searchEl.setValue("");
     this.searchEl.onChanged();
     this.clearSearch();
   }
 
-  /** Redraw the results list, or the note that stands in for it — nothing while the query is empty,
-   *  "No matches", or the vocabulary-still-loading message. */
+  /**
+   * Redraw the results list, or the note that stands in for it — nothing while the query is empty,
+   * "No matches", or the vocabulary-still-loading message.
+   */
   private renderResults(): void {
     this.resultsEl.empty();
     if (this.inputEl.value.trim() === "") {
@@ -1250,8 +1342,10 @@ export class NumbatScopeView extends ItemView {
     }
   }
 
-  /** The index into {@link hits} of the result row an event landed on, or `null` when it landed
-   *  somewhere that is not a row. */
+  /**
+   * The index into {@link hits} of the result row an event landed on, or `null` when it landed
+   * somewhere that is not a row.
+   */
   private resultIndexFrom(event: MouseEvent): number | null {
     const target = event.target as HTMLElement | null;
     const row = target?.closest<HTMLElement>("[data-numbat-result]");
@@ -1273,9 +1367,11 @@ export class NumbatScopeView extends ItemView {
     this.docPopup.hide();
   }
 
-  /** Open the docs for a result once it has stayed put for {@link COMPLETION_DWELL_MS}. A row
-   *  already showing (or waiting to show) is left alone, so drifting across a row's spans does not
-   *  tear its popup down and rebuild it. */
+  /**
+   * Open the docs for a result once it has stayed put for {@link COMPLETION_DWELL_MS}. A row
+   * already showing (or waiting to show) is left alone, so drifting across a row's spans does not
+   * tear its popup down and rebuild it.
+   */
   private armDwell(index: number = this.selected): void {
     if (index === this.dwellIndex) {
       return;
@@ -1359,8 +1455,10 @@ export class NumbatScopeView extends ItemView {
     return candidate.target.kind === "builtin" ? null : this.scopeCard(candidate);
   }
 
-  /** A documentation card for one of the note's own rows: where it comes from, where it is defined,
-   *  what it says, and what it evaluated to. */
+  /**
+   * A documentation card for one of the note's own rows: where it comes from, where it is defined,
+   * what it says, and what it evaluated to.
+   */
   private scopeCard(candidate: SearchCandidate): HTMLElement {
     const content = createDiv({ cls: "numbat-doc-popup-content" });
     const field = (label: string, fill: (el: HTMLElement) => void): void => {
@@ -1422,9 +1520,11 @@ export class NumbatScopeView extends ItemView {
   // NAVIGATION
   // ==============================================================================================
 
-  /** Jump to a binding's definition (see {@link jumpToDefinition}, shared with the hover popup): a
-   *  same-note binding moves the editor cursor; a binding from another file (an import, a prelude
-   *  file) opens that file, at its line when known. */
+  /**
+   * Jump to a binding's definition (see {@link jumpToDefinition}, shared with the hover popup): a
+   * same-note binding moves the editor cursor; a binding from another file (an import, a prelude
+   * file) opens that file, at its line when known.
+   */
   private jumpTo(entry: ScopeEntry): void {
     jumpToDefinition(this.app, entry.defsite, this.currentPath);
   }
@@ -1443,8 +1543,10 @@ function fromPreludeContext(candidate: SearchCandidate): boolean {
     || (candidate.target.kind === "entry" && candidate.target.entry.sourceKind === "prelude");
 }
 
-/** Whether two node trails name the same set — i.e. the caret stayed within the same chain of
- *  containing nodes, so nothing about the tree's expansion moved. */
+/**
+ * Whether two node trails name the same set — i.e. the caret stayed within the same chain of
+ * containing nodes, so nothing about the tree's expansion moved.
+ */
 function sameTrail(a: ReadonlySet<string> | null, b: ReadonlySet<string> | null): boolean {
   if (a === null || b === null) {
     return a === b;

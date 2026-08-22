@@ -99,8 +99,8 @@ Six things Stage C settled that the plan did not have:
   path can be stopped at all. Why that bar does not show its actions here was never established:
   Obsidian's defaults, `navigation = false` on this view, the theme and another plugin are all still
   live candidates. The button moved into the input row, next to the Esc and evaluate buttons, and
-  the finding generalises past this bug — **a load-bearing affordance does not get to depend on a
-  surface whose behaviour cannot be accounted for.** It is also drawn as a text glyph rather than
+  the finding generalizes past this bug — **a load-bearing affordance does not get to depend on a
+  surface whose behavior cannot be accounted for.** It is also drawn as a text glyph rather than
   through `setIcon`, since an unknown icon id renders as an empty button and reports nothing.
 - **The `import.meta.url` in the generated bindings is defined away rather than tree-shaken.** The
   engine imports both initializers — `initSync` for the worker, the async one for the fallback — so
@@ -110,7 +110,7 @@ Six things Stage C settled that the plan did not have:
 
 ### Stopping Work That Has Already Started
 
-Cancelling used to reach exactly one kind of thing: a job still in a queue. A job that had started
+Canceling used to reach exactly one kind of thing: a job still in a queue. A job that had started
 was, by construction, no longer in one — so "stop what you are doing" was a promise about the future
 and nothing else, and an editor three keystrokes into a note went on paying for a pass describing a
 document that no longer existed.

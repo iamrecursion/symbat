@@ -31,7 +31,9 @@ const numbatStreamParser: StreamParser<LexState> = {
   token: (stream, state) => classify(stream, semanticKind, state),
 };
 
-/** The Numbat language: tokenizer only — a single-line REPL expression needs no parse tree,
- *  indentation, or folding. Color comes from a decoration highlighter (syntax/highlight.ts), not
- *  this language, so the REPL matches the code blocks exactly. */
+/**
+ * The Numbat language: tokenizer only — a single-line REPL expression needs no parse tree,
+ * indentation, or folding. Color comes from a decoration highlighter (syntax/highlight.ts), not
+ * this language, so the REPL matches the code blocks exactly.
+ */
 export const numbatLanguage = StreamLanguage.define(numbatStreamParser);

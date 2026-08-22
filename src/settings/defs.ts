@@ -38,8 +38,10 @@ import { DEFAULT_INDENT_WIDTH, MAX_INDENT_WIDTH, MIN_INDENT_WIDTH } from "../vie
 import { knownZone, normalizeOffset } from "../properties/zone";
 import { isValidCssFontSize, type PreludeFile } from "./util";
 
-/** How the REPL input's Vim mode is decided: follow Obsidian's editor "Vim key bindings" setting,
- *  or force it on or off. */
+/**
+ * How the REPL input's Vim mode is decided: follow Obsidian's editor "Vim key bindings" setting,
+ * or force it on or off.
+ */
 export type ReplVimMode = "match" | "on" | "off";
 
 /** How a rendered inline evaluation shows in reading view. */
@@ -73,8 +75,10 @@ export interface SymbatSettings {
   /** How often (in hours) cached exchange rates may be reused before a refetch. */
   exchangeRateRefreshHours: number;
 
-  /** How long (in seconds) to wait for a rate fetch before falling back to the last rates cached on
-   *  disk. */
+  /**
+   * How long (in seconds) to wait for a rate fetch before falling back to the last rates cached on
+   * disk.
+   */
   exchangeRateTimeoutSeconds: number;
 
   /** Load one or more `.nbt` prelude files into every context (master toggle). */
@@ -119,16 +123,20 @@ export interface SymbatSettings {
   /** Open the hover popup when the mouse rests on a symbol. */
   hoverMouse: boolean;
 
-  /** Open the hover popup when the *caret* rests on a symbol. Independent of {@link hoverMouse}: a
-   *  popup that follows the cursor around is not to everyone's taste. Under Vim it applies in
-   *  insert mode only — normal mode has {@link hoverVimKey}. */
+  /**
+   * Open the hover popup when the *caret* rests on a symbol. Independent of {@link hoverMouse}: a
+   * popup that follows the cursor around is not to everyone's taste. Under Vim it applies in
+   * insert mode only — normal mode has {@link hoverVimKey}.
+   */
   hoverDwell: boolean;
 
   /** How long the mouse or the caret must rest before the popup opens (ms). */
   hoverDelayMs: number;
 
-  /** The Vim *normal-mode* key that opens the hover popup (default `H`); empty leaves normal mode
-   *  entirely alone. */
+  /**
+   * The Vim *normal-mode* key that opens the hover popup (default `H`); empty leaves normal mode
+   * entirely alone.
+   */
   hoverVimKey: string;
 
   /** Show inline results and inferred type hints in numbat blocks (master toggle). */
@@ -137,20 +145,28 @@ export interface SymbatSettings {
   /** Show each expression's computed result at the end of its line. */
   inlayResults: boolean;
 
-  /** Show inferred type hints: a binding's type after its name, and the expected type of an
-   *  incomplete expression. */
+  /**
+   * Show inferred type hints: a binding's type after its name, and the expected type of an
+   * incomplete expression.
+   */
   inlayTypes: boolean;
 
-  /** Evaluate Numbat expressions written inline in prose, e.g. `` n`5 km + 3 mi` `` (master toggle
-   *  for the whole inline-evaluation feature). */
+  /**
+   * Evaluate Numbat expressions written inline in prose, e.g. `` n`5 km + 3 mi` `` (master toggle
+   * for the whole inline-evaluation feature).
+   */
   inlineEval: boolean;
 
-  /** How a rendered (reading-view) inline evaluation shows: just the `value`, or the `expression`
-   *  and value together. */
+  /**
+   * How a rendered (reading-view) inline evaluation shows: just the `value`, or the `expression`
+   * and value together.
+   */
   inlineEvalReadingStyle: InlineReadingStyle;
 
-  /** When committing an inline evaluation to text, keep the expression alongside the value (`expr =
-   *  value`) rather than replacing it with the value alone. */
+  /**
+   * When committing an inline evaluation to text, keep the expression alongside the value (`expr =
+   * value`) rather than replacing it with the value alone.
+   */
   inlineEvalRetainExpr: boolean;
 
   /** The prefix that marks a *live* inline evaluation (default `n`). */
@@ -159,41 +175,59 @@ export interface SymbatSettings {
   /** The prefix that marks a *concrete* (auto-materialized) inline evaluation (default `nc`). */
   inlineEvalConcretePrefix: string;
 
-  /** Default decimal places for inline results (digits), or `""` for full precision. A span's
-   *  `{dp=…}` config overrides it. */
+  /**
+   * Default decimal places for inline results (digits), or `""` for full precision. A span's
+   * `{dp=…}` config overrides it.
+   */
   inlineEvalDecimalPlaces: string;
 
-  /** Evaluate inline expressions written in YAML frontmatter (note properties). Gated by {@link
-   *  inlineEval}; results show while editing in Source mode. */
+  /**
+   * Evaluate inline expressions written in YAML frontmatter (note properties). Gated by {@link
+   * inlineEval}; results show while editing in Source mode.
+   */
   inlineEvalFrontmatter: boolean;
 
-  /** Evaluate inline expressions written inside non-`numbat` fenced code blocks. Gated by {@link
-   *  inlineEval}; results show while editing in Source mode. */
+  /**
+   * Evaluate inline expressions written inside non-`numbat` fenced code blocks. Gated by {@link
+   * inlineEval}; results show while editing in Source mode.
+   */
   inlineEvalCodeBlocks: boolean;
 
-  /** Note properties feed the note's Numbat scope (master toggle): a property assigned the
-   *  **Numbat** type binds its value as an expression, replayed before every code block, inline
-   *  span, and completion in the note. */
+  /**
+   * Note properties feed the note's Numbat scope (master toggle): a property assigned the
+   * **Numbat** type binds its value as an expression, replayed before every code block, inline
+   * span, and completion in the note.
+   */
   noteProperties: boolean;
 
-  /** Untyped properties whose value is a plain number also bind, as scalars. Gated by {@link
-   *  noteProperties}. */
+  /**
+   * Untyped properties whose value is a plain number also bind, as scalars. Gated by {@link
+   * noteProperties}.
+   */
   notePropertyNumbers: boolean;
 
-  /** Untyped properties whose value is text also bind, as Numbat strings. Gated by {@link
-   *  noteProperties}. */
+  /**
+   * Untyped properties whose value is text also bind, as Numbat strings. Gated by {@link
+   * noteProperties}.
+   */
   notePropertyText: boolean;
 
-  /** Properties without the Numbat type but assigned Obsidian's Date type bind as Numbat
-   *  `DateTime`s. Gated by {@link noteProperties}. */
+  /**
+   * Properties without the Numbat type but assigned Obsidian's Date type bind as Numbat
+   * `DateTime`s. Gated by {@link noteProperties}.
+   */
   notePropertyDates: boolean;
 
-  /** Untyped properties whose value is a checkbox or toggle also bind, as Numbat booleans. Gated by
-   *  {@link noteProperties}. */
+  /**
+   * Untyped properties whose value is a checkbox or toggle also bind, as Numbat booleans. Gated by
+   * {@link noteProperties}.
+   */
   notePropertyBooleans: boolean;
 
-  /** A `numbat-use` frontmatter property imports the named notes' `numbat-shared` blocks and typed
-   *  properties into this note's scope. Gated by {@link noteProperties}. */
+  /**
+   * A `numbat-use` frontmatter property imports the named notes' `numbat-shared` blocks and typed
+   * properties into this note's scope. Gated by {@link noteProperties}.
+   */
   noteImports: boolean;
 
   /** Spaces one Tab inserts in the `.nbt` file editor, and the stop Shift-Tab dedents back to. */
@@ -220,25 +254,35 @@ export interface SymbatSettings {
   /** Maximum number of visible lines kept in the REPL output log. */
   replMaxLines: number;
 
-  /** Seconds of stillness before the `.nbt` prelude banner re-checks the file and appears or
-   *  disappears (0 checks as soon as the edit lands). */
+  /**
+   * Seconds of stillness before the `.nbt` prelude banner re-checks the file and appears or
+   * disappears (0 checks as soon as the edit lands).
+   */
   preludeErrorDelaySeconds: number;
 
-  /** Seconds of completion inactivity before the cached interpreters are freed (0 keeps them
-   *  loaded). */
+  /**
+   * Seconds of completion inactivity before the cached interpreters are freed (0 keeps them
+   * loaded).
+   */
   completionIdleSeconds: number;
 
-  /** Where the interpreter runs: `worker` requires a Web Worker and evaluates nothing without one,
-   *  `main` keeps it on this thread. See {@link InterpreterThread} for why the two are not
-   *  equivalent. */
+  /**
+   * Where the interpreter runs: `worker` requires a Web Worker and evaluates nothing without one,
+   * `main` keeps it on this thread. See {@link InterpreterThread} for why the two are not
+   * equivalent.
+   */
   interpreterThread: InterpreterThread;
 
-  /** Milliseconds one note's evaluation may spend in the interpreter before the rest of it is
-   *  skipped (0 removes the limit). */
+  /**
+   * Milliseconds one note's evaluation may spend in the interpreter before the rest of it is
+   * skipped (0 removes the limit).
+   */
   evaluationLimitMs: number;
 
-  /** The time zone a date, or a time written without an offset, is read in — an IANA name
-   *  (`Europe/Berlin`) or a literal offset (`+02:00`). Blank means the reader's own zone. */
+  /**
+   * The time zone a date, or a time written without an offset, is read in — an IANA name
+   * (`Europe/Berlin`) or a literal offset (`+02:00`). Blank means the reader's own zone.
+   */
   notePropertyDefaultZone: string;
 }
 
@@ -303,8 +347,10 @@ export const DEFAULT_SETTINGS: SymbatSettings = {
   notePropertyDefaultZone: "",
 };
 
-/** The settings keys whose value has a given type — derived, so a new setting cannot be left out of
- *  the union it belongs to. */
+/**
+ * The settings keys whose value has a given type — derived, so a new setting cannot be left out of
+ * the union it belongs to.
+ */
 type KeysOfType<T> = {
   [K in keyof SymbatSettings]-?: SymbatSettings[K] extends T ? K : never;
 }[keyof SymbatSettings];
@@ -315,8 +361,10 @@ export type BooleanSettingKey = KeysOfType<boolean>;
 /** Every numeric setting's key — the ones `NUMBER_MINIMUMS` clamps on read. */
 export type NumberSettingKey = KeysOfType<number>;
 
-/** Free-text settings. Listed rather than derived, because the two dropdowns are also string-valued
- *  and are not free text. */
+/**
+ * Free-text settings. Listed rather than derived, because the two dropdowns are also string-valued
+ * and are not free text.
+ */
 export type TextSettingKey =
   | "unicodeLeader"
   | "historyLeader"
@@ -356,8 +404,10 @@ export function validateLeader(value: string): string | undefined {
   return undefined;
 }
 
-/** Validate an inline-eval prefix: one or more letters (so it reads as a word before the code span,
- *  and never collides with punctuation or backticks). */
+/**
+ * Validate an inline-eval prefix: one or more letters (so it reads as a word before the code span,
+ * and never collides with punctuation or backticks).
+ */
 export function validatePrefix(value: string): string | undefined {
   if (!/^\p{L}+$/u.test(value)) {
     return "Enter one or more letters.";
@@ -365,8 +415,10 @@ export function validatePrefix(value: string): string | undefined {
   return undefined;
 }
 
-/** Validate the default decimal places: blank (full precision) or a small non-negative integer — an
- *  f64 has nothing meaningful beyond 15 places. */
+/**
+ * Validate the default decimal places: blank (full precision) or a small non-negative integer — an
+ * f64 has nothing meaningful beyond 15 places.
+ */
 export function validateDecimalPlaces(value: string): string | undefined {
   const trimmed = value.trim();
   if (trimmed === "") {
@@ -380,8 +432,10 @@ export function validateDecimalPlaces(value: string): string | undefined {
   return undefined;
 }
 
-/** Validate a default time zone: blank (the reader's own), an IANA name the platform knows, or a
- *  literal UTC offset. */
+/**
+ * Validate a default time zone: blank (the reader's own), an IANA name the platform knows, or a
+ * literal UTC offset.
+ */
 export function validateTimeZone(value: string): string | undefined {
   const trimmed = value.trim();
   if (trimmed === "" || normalizeOffset(trimmed) !== null || knownZone(trimmed)) {
@@ -403,8 +457,10 @@ export type SettingEffect =
   | "clearCaches"
   /** Fetch (or, when the toggle is off, clear) the live exchange rates. */
   | "ensureExchangeRates"
-  /** Rebuild the shared completion context and the property reserved-name set, both of which bake
-   *  in the current unit vocabulary. */
+  /**
+   * Rebuild the shared completion context and the property reserved-name set, both of which bake
+   * in the current unit vocabulary.
+   */
 
   | "invalidateCompletionVocabulary"
   /** Start the interpreter where the reader has just asked for it, replacing what is running. */
@@ -429,9 +485,11 @@ export type SettingControl =
     key: NumberSettingKey;
     min: number;
 
-    /** Optional: most numbers here have no natural ceiling, and inventing one would be a limit the
-     *  user did not ask for. Declared where a large value is actively harmful rather than merely
-     *  odd. */
+    /**
+     * Optional: most numbers here have no natural ceiling, and inventing one would be a limit the
+     * user did not ask for. Declared where a large value is actively harmful rather than merely
+     * odd.
+     */
     max?: number;
   }
   | {
@@ -453,8 +511,10 @@ export interface SettingDescriptor {
   /** Help text. Backtick spans render as `<code>` — see settings/tab.ts's `descFragment`. */
   desc: string;
 
-  /** Shown only while this boolean setting is on. A key rather than a predicate: the imperative
-   *  renderer needs to know *which* toggle to re-render after. */
+  /**
+   * Shown only while this boolean setting is on. A key rather than a predicate: the imperative
+   * renderer needs to know *which* toggle to re-render after.
+   */
   visibleWhen?: BooleanSettingKey;
 
   /** The input to render, and the setting it reads and writes. */
@@ -972,8 +1032,10 @@ export const PRELUDE_NAME_PLACEHOLDER = "Name (optional)";
 /** Placeholder for a prelude row's vault-path field. */
 export const PRELUDE_PATH_PLACEHOLDER = "prelude.nbt";
 
-/** Label of the version card's button, which copies the versions to the clipboard for pasting into
- *  a bug report. */
+/**
+ * Label of the version card's button, which copies the versions to the clipboard for pasting into
+ * a bug report.
+ */
 export const COPY_DEBUG_INFO = "Copy debug info";
 
 // DERIVED VIEWS OVER THE TABLE
@@ -984,16 +1046,20 @@ export function allDescriptors(): SettingDescriptor[] {
   return SETTING_BLOCKS.flatMap((block) => (block.kind === "group" ? [...block.settings] : []));
 }
 
-/** Each setting's effects, by the key it is stored under. Built once — Obsidian calls
- *  `setControlValue` on every keystroke in a text field. */
+/**
+ * Each setting's effects, by the key it is stored under. Built once — Obsidian calls
+ * `setControlValue` on every keystroke in a text field.
+ */
 export const EFFECTS_BY_KEY: ReadonlyMap<string, readonly SettingEffect[]> = new Map(
   allDescriptors()
     .filter((descriptor) => descriptor.effects !== undefined)
     .map((descriptor) => [descriptor.control.key as string, descriptor.effects ?? []]),
 );
 
-/** The minimum each number setting declares, derived from the table so a control cannot be added
- *  without one. */
+/**
+ * The minimum each number setting declares, derived from the table so a control cannot be added
+ * without one.
+ */
 export const NUMBER_MINIMUMS: ReadonlyMap<NumberSettingKey, number> = new Map(
   allDescriptors()
     .map((descriptor) => descriptor.control)
@@ -1001,8 +1067,10 @@ export const NUMBER_MINIMUMS: ReadonlyMap<NumberSettingKey, number> = new Map(
     .map((control) => [control.key, control.min] as const),
 );
 
-/** The maximum each number setting declares, where it declares one — sparse, because most have no
- *  natural ceiling (see `SettingControl`). */
+/**
+ * The maximum each number setting declares, where it declares one — sparse, because most have no
+ * natural ceiling (see `SettingControl`).
+ */
 export const NUMBER_MAXIMUMS: ReadonlyMap<NumberSettingKey, number> = new Map(
   allDescriptors().flatMap(({ control }) =>
     control.type === "number" && control.max !== undefined

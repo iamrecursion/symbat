@@ -7,8 +7,10 @@
 import { escapeHtml } from "../interpreter/markup";
 import { typeDoc } from "./expressions";
 
-/** The marker Numbat's pretty-printer emits before a result value. `type(x)` echoes the input, then
- *  prints `<dimmed>=</dimmed> <the type>`; the signature is whatever follows this marker. */
+/**
+ * The marker Numbat's pretty-printer emits before a result value. `type(x)` echoes the input, then
+ * prints `<dimmed>=</dimmed> <the type>`; the signature is whatever follows this marker.
+ */
 const RESULT_MARKER = "<span class=\"numbat-dimmed\">=</span>";
 
 /**
@@ -30,8 +32,10 @@ export function signatureFromTypeOutput(html: string): string | null {
 
 /** The parsed `print_info` documentation for the dwell popup. */
 export interface CompletionInfo {
-  /** The documentation HTML (labeled lines with `numbat-*` spans), minus the reference URL, which
-   *  is surfaced separately as a link. */
+  /**
+   * The documentation HTML (labeled lines with `numbat-*` spans), minus the reference URL, which
+   * is surfaced separately as a link.
+   */
   bodyHtml: string;
 
   /** The reference URL (e.g. a Wikipedia link), or `null` when none is present. */
@@ -43,8 +47,10 @@ function decodeEntities(text: string): string {
   return text.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 
-/** Matches the reference-URL span Numbat puts in a `print_info` header line: `(<span
- *  class="numbat-string">https://…</span>)`. */
+/**
+ * Matches the reference-URL span Numbat puts in a `print_info` header line: `(<span
+ * class="numbat-string">https://…</span>)`.
+ */
 const URL_SPAN = /<span class="numbat-string">(https?:\/\/[^<]*)<\/span>/;
 
 /** The same span with its wrapping ` (…)`, for removing it from the body. */
@@ -76,11 +82,13 @@ export function parsePrintInfo(html: string): CompletionInfo | null {
   return { bodyHtml, referenceUrl };
 }
 
-/** A field label `print_info` writes at a line's start (`Function:`, `A unit of:`, …), captured
- *  with the alignment padding after its colon. The tail of the list is the plugin's own — `Field`
- *  through `Declared in` from {@link describedInfo}, `Decorator` from {@link decoratorInfo} and
- *  `Type` from {@link typeInfo} — styled to match the rest. `Type parameter` precedes `Type` so the
- *  longer label wins the one input that could be read as either. */
+/**
+ * A field label `print_info` writes at a line's start (`Function:`, `A unit of:`, …), captured
+ * with the alignment padding after its colon. The tail of the list is the plugin's own — `Field`
+ * through `Declared in` from {@link describedInfo}, `Decorator` from {@link decoratorInfo} and
+ * `Type` from {@link typeInfo} — styled to match the rest. `Type parameter` precedes `Type` so the
+ * longer label wins the one input that could be read as either.
+ */
 const DOC_LABEL =
   /^(Function|Signature|Description|Unit|Aliases|A unit of|Variable|Dimension|Units|Field|Parameter|Type parameter|Quantity|Declared in|Decorator|Type)(:)[^\S\n]*/;
 
@@ -196,8 +204,10 @@ export function declaredInfo(
   return describedInfo(DECLARED_LABEL[kind], name, null, owner);
 }
 
-/** A declared type as it is written, rendered as a type identifier so it colors like one (it is
- *  source text, not formatter output). */
+/**
+ * A declared type as it is written, rendered as a type identifier so it colors like one (it is
+ * source text, not formatter output).
+ */
 export function declaredTypeHtml(type: string): string {
   return `<span class="numbat-type-identifier">${escapeHtml(type)}</span>`;
 }

@@ -140,8 +140,10 @@ function obsidianCommentTarget(tr: Transaction): NumbatBlockRange | null {
   return blocks.find((block) => index >= block.bodyStartLine && index < block.closeLine) ?? null;
 }
 
-/** The `#` line-comment toggle for `state`'s current selection within `block`, or `null` when there
- *  is nothing to toggle. */
+/**
+ * The `#` line-comment toggle for `state`'s current selection within `block`, or `null` when there
+ * is nothing to toggle.
+ */
 function numbatToggleSpec(state: EditorState, block: NumbatBlockRange): TransactionSpec | null {
   const { doc } = state;
   const selectionLines = state.selection.ranges.map((range) => ({

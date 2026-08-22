@@ -39,8 +39,10 @@ import {
   trailingPrefix,
 } from "./inline-parse";
 
-/** A small, bounded cache of whole-note evaluations, so the many sections of one reading-view
- *  render share a single replay. Keyed by the note's eval signature. */
+/**
+ * A small, bounded cache of whole-note evaluations, so the many sections of one reading-view
+ * render share a single replay. Keyed by the note's eval signature.
+ */
 const evalCache = new EvaluationCache<InlineResult[]>(READING_EVAL_CACHE_ENTRIES);
 
 /** A rendered inline-eval span located in the DOM. */
@@ -54,17 +56,23 @@ interface DomMatch {
   /** How many characters of `prefixNode` are the prefix (to strip). */
   prefixLen: number;
 
-  /** Whether the span recomputes on every render (`live`, the `n` prefix) or is written back into
-   *  the note once evaluated (`concrete`, the `nc` prefix). */
+  /**
+   * Whether the span recomputes on every render (`live`, the `n` prefix) or is written back into
+   * the note once evaluated (`concrete`, the `nc` prefix).
+   */
   variant: "live" | "concrete";
 
-  /** The expression to evaluate (content past a `{…}` config and left of the separator, trimmed),
-   *  or `null` when the rendered element no longer carries it — then the note's source supplies it,
-   *  by position. */
+  /**
+   * The expression to evaluate (content past a `{…}` config and left of the separator, trimmed),
+   * or `null` when the rendered element no longer carries it — then the note's source supplies it,
+   * by position.
+   */
   expr: string | null;
 
-  /** The decimal places the span displays with (its config's `dp`, else the default), or `null` for
-   *  full precision. */
+  /**
+   * The decimal places the span displays with (its config's `dp`, else the default), or `null` for
+   * full precision.
+   */
   dp: number | null;
 
   /** The `{…}` config's syntax error, when malformed (the span then renders raw). */
@@ -285,8 +293,10 @@ function collectMatches(el: HTMLElement, config: InlineEvalConfig): DomMatch[] {
   return matches;
 }
 
-/** The inline units whose line falls within `[lineStart, lineEnd]`, each paired with its index
- *  among *all* inline units (so it maps into the results array). */
+/**
+ * The inline units whose line falls within `[lineStart, lineEnd]`, each paired with its index
+ * among *all* inline units (so it maps into the results array).
+ */
 function inlineUnitsInRange(
   units: NoteUnit[],
   lineStart: number,
@@ -356,8 +366,10 @@ async function evaluateCached(
   return { results: evaluation.value, signature, exceeded: evaluation.exceeded };
 }
 
-/** Strip the prefix from its text node and replace the rendered span with the value (or `expression
- *  = value`). */
+/**
+ * Strip the prefix from its text node and replace the rendered span with the value (or `expression
+ * = value`).
+ */
 function render(match: DomMatch, valueHtml: string, style: "value" | "expression", expr: string): void {
   match.prefixNode.data = match.prefixNode.data.slice(0, match.prefixNode.data.length - match.prefixLen);
   const out = createSpan({ cls: "numbat-inline-value" });

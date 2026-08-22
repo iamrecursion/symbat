@@ -28,8 +28,10 @@ function preambleOf(bindings: PropertyBinding[], imports?: string[]): NotePreamb
   return { bindings, skips: [], source: bindings.map((entry) => entry.code).join("\n"), imports };
 }
 
-/** A `LineInterpret` that records what it was asked and answers with a value-less statement, so
- *  `inlineResultFor` runs its one call and probes no further. */
+/**
+ * A `LineInterpret` that records what it was asked and answers with a value-less statement, so
+ * `inlineResultFor` runs its one call and probes no further.
+ */
 function recording(): ((code: string) => { output: string; isError: boolean; }) & { seen: string[]; } {
   const run = (code: string) => {
     run.seen.push(code);
@@ -39,8 +41,10 @@ function recording(): ((code: string) => { output: string; isError: boolean; }) 
   return run;
 }
 
-/** A `BindingOutcome` with everything absent, for the projections to be given one field at a
- *  time. */
+/**
+ * A `BindingOutcome` with everything absent, for the projections to be given one field at a
+ * time.
+ */
 function outcome(extra: Partial<BindingOutcome> = {}): BindingOutcome {
   return {
     key: "total",
@@ -56,8 +60,10 @@ function outcome(extra: Partial<BindingOutcome> = {}): BindingOutcome {
   };
 }
 
-/** A `LineInterpret` that answers `k` calls and then refuses, as `interpret` does once a note's
- *  evaluation allowance is spent (interpreter/budget.ts). */
+/**
+ * A `LineInterpret` that answers `k` calls and then refuses, as `interpret` does once a note's
+ * evaluation allowance is spent (interpreter/budget.ts).
+ */
 function refusingAfter(k: number): (code: string) => { output: string; isError: boolean; } {
   let served = 0;
   return () => {

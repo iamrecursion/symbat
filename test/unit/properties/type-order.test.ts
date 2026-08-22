@@ -6,8 +6,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyKeyOrder, plannedOrder, restoredOrder } from "../../../src/properties/type-order.ts";
 
-/** The registry as Obsidian leaves it, with this plugin's three types appended — display names and
- *  all. Ordered as it would actually be found: built-ins first, in Obsidian's own order. */
+/**
+ * The registry as Obsidian leaves it, with this plugin's three types appended — display names and
+ * all. Ordered as it would actually be found: built-ins first, in Obsidian's own order.
+ */
 const NAMES: Record<string, string> = {
   text: "Text",
   multitext: "List",

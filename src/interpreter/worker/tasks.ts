@@ -265,9 +265,11 @@ function withContext<T>(
   }
 }
 
-/** What two requests have to agree on to share a context, which the pool's key is built from.
- *  Shared by the two helpers below, so a synchronous and an asynchronous caller cannot key
- *  differently. */
+/**
+ * What two requests have to agree on to share a context, which the pool's key is built from.
+ * Shared by the two helpers below, so a synchronous and an asynchronous caller cannot key
+ * differently.
+ */
 function poolSpec(applyRates: boolean, preludeBefore: string | null, prefix: readonly string[]): ScopeSpec {
   return preludeBefore === null
     ? { chunks: prefix, applyRates }
@@ -364,15 +366,19 @@ async function withPooledContextAsync<T>(
   }
 }
 
-/** Arm the note's allowance around `task`. Split out so every evaluating task states the budget the
- *  same way and none of them has to remember that a `null` key means "no bucket". */
+/**
+ * Arm the note's allowance around `task`. Split out so every evaluating task states the budget the
+ * same way and none of them has to remember that a `null` key means "no bucket".
+ */
 function budgeted<T>(spec: { budgetMs: number; key: string | null; }, task: () => T): Budgeted<T> {
   const result = withBudget(spec.budgetMs, task, spec.key === null ? {} : { key: spec.key });
   return { value: result.value, exceeded: result.exceeded };
 }
 
-/** {@link budgeted} for a task that yields at its boundaries. Separate rather than a flag, because
- *  the two differ in the one way a caller cannot ignore: what they hand back. */
+/**
+ * {@link budgeted} for a task that yields at its boundaries. Separate rather than a flag, because
+ * the two differ in the one way a caller cannot ignore: what they hand back.
+ */
 async function budgetedAsync<T>(
   spec: { budgetMs: number; key: string | null; },
   task: () => Promise<T>,
@@ -490,8 +496,10 @@ async function evalNoteUnits(
   });
 }
 
-/** The span-by-span walk, over whichever runner it was handed: a real context, or one that refuses
- *  everything. Shared so that the refused shape cannot drift from the evaluated one. */
+/**
+ * The span-by-span walk, over whichever runner it was handed: a real context, or one that refuses
+ * everything. Shared so that the refused shape cannot drift from the evaluated one.
+ */
 async function unitResults(
   run: LineInterpret,
   request: EvalNoteUnitsRequest,
@@ -684,8 +692,10 @@ function evalScopeTree(request: EvalScopeTreeRequest): Budgeted<ScopeTreeValue> 
   });
 }
 
-/** The tree a scope pass writes into and hands back. Named so the handler's return type reads as
- *  what it is rather than repeating the import. */
+/**
+ * The tree a scope pass writes into and hands back. Named so the handler's return type reads as
+ * what it is rather than repeating the import.
+ */
 type ScopeTreeValue = EvalScopeTreeRequest["tree"];
 
 /**
@@ -857,17 +867,21 @@ let nextSessionId = 1;
 // completes. Without it a completion keystroke would run four `list` commands.
 const sessionVocabs = new Map<number, CompletionVocabulary>();
 
-/** File a vocabulary against `ref` when `ref` is a session, and do nothing when it is a scope,
- *  whose vocabulary the engine caches with the context it built. One function so that every builder
- *  of one keeps it, rather than whichever of them happened to remember. */
+/**
+ * File a vocabulary against `ref` when `ref` is a session, and do nothing when it is a scope,
+ * whose vocabulary the engine caches with the context it built. One function so that every builder
+ * of one keeps it, rather than whichever of them happened to remember.
+ */
 function rememberSessionVocab(ref: ContextRef, vocab: CompletionVocabulary): void {
   if (ref.kind === "session") {
     sessionVocabs.set(ref.id, vocab);
   }
 }
 
-/** Discard every session. Called when the instance underneath them is being replaced, which is the
- *  only thing that can invalidate one. */
+/**
+ * Discard every session. Called when the instance underneath them is being replaced, which is the
+ * only thing that can invalidate one.
+ */
 export function closeAllSessions(): void {
   for (const context of sessions.values()) {
     freeQuietly(context);

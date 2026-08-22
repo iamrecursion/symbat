@@ -24,12 +24,16 @@ export class VersionedLoad {
   /** Bumped by {@link invalidate}; names the newest generation of the sources. */
   private version = 1;
 
-  /** The newest version {@link load} has finished applying. Starts behind {@link version}, so the
-   *  first {@link ensure} always loads. */
+  /**
+   * The newest version {@link load} has finished applying. Starts behind {@link version}, so the
+   * first {@link ensure} always loads.
+   */
   private loaded = 0;
 
-  /** The running load, shared by every concurrent {@link ensure}, or `null` when none is
-   *  running. */
+  /**
+   * The running load, shared by every concurrent {@link ensure}, or `null` when none is
+   * running.
+   */
   private inFlight: Promise<void> | null = null;
 
   /** @param load applies the current sources; called with no overlap of itself. */

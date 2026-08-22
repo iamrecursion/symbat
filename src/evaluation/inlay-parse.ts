@@ -21,9 +21,11 @@ const COLON_SPAN = `<span class="numbat-operator">:</span>`;
 /** The `=` separating a statement's echo from its value, and so where the echo ends. */
 const EQUALS_SPAN = `<span class="numbat-operator">=</span>`;
 
-/** The split of a single statement's interpreter output into its echoed source and its result.
- *  `result` is `null` for statements that produce no value — a declaration, a command, a comment,
- *  or a blank line. */
+/**
+ * The split of a single statement's interpreter output into its echoed source and its result.
+ * `result` is `null` for statements that produce no value — a declaration, a command, a comment,
+ * or a blank line.
+ */
 export interface InterpretParts {
   /** The formatter's echo of the statement (HTML), e.g. `let x: Length = 5 metre`. */
   echo: string;
@@ -80,12 +82,16 @@ export interface DeclarationSite {
   /** The declared name (for evaluating a `let` binding's value). */
   name: string;
 
-  /** Column (0-indexed, in characters) just past the declared name — where an inferred `: Type`
-   *  hint is anchored. */
+  /**
+   * Column (0-indexed, in characters) just past the declared name — where an inferred `: Type`
+   * hint is anchored.
+   */
   nameEnd: number;
 
-  /** Whether the source already writes an explicit `: Type` annotation (so no inferred hint should
-   *  be shown — the user has stated the type themselves). */
+  /**
+   * Whether the source already writes an explicit `: Type` annotation (so no inferred hint should
+   * be shown — the user has stated the type themselves).
+   */
   annotated: boolean;
 }
 
@@ -135,9 +141,11 @@ export function resultValueHtml(resultHtml: string): string {
   return dimmed === -1 ? resultHtml : resultHtml.slice(0, dimmed).trimEnd();
 }
 
-/** Strip HTML tags and decode the entities Numbat's formatter emits, for text comparison (never
- *  for display), and — via inline-eval — for committing a computed value into the note as plain
- *  text. */
+/**
+ * Strip HTML tags and decode the entities Numbat's formatter emits, for text comparison (never
+ * for display), and — via inline-eval — for committing a computed value into the note as plain
+ * text.
+ */
 export function plainText(html: string): string {
   return html
     .replace(/<[^>]*>/g, "")
@@ -275,13 +283,17 @@ export function errorSummary(output: string): string | null {
   return label ?? notes[0] ?? header;
 }
 
-/** An unsolved `HasField` constraint, and the field name it is asking about. The struct argument is
- *  matched non-greedily up to the quoted name, which is the only part of the dump worth reading. */
+/**
+ * An unsolved `HasField` constraint, and the field name it is asking about. The struct argument is
+ * matched non-greedily up to the quoted name, which is the only part of the dump worth reading.
+ */
 const HAS_FIELD = /HasField\(.*?,\s*"([^"]+)"\s*,/;
 
-/** The header Numbat writes when a type-checking constraint set came out unsolved, singular or
- *  plural. The plural form carries the constraints on the lines *below* it, so the header alone
- *  says nothing at all — which makes this rewrite worth doing rather than merely nicer. */
+/**
+ * The header Numbat writes when a type-checking constraint set came out unsolved, singular or
+ * plural. The plural form carries the constraints on the lines *below* it, so the header alone
+ * says nothing at all — which makes this rewrite worth doing rather than merely nicer.
+ */
 const UNSOLVED_HEADER = /^error:\s*Could not solve the following constraints?:/m;
 
 /**
@@ -404,12 +416,16 @@ export interface Hint {
    */
   kind: "type" | "result" | "hole" | "error" | "warning";
 
-  /** Formatter HTML (for `type`/`result`) or plain text (the hole's type for `hole`, the diagnostic
-   *  summary for `error`, the advisory for `warning`). */
+  /**
+   * Formatter HTML (for `type`/`result`) or plain text (the hole's type for `hole`, the diagnostic
+   * summary for `error`, the advisory for `warning`).
+   */
   content: string;
 
-  /** Virtual spaces to render before an end-of-line hint (0 or 1), so it sits one space from the
-   *  code unless the line already ends in whitespace. Unused for the inline `type` hint. */
+  /**
+   * Virtual spaces to render before an end-of-line hint (0 or 1), so it sits one space from the
+   * code unless the line already ends in whitespace. Unused for the inline `type` hint.
+   */
   pad: number;
 }
 
@@ -438,14 +454,18 @@ export function endPadding(line: string, kind: "result" | "hole"): number {
 // EVALUATING A BLOCK
 // ================================================================================================
 
-/** The interpreter surface {@link hintsForBlock} needs: evaluate one statement and report its
- *  formatter output and whether it errored. Injected so the evaluation logic is testable against
- *  the real wasm without the editor/plugin layers. */
+/**
+ * The interpreter surface {@link hintsForBlock} needs: evaluate one statement and report its
+ * formatter output and whether it errored. Injected so the evaluation logic is testable against
+ * the real wasm without the editor/plugin layers.
+ */
 export type LineInterpret = (code: string) => { output: string; isError: boolean; };
 
-/** One statement of a block body: a single line, or a run of lines that belong together because a
- *  bracket is still open (Numbat allows an expression to span lines inside `(…)` / `[…]` / `{…}`)
- *  or because decorator lines precede it. */
+/**
+ * One statement of a block body: a single line, or a run of lines that belong together because a
+ * bracket is still open (Numbat allows an expression to span lines inside `(…)` / `[…]` / `{…}`)
+ * or because decorator lines precede it.
+ */
 export interface BlockStatement {
   /** 0-indexed first body line of the statement — a decorator line, where it has any. */
   startLine: number;
@@ -453,9 +473,11 @@ export interface BlockStatement {
   /** 0-indexed last body line of the statement. */
   endLine: number;
 
-  /** 0-indexed body line where the statement proper begins, past any decorator lines above it.
-   *  Equal to `startLine` when the statement carries no decorators on lines of their own — which is
-   *  also what a dangling decorator with no statement below it reports. */
+  /**
+   * 0-indexed body line where the statement proper begins, past any decorator lines above it.
+   * Equal to `startLine` when the statement carries no decorators on lines of their own — which is
+   * also what a dangling decorator with no statement below it reports.
+   */
   codeLine: number;
 
   /** The statement's source: the body lines, newline-joined, verbatim. */
@@ -502,8 +524,10 @@ export function blankStrings(src: string): string {
   return out;
 }
 
-/** The bracket-depth change of one line — `(`/`[`/`{` up, their closers down — ignoring brackets
- *  inside string literals. The caller strips comments first. */
+/**
+ * The bracket-depth change of one line — `(`/`[`/`{` up, their closers down — ignoring brackets
+ * inside string literals. The caller strips comments first.
+ */
 function bracketDelta(src: string): number {
   let depth = 0;
 
@@ -518,21 +542,27 @@ function bracketDelta(src: string): number {
   return depth;
 }
 
-/** A run of nothing but decorator applications — `@metric_prefixes`, `@name("Foo")`, a multi-line
- *  `@aliases(…)`. Anchored at both ends, so any code beside them fails it. */
+/**
+ * A run of nothing but decorator applications — `@metric_prefixes`, `@name("Foo")`, a multi-line
+ * `@aliases(…)`. Anchored at both ends, so any code beside them fails it.
+ */
 const DECORATORS_ONLY = /^(?:\s*@\w+(?:\([^)]*\))?)+\s*$/;
 
-/** Whether `lines` hold only decorators, and so are a prefix of the statement below rather than a
- *  statement of their own. Comments are stripped and strings blanked first, so a note between a
- *  decorator and the declaration it annotates does not break them apart, and neither does a paren
- *  inside a decorator's own text (`@example("last([1, 2])")`). */
+/**
+ * Whether `lines` hold only decorators, and so are a prefix of the statement below rather than a
+ * statement of their own. Comments are stripped and strings blanked first, so a note between a
+ * decorator and the declaration it annotates does not break them apart, and neither does a paren
+ * inside a decorator's own text (`@example("last([1, 2])")`).
+ */
 function decoratorsOnly(lines: string[]): boolean {
   const stripped = lines.map(stripLineComment);
   return stripped[0].trimStart().startsWith("@") && DECORATORS_ONLY.test(blankStrings(stripped.join("\n")));
 }
 
-/** A line's code — its comment off and its string contents blanked — trimmed. Empty for a blank or
- *  comment-only line, which is what makes those skippable below. */
+/**
+ * A line's code — its comment off and its string contents blanked — trimmed. Empty for a blank or
+ * comment-only line, which is what makes those skippable below.
+ */
 function codeOf(line: string): string {
   return blankStrings(stripLineComment(line)).trim();
 }
@@ -560,8 +590,10 @@ function continuesBelow(body: string[], start: number, i: number): boolean {
   return head !== "" && (continuesAfter(tail) || continuesBefore(head));
 }
 
-/** The last line of `body` in `[start, end]` that is not blank. At least `start`, which a statement
- *  never begins on. */
+/**
+ * The last line of `body` in `[start, end]` that is not blank. At least `start`, which a statement
+ * never begins on.
+ */
 function lastNonBlank(body: string[], start: number, end: number): number {
   for (let i = end; i > start; i -= 1) {
     if (body[i].trim() !== "") {

@@ -387,7 +387,7 @@ evaluation that has already started means stopping the thread it is on, and that
 when it is not the thread Obsidian is drawing with. So on the worker thread you get:
 
 - **Stop evaluating**, the ■ button at the end of the REPL's input row, is for when you have typed
-  something at the prompt that is not coming back. It is always there and greys out when pressing it
+  something at the prompt that is not coming back. It is always there and grays out when pressing it
   would do nothing: while no line is running, and permanently on the main thread, where a submission
   runs inline and no click could reach it. The REPL is deliberately exempt from the
   [evaluation time limit](#evaluation-time-limit), which is why this button is so important.
@@ -398,7 +398,7 @@ when it is not the thread Obsidian is drawing with. So on the worker thread you 
 
 Neither does anything on the main thread. While an evaluation is running there, the click cannot be
 delivered in the first place. The command is hidden outright, since a palette entry is found by
-searching for it and its presence is therefore a promise; the REPL's button greys out instead, so
+searching for it and its presence is therefore a promise; the REPL's button grays out instead, so
 that the row it sits in does not reflow around you and so there is somewhere to look for it before
 the moment you need it.
 

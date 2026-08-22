@@ -209,8 +209,10 @@ test("the table renders as one prelude list and one version card, in order", () 
 // declares are enforced here or nowhere. Each case below is a value a consumer genuinely cannot
 // handle.
 
-/** The minimum each number setting declares, as the consumers rely on it. Spelled out rather than
- *  read from the table, so a bound loosened by accident fails. */
+/**
+ * The minimum each number setting declares, as the consumers rely on it. Spelled out rather than
+ * read from the table, so a bound loosened by accident fails.
+ */
 const EXPECTED_MINIMUMS: Record<string, number> = {
   exchangeRateRefreshHours: 1,
   exchangeRateTimeoutSeconds: 1,
@@ -229,8 +231,10 @@ const EXPECTED_MINIMUMS: Record<string, number> = {
   evaluationLimitMs: 0,
 };
 
-/** The maximum each number setting declares. Sparse: only where a large value is actively harmful
- *  rather than merely odd. */
+/**
+ * The maximum each number setting declares. Sparse: only where a large value is actively harmful
+ * rather than merely odd.
+ */
 const EXPECTED_MAXIMUMS: Record<string, number> = {
   // Every indented line carries this many spaces.
   nbtIndentWidth: 8,

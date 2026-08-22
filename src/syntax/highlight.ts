@@ -19,18 +19,24 @@ import { semanticKind, subscribeSemanticNames } from "./type-names";
 // EDITOR: CODEMIRROR 6 DECORATIONS
 // ================================================================================================
 
-/** Dispatched once the interpreter's dimension/unit names have been captured, so the plugin
- *  re-tokenizes the visible numbat blocks to color them semantically. */
+/**
+ * Dispatched once the interpreter's dimension/unit names have been captured, so the plugin
+ * re-tokenizes the visible numbat blocks to color them semantically.
+ */
 const semanticsReady = StateEffect.define<void>();
 
-/** The result of a decoration pass: the marks, and whether any numbat block was seen (so the plugin
- *  knows whether it is worth priming the type names). */
+/**
+ * The result of a decoration pass: the marks, and whether any numbat block was seen (so the plugin
+ * knows whether it is worth priming the type names).
+ */
 interface DecorationResult {
   /** The token marks to paint, in ascending document order. */
   decorations: DecorationSet;
 
-  /** Whether the pass saw any Numbat code at all — the trigger for priming the interpreter's
-   *  dimension/unit names, which is not worth doing for a note that has none. */
+  /**
+   * Whether the pass saw any Numbat code at all — the trigger for priming the interpreter's
+   * dimension/unit names, which is not worth doing for a note that has none.
+   */
   sawNumbat: boolean;
 }
 
@@ -130,8 +136,10 @@ function numbatHighlightViewPlugin(scan: (view: EditorView) => DecorationResult)
         this.maybePrimeSemantics(view, result.sawNumbat);
       }
 
-      /** Repaint when the text changed, the viewport moved, or the semantic names arrived — the
-       *  three things that can change what a visible line looks like. */
+      /**
+       * Repaint when the text changed, the viewport moved, or the semantic names arrived — the
+       * three things that can change what a visible line looks like.
+       */
       update(update: ViewUpdate): void {
         const arrived = update.transactions.some((tr) => tr.effects.some((e) => e.is(semanticsReady)));
         if (update.docChanged || update.viewportChanged || arrived) {
@@ -141,8 +149,10 @@ function numbatHighlightViewPlugin(scan: (view: EditorView) => DecorationResult)
         }
       }
 
-      /** Drop the name subscription with the view, and latch `destroyed` so a notification already
-       *  queued cannot dispatch into a torn-down editor. */
+      /**
+       * Drop the name subscription with the view, and latch `destroyed` so a notification already
+       * queued cannot dispatch into a torn-down editor.
+       */
       destroy(): void {
         this.destroyed = true;
         this.unsubscribe?.();
@@ -207,9 +217,11 @@ function numbatPrismGrammar(): Record<string, unknown> {
   };
 }
 
-/** The sliver of Prism's API this module uses. `loadPrism()` is typed `any` by Obsidian, so this
- *  narrows it to the one property being written rather than taking the untyped object at its
- *  word. */
+/**
+ * The sliver of Prism's API this module uses. `loadPrism()` is typed `any` by Obsidian, so this
+ * narrows it to the one property being written rather than taking the untyped object at its
+ * word.
+ */
 interface PrismLike {
   /** Prism's grammar registry, keyed by language name. */
   languages: Record<string, unknown>;

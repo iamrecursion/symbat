@@ -32,9 +32,11 @@ export interface SymbolFactsSource {
   value(probe: string): string | null;
 }
 
-/** Numbat's `print_info` opens a function's card with this label; its `Signature:` line already
- *  states the type, so the popup does not add a `Type:` one (matching what the completer does for a
- *  `function` row). */
+/**
+ * Numbat's `print_info` opens a function's card with this label; its `Signature:` line already
+ * states the type, so the popup does not add a `Type:` one (matching what the completer does for a
+ * `function` row).
+ */
 const FUNCTION_CARD = /^\s*Function:/;
 
 /** The card's two halves, in the shape the popup builder takes them. */
@@ -42,8 +44,10 @@ export interface CardPlan {
   /** The documentation body. */
   info: CompletionInfo;
 
-  /** The type signature shown above it, or `null` when there is none to show, either because the
-   *  probe does not type, or because the body already states it. */
+  /**
+   * The type signature shown above it, or `null` when there is none to show, either because the
+   * probe does not type, or because the body already states it.
+   */
   signature: string | null;
 }
 

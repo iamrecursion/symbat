@@ -32,18 +32,24 @@ import {
 // SYNTAX AND DEFAULTS
 // ================================================================================================
 
-/** The configurable syntax of inline evaluation. Defaults below; the prefixes are also exposed as
- *  settings, so a user can pick rarer markers. */
+/**
+ * The configurable syntax of inline evaluation. Defaults below; the prefixes are also exposed as
+ * settings, so a user can pick rarer markers.
+ */
 export interface InlineEvalConfig {
   /** Prefix for a live span (default `n`). */
   live: string;
 
-  /** Prefix for a concrete span (default `nc`). Matched in preference to `live` when both could
-   *  apply (it is the longer of the two). */
+  /**
+   * Prefix for a concrete span (default `nc`). Matched in preference to `live` when both could
+   * apply (it is the longer of the two).
+   */
   concrete: string;
 
-  /** Separator between a concrete span's expression and its materialized value (default `⇒`). The
-   *  plugin owns everything from the first separator onward. */
+  /**
+   * Separator between a concrete span's expression and its materialized value (default `⇒`). The
+   * plugin owns everything from the first separator onward.
+   */
   separator: string;
 
   /** Whether to detect spans in YAML frontmatter (note properties). */
@@ -52,8 +58,10 @@ export interface InlineEvalConfig {
   /** Whether to detect spans inside non-`numbat` fenced code blocks. */
   codeBlocks: boolean;
 
-  /** Display inline results with this many decimal places (truncated / zero-padded via Numbat's own
-   *  format specifiers), or `null` for full precision. A span's `{dp=…}` config overrides it. */
+  /**
+   * Display inline results with this many decimal places (truncated / zero-padded via Numbat's own
+   * format specifiers), or `null` for full precision. A span's `{dp=…}` config overrides it.
+   */
   decimalPlaces: number | null;
 }
 
@@ -66,13 +74,17 @@ export const DEFAULT_CONCRETE_PREFIX = "nc";
 /** The concrete value separator default (`⇒`). */
 export const DEFAULT_SEPARATOR = "⇒";
 
-/** An ASCII `=>` typed where the separator goes is accepted as one, and normalized to the real
- *  separator on the next write-back — so a user can introduce the value region by hand without
- *  hunting for `⇒`. */
+/**
+ * An ASCII `=>` typed where the separator goes is accepted as one, and normalized to the real
+ * separator on the next write-back — so a user can introduce the value region by hand without
+ * hunting for `⇒`.
+ */
 export const SEPARATOR_ALIAS = "=>";
 
-/** The most decimal places a `dp` accepts — beyond an f64's precision, more places only print
- *  noise. */
+/**
+ * The most decimal places a `dp` accepts — beyond an f64's precision, more places only print
+ * noise.
+ */
 export const MAX_DECIMAL_PLACES = 15;
 
 /** The default inline-eval syntax and scope (both extended contexts on, full precision). */
@@ -85,8 +97,10 @@ export const DEFAULT_INLINE_CONFIG: InlineEvalConfig = {
   decimalPlaces: null,
 };
 
-/** A located inline-eval span within a single line of markdown source. All columns are 0-indexed
- *  character offsets within the line. */
+/**
+ * A located inline-eval span within a single line of markdown source. All columns are 0-indexed
+ * character offsets within the line.
+ */
 export interface InlineSpan {
   /** Which trigger this is. */
   variant: "live" | "concrete";
@@ -109,31 +123,43 @@ export interface InlineSpan {
   /** Number of backticks in each delimiter run. */
   tickLen: number;
 
-  /** The text inside a `{…}` config sitting immediately after the opening backticks (`` n`{dp=2}
-   *  expr` ``), or `null` when the span has none. */
+  /**
+   * The text inside a `{…}` config sitting immediately after the opening backticks (`` n`{dp=2}
+   * expr` ``), or `null` when the span has none.
+   */
   configText: string | null;
 
-  /** Column where the expression begins: just past the config's `}` when there is one, else {@link
-   *  contentStart}. */
+  /**
+   * Column where the expression begins: just past the config's `}` when there is one, else {@link
+   * contentStart}.
+   */
   exprStart: number;
 
-  /** The Numbat expression to evaluate: the content between the config (if any) and the separator
-   *  (for a concrete span) or the closing backticks, trimmed. */
+  /**
+   * The Numbat expression to evaluate: the content between the config (if any) and the separator
+   * (for a concrete span) or the closing backticks, trimmed.
+   */
   expr: string;
 
-  /** Column just past the expression region (where highlighting of `expr` stops): the separator's
-   *  column for a concrete span that has one, else `contentEnd`. */
+  /**
+   * Column just past the expression region (where highlighting of `expr` stops): the separator's
+   * column for a concrete span that has one, else `contentEnd`.
+   */
   exprEnd: number;
 
   /** Column of the separator character for a concrete span that has one, else `null`. */
   separatorAt: number | null;
 
-  /** The separator text actually written there — the configured `⇒` or the typed `=>` alias — for a
-   *  concrete span that has one, else `null`. */
+  /**
+   * The separator text actually written there — the configured `⇒` or the typed `=>` alias — for a
+   * concrete span that has one, else `null`.
+   */
   separatorText: string | null;
 
-  /** The current materialized value text (trimmed) for a concrete span that has a separator, else
-   *  `null`. Compared against a fresh evaluation to decide whether the span needs rewriting. */
+  /**
+   * The current materialized value text (trimmed) for a concrete span that has a separator, else
+   * `null`. Compared against a fresh evaluation to decide whether the span needs rewriting.
+   */
   resultText: string | null;
 }
 
@@ -242,8 +268,10 @@ export function findInlineSpans(line: string, config: InlineEvalConfig): InlineS
   return spans;
 }
 
-/** The first separator in a concrete span's content — the configured one or the typed `=>` alias,
- *  whichever comes first — or `null` when there is none. */
+/**
+ * The first separator in a concrete span's content — the configured one or the typed `=>` alias,
+ * whichever comes first — or `null` when there is none.
+ */
 function findSeparator(content: string, config: InlineEvalConfig): { at: number; text: string; } | null {
   let best: { at: number; text: string; } | null = null;
 
@@ -261,8 +289,10 @@ function findSeparator(content: string, config: InlineEvalConfig): { at: number;
   return best;
 }
 
-/** A `{…}` config at the very start of a span's content — `null` when the content does not begin
- *  with `{`, or the brace never closes (then it is expression text, not a config). */
+/**
+ * A `{…}` config at the very start of a span's content — `null` when the content does not begin
+ * with `{`, or the brace never closes (then it is expression text, not a config).
+ */
 function leadingConfig(content: string): { text: string; end: number; } | null {
   if (content[0] !== "{") {
     return null;
@@ -276,9 +306,11 @@ function leadingConfig(content: string): { text: string; end: number; } | null {
   return { text: content.slice(1, close), end: close + 1 };
 }
 
-/** Assemble an {@link InlineSpan}: strip a leading `{…}` config, then split a concrete span's
- *  remaining content at its first separator into the expression and the materialized value
- *  region. */
+/**
+ * Assemble an {@link InlineSpan}: strip a leading `{…}` config, then split a concrete span's
+ * remaining content at its first separator into the expression and the materialized value
+ * region.
+ */
 function buildSpan(
   line: string,
   config: InlineEvalConfig,
@@ -445,8 +477,10 @@ export function configError(configText: string | null): string | null {
   return null;
 }
 
-/** An "error"-kind result carrying a config syntax error — it takes display precedence over the
- *  expression's own outcome (which is still evaluated for its state effects). */
+/**
+ * An "error"-kind result carrying a config syntax error — it takes display precedence over the
+ * expression's own outcome (which is still evaluated for its state effects).
+ */
 export function configErrorResult(error: string): InlineResult {
   return emptyResult(true, error);
 }
@@ -481,10 +515,12 @@ export function spanDecimalPlaces(span: InlineSpan, config: InlineEvalConfig): n
 // WALKING A NOTE
 // ================================================================================================
 
-/** A unit of a note that contributes to inline evaluation, in document order: the body of a
- *  `numbat-shared` block (replayed into the session) or a located inline span (evaluated, and its
- *  result recorded). Only `numbat`/`numbat-shared` block bodies are excluded from inline detection
- *  — their contents are numbat code, handled by the block itself. */
+/**
+ * A unit of a note that contributes to inline evaluation, in document order: the body of a
+ * `numbat-shared` block (replayed into the session) or a located inline span (evaluated, and its
+ * result recorded). Only `numbat`/`numbat-shared` block bodies are excluded from inline detection
+ * — their contents are numbat code, handled by the block itself.
+ */
 export type NoteUnit =
   | { kind: "shared"; code: string; line: number; }
   | { kind: "inline"; span: InlineSpan; line: number; };
@@ -505,15 +541,19 @@ class NoteWalk {
   /** The shared fence/frontmatter tracker this adds inline-span rules on top of. */
   private readonly walk = new FenceWalk();
 
-  /** The body lines of the block currently open, accumulated so a closing `numbat-shared` fence can
-   *  hand its source back for replay. */
+  /**
+   * The body lines of the block currently open, accumulated so a closing `numbat-shared` fence can
+   * hand its source back for replay.
+   */
   private body: string[] = [];
 
   /** @param config decides which regions carry spans — notably whether frontmatter does. */
   constructor(private readonly config: InlineEvalConfig) {}
 
-  /** Consume one line: whether it is scanned for inline spans, and the body of a `numbat-shared`
-   *  block the line just closed (`null` otherwise). */
+  /**
+   * Consume one line: whether it is scanned for inline spans, and the body of a `numbat-shared`
+   * block the line just closed (`null` otherwise).
+   */
   step(text: string): { scans: boolean; closedShared: string | null; } {
     const line = this.walk.step(text);
 
@@ -669,18 +709,26 @@ export function noteSignature(
 // EVALUATION RESULTS
 // ================================================================================================
 
-/** What one inline evaluation produced, shaping what the editor and reading view show for the
- *  span. */
+/**
+ * What one inline evaluation produced, shaping what the editor and reading view show for the
+ * span.
+ */
 export type InlineResultKind =
-  /** An expression with a value: the committable widget / `nc` materialization / reading-view
-   *  replacement. */
+  /**
+   * An expression with a value: the committable widget / `nc` materialization / reading-view
+   * replacement.
+   */
   | "value"
-  /** A `let` declaration whose evaluated value is worth showing — an informational hint only
-   *  (mirroring the code-block inlay), never committed or materialized, since replacing the span
-   *  would delete the definition. */
+  /**
+   * A `let` declaration whose evaluated value is worth showing — an informational hint only
+   * (mirroring the code-block inlay), never committed or materialized, since replacing the span
+   * would delete the definition.
+   */
   | "binding"
-  /** A statement with nothing to show (a command, or a binding whose value just repeats its
-   *  source). */
+  /**
+   * A statement with nothing to show (a command, or a binding whose value just repeats its
+   * source).
+   */
   | "none"
   /** An incomplete expression: show the missing operand's type as a placeholder. */
   | "hole"
@@ -692,8 +740,10 @@ export interface InlineResult {
   /** Which outcome this is, and so which of the fields below are populated. */
   kind: InlineResultKind;
 
-  /** The `= value` fragment (HTML), the trailing `[Dim]` dropped — the editor widget/hint ("value"
-   *  / "binding"). */
+  /**
+   * The `= value` fragment (HTML), the trailing `[Dim]` dropped — the editor widget/hint ("value"
+   * / "binding").
+   */
   resultHtml: string | null;
 
   /** The bare value (HTML), no leading `=` — the reading-view replacement ("value"). */
@@ -711,8 +761,10 @@ export interface InlineResult {
   /** The missing operand's type ("hole"). */
   holeType: string | null;
 
-  /** Whether `plain` is the decimal-places display form (see {@link roundedText}); consumers then
-   *  render from `plain` rather than the formatter HTML above. */
+  /**
+   * Whether `plain` is the decimal-places display form (see {@link roundedText}); consumers then
+   * render from `plain` rather than the formatter HTML above.
+   */
   rounded: boolean;
 }
 
@@ -730,8 +782,10 @@ function emptyResult(isError: boolean, errorText: string | null = null): InlineR
   };
 }
 
-/** A result carrying a value: an expression's own ("value") or the one a `let` binding bound
- *  ("binding"). `result` is the formatter's `= value [Dim]` fragment. */
+/**
+ * A result carrying a value: an expression's own ("value") or the one a `let` binding bound
+ * ("binding"). `result` is the formatter's `= value [Dim]` fragment.
+ */
 function valueResult(kind: "value" | "binding", result: string): InlineResult {
   const valueHtml = inlineValueHtml(result);
   return {
@@ -792,8 +846,10 @@ export function deriveInlineResult(output: string, isError: boolean): InlineResu
   return valueResult("value", result);
 }
 
-/** `result` with its `plain` replaced by the fixed-decimal display of `target` when `dp` is set and
- *  the formatted probe succeeds; unchanged otherwise. */
+/**
+ * `result` with its `plain` replaced by the fixed-decimal display of `target` when `dp` is set and
+ * the formatted probe succeeds; unchanged otherwise.
+ */
 function withRounding(run: LineInterpret, result: InlineResult, target: string, dp: number | null): InlineResult {
   if (dp === null) {
     return result;

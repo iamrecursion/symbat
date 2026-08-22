@@ -68,8 +68,10 @@ function vocabulary(over: Partial<CompletionVocabulary> = {}): CompletionVocabul
 
 const byText = (candidates: SearchCandidate[], text: string) => candidates.find((c) => c.text === text);
 
-/** A deterministic stand-in for Obsidian's fuzzy search: case-insensitive subsequence, scoring an
- *  earlier first match higher, so ranking is testable without Obsidian. */
+/**
+ * A deterministic stand-in for Obsidian's fuzzy search: case-insensitive subsequence, scoring an
+ * earlier first match higher, so ranking is testable without Obsidian.
+ */
 function fakeScorer(query: string): FuzzyScorer {
   const needle = query.toLowerCase();
   return (text: string) => {

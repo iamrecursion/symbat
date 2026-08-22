@@ -29,44 +29,58 @@ import { WORD_CHAR } from "../syntax/identifier";
 
 /** How one frontmatter property became (or failed to become) a binding. */
 export interface PropertyBinding {
-  /** The property name as written in the frontmatter — the dotted path for a nested one
-   *  (`costs.total`), matching how Obsidian's property UI keys it. */
+  /**
+   * The property name as written in the frontmatter — the dotted path for a nested one
+   * (`costs.total`), matching how Obsidian's property UI keys it.
+   */
   key: string;
 
-  /** The frontmatter keys leading to the property, outermost first. A top-level property's path is
-   *  `[key]`, so `key === dottedKey(path)` throughout. */
+  /**
+   * The frontmatter keys leading to the property, outermost first. A top-level property's path is
+   * `[key]`, so `key === dottedKey(path)` throughout.
+   */
   path: string[];
 
-  /** What the binding is addressed by in Numbat: an identifier per {@link sanitizeIdentifier} at
-   *  the top level, and a dotted *field path* into the object's struct when nested (`costs.total`)
-   *  — so this is a Numbat expression, not necessarily an identifier. */
+  /**
+   * What the binding is addressed by in Numbat: an identifier per {@link sanitizeIdentifier} at
+   * the top level, and a dotted *field path* into the object's struct when nested (`costs.total`)
+   * — so this is a Numbat expression, not necessarily an identifier.
+   */
   name: string;
 
   /** The expression text the binding evaluates (the property's value). */
   expr: string;
 
-  /** The value as the reader wrote it, present only where {@link expr} is *not* it — today the only
-   *  cause is a substituted zero, whether {@link groundZero} did it to the value itself or
-   *  {@link groundItemZero} to something inside a list. Consumers that reason about what is on the
-   *  page rather than what is evaluated want this: it is why a grounded `0` still counts as
-   *  restating its own source, and so still shows no `= 0` beside it. */
+  /**
+   * The value as the reader wrote it, present only where {@link expr} is *not* it — today the only
+   * cause is a substituted zero, whether {@link groundZero} did it to the value itself or
+   * {@link groundItemZero} to something inside a list. Consumers that reason about what is on the
+   * page rather than what is evaluated want this: it is why a grounded `0` still counts as
+   * restating its own source, and so still shows no `= 0` beside it.
+   */
   written?: string;
 
-  /** The `struct` definitions {@link expr} itself needs — the element type of an array of objects,
-   *  and nothing else, so this is empty for almost every binding. Replayed immediately *before*
-   *  {@link code} by every surface that replays a preamble.
+  /**
+   * The `struct` definitions {@link expr} itself needs — the element type of an array of objects,
+   * and nothing else, so this is empty for almost every binding. Replayed immediately *before*
+   * {@link code} by every surface that replays a preamble.
    *
-   *  Kept out of `code` rather than folded into it because the two surfaces that show a binding's
-   *  value (the frontmatter inlays and the scope inspector) evaluate `expr` on its own and *then*
-   *  run `code`: a definition living in both would be declared twice, which Numbat rejects. */
+   * Kept out of `code` rather than folded into it because the two surfaces that show a binding's
+   * value (the frontmatter inlays and the scope inspector) evaluate `expr` on its own and *then*
+   * run `code`: a definition living in both would be declared twice, which Numbat rejects.
+   */
   defs: string[];
 
-  /** The complete statement replayed into the note scope: a `let` for a top-level property, and the
-   *  struct definition(s) plus the rebuilt `let` of the whole object for a nested one. */
+  /**
+   * The complete statement replayed into the note scope: a `let` for a top-level property, and the
+   * struct definition(s) plus the rebuilt `let` of the whole object for a nested one.
+   */
   code: string;
 
-  /** Whether the property is numbat-typed (its value is an expression), or the kind of untyped
-   *  value it rode along as. */
+  /**
+   * Whether the property is numbat-typed (its value is an expression), or the kind of untyped
+   * value it rode along as.
+   */
   kind: "expression" | PlainKind;
 
   /**
@@ -87,18 +101,24 @@ export interface PropertyBinding {
   warning?: string;
 }
 
-/** Why a property contributed no binding. `reserved` and `unsupported` are surfaced as errors on
- *  numbat-typed properties; the rest are quiet. */
+/**
+ * Why a property contributed no binding. `reserved` and `unsupported` are surfaced as errors on
+ * numbat-typed properties; the rest are quiet.
+ */
 export type PropertySkipReason = "reserved" | "invalid-name" | "duplicate" | "unsupported";
 
-/** A property that contributed no binding, and why — for the property widget (and, later, the
- *  note-scope inspector) to surface. */
+/**
+ * A property that contributed no binding, and why — for the property widget (and, later, the
+ * note-scope inspector) to surface.
+ */
 export interface PropertySkip {
   /** The property's own key, as written in the frontmatter. */
   key: string;
 
-  /** The frontmatter keys leading to the property, as on {@link PropertyBinding}. An object skipped
-   *  as a whole reports the object's own path. */
+  /**
+   * The frontmatter keys leading to the property, as on {@link PropertyBinding}. An object skipped
+   * as a whole reports the object's own path.
+   */
   path: string[];
 
   /** Why it bound nothing, as a machine-readable tag. */
@@ -108,25 +128,33 @@ export interface PropertySkip {
   message: string;
 }
 
-/** The note preamble: every property-derived binding in frontmatter order, the properties that were
- *  skipped, and the signature component that keys the evaluation caches. */
+/**
+ * The note preamble: every property-derived binding in frontmatter order, the properties that were
+ * skipped, and the signature component that keys the evaluation caches.
+ */
 export interface NotePreamble {
-  /** The bindings the frontmatter contributed, in the order they were written — which is the order
-   *  they must be replayed in, since a later one may use an earlier one's name. */
+  /**
+   * The bindings the frontmatter contributed, in the order they were written — which is the order
+   * they must be replayed in, since a later one may use an earlier one's name.
+   */
   bindings: PropertyBinding[];
 
   /** The properties that contributed nothing, each with its reason. */
   skips: PropertySkip[];
 
-  /** The binding statements joined with newlines — `""` when there are none. Part of every
-   *  evaluation cache key, so a property edit re-evaluates. */
+  /**
+   * The binding statements joined with newlines — `""` when there are none. Part of every
+   * evaluation cache key, so a property edit re-evaluates.
+   */
   source: string;
 
-  /** The cross-note import chunks replayed *before* the bindings (transitively gathered
-   *  `numbat-shared` blocks + typed properties of `numbat-use` targets), each interpreted
-   *  separately so one broken import cannot sink the rest. Attached by the Obsidian bridge
-   *  (properties/note.ts) — the pure derivation never sets it. Folded into {@link source} so an
-   *  import change re-evaluates. */
+  /**
+   * The cross-note import chunks replayed *before* the bindings (transitively gathered
+   * `numbat-shared` blocks + typed properties of `numbat-use` targets), each interpreted
+   * separately so one broken import cannot sink the rest. Attached by the Obsidian bridge
+   * (properties/note.ts) — the pure derivation never sets it. Folded into {@link source} so an
+   * import change re-evaluates.
+   */
   imports?: string[];
 }
 
@@ -155,8 +183,10 @@ export function preambleChunks(preamble: NotePreamble): string[] {
 // NUMBAT NAMES FROM YAML KEYS
 // ================================================================================================
 
-/** Numbat identifiers may not *begin* with a digit, so {@link sanitizeIdentifier} guards a leading
- *  one with an underscore. */
+/**
+ * Numbat identifiers may not *begin* with a digit, so {@link sanitizeIdentifier} guards a leading
+ * one with an underscore.
+ */
 const DIGIT = /[0-9]/;
 
 /**
@@ -191,8 +221,10 @@ export function sanitizeIdentifier(key: string): string | null {
   return name;
 }
 
-/** The dotted form of a property path — how a nested property is named, both in Numbat (a field
- *  path into the object's struct) and in Obsidian's property UI. */
+/**
+ * The dotted form of a property path — how a nested property is named, both in Numbat (a field
+ * path into the object's struct) and in Obsidian's property UI.
+ */
 export function dottedKey(path: readonly string[]): string {
   return path.join(".");
 }
@@ -252,9 +284,11 @@ export const FIELD_KEYWORDS: ReadonlySet<string> = new Set([
   "and",
 ]);
 
-/** How deep the descent goes before giving up. Frontmatter this deep is already past the point of
- *  being readable; the cap is a backstop against pathological input, paired with (not a substitute
- *  for) the cycle guard. */
+/**
+ * How deep the descent goes before giving up. Frontmatter this deep is already past the point of
+ * being readable; the cap is a backstop against pathological input, paired with (not a substitute
+ * for) the cycle guard.
+ */
 export const MAX_PROPERTY_DEPTH = 8;
 
 /**
@@ -273,9 +307,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** A short, identifier-safe digest (FNV-1a, base36). Keeps generated struct names from colliding
- *  (see {@link PreambleRules.namespace}), and stamps the persisted reserved-name set
- *  (properties/reserved-names.ts) with what it was built from. */
+/**
+ * A short, identifier-safe digest (FNV-1a, base36). Keeps generated struct names from colliding
+ * (see {@link PreambleRules.namespace}), and stamps the persisted reserved-name set
+ * (properties/reserved-names.ts) with what it was built from.
+ */
 export function digest(text: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i += 1) {
@@ -311,27 +347,37 @@ export interface PlainBindings {
   booleans: boolean;
 }
 
-/** No untyped value rides along — what a note exports to the notes that `numbat-use` it, which only
- *  ever see its *typed* properties. */
+/**
+ * No untyped value rides along — what a note exports to the notes that `numbat-use` it, which only
+ * ever see its *typed* properties.
+ */
 export const PLAIN_NONE: PlainBindings = { numbers: false, text: false, dates: false, booleans: false };
 
-/** Every untyped value rides along — the shipped default, and what the whole of this file is
- *  described against. */
+/**
+ * Every untyped value rides along — the shipped default, and what the whole of this file is
+ * described against.
+ */
 export const PLAIN_ALL: PlainBindings = { numbers: true, text: true, dates: true, booleans: true };
 
-/** What {@link derivePreamble} needs to know about the world: which property names are assigned the
- *  numbat type, whether a candidate identifier is already taken by the prelude, and which untyped
- *  values ride along. */
+/**
+ * What {@link derivePreamble} needs to know about the world: which property names are assigned the
+ * numbat type, whether a candidate identifier is already taken by the prelude, and which untyped
+ * values ride along.
+ */
 export interface PreambleRules {
-  /** Whether this property name (as written) is assigned the numbat type. A nested property is
-   *  asked about under its dotted path (`costs.total`), which is how Obsidian's property UI
-   *  addresses it. */
+  /**
+   * Whether this property name (as written) is assigned the numbat type. A nested property is
+   * asked about under its dotted path (`costs.total`), which is how Obsidian's property UI
+   * addresses it.
+   */
   isNumbatTyped: (key: string) => boolean;
 
-  /** Whether this identifier already names a prelude unit / function / variable / dimension — such
-   *  a property is skipped rather than shadowing it (`m: 5` would otherwise silently turn `5 m`
-   *  into arithmetic). Asked about top-level property names and object keys; struct field names
-   *  have their own namespace and are checked against {@link FIELD_KEYWORDS} instead. */
+  /**
+   * Whether this identifier already names a prelude unit / function / variable / dimension — such
+   * a property is skipped rather than shadowing it (`m: 5` would otherwise silently turn `5 m`
+   * into arithmetic). Asked about top-level property names and object keys; struct field names
+   * have their own namespace and are checked against {@link FIELD_KEYWORDS} instead.
+   */
   isReserved: (name: string) => boolean;
 
   /** Which untyped values ride along as bindings. */
@@ -400,15 +446,19 @@ export interface PreambleRules {
    */
   zoneOffset?: (zone: string, isoLocal: string) => string | null;
 
-  /** Disambiguates the struct type names an object binding generates. A note's properties and those
-   *  of every note it imports replay into one interpreter, and a repeated `struct` definition is a
-   *  hard error (where a repeated `let` is harmless), so the emitting note's path goes here.
-   *  Defaults to `""`, which is safe for a note that imports nothing. */
+  /**
+   * Disambiguates the struct type names an object binding generates. A note's properties and those
+   * of every note it imports replay into one interpreter, and a repeated `struct` definition is a
+   * hard error (where a repeated `let` is harmless), so the emitting note's path goes here.
+   * Defaults to `""`, which is safe for a note that imports nothing.
+   */
   namespace?: string;
 }
 
-/** Property types whose value is a checkbox — the tri-state core one, whose *unset* state is a
- *  `null` that binds `false`, and Better Properties' two-state toggle. */
+/**
+ * Property types whose value is a checkbox — the tri-state core one, whose *unset* state is a
+ * `null` that binds `false`, and Better Properties' two-state toggle.
+ */
 const CHECKBOX_TYPES: ReadonlySet<string> = new Set(["checkbox", "better-properties:toggle"]);
 
 /**
@@ -465,8 +515,10 @@ const DATE_TYPES: ReadonlySet<string> = new Set([
  */
 export const UNBOUND_KEYS: ReadonlySet<string> = new Set(["numbat-use", "tags", "aliases", "cssclasses"]);
 
-/** The value of a numbat-typed property as an expression string, or `null` when the value's shape
- *  cannot hold one (a list, an object, a boolean toggle). */
+/**
+ * The value of a numbat-typed property as an expression string, or `null` when the value's shape
+ * cannot hold one (a list, an object, a boolean toggle).
+ */
 function expressionText(value: unknown): string | null {
   if (typeof value === "string") {
     return value.trim();
@@ -616,8 +668,10 @@ const ZONE_NAME = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)*$/;
 /** A fixed offset in either spelling {@link DATE_TEXT} admits. */
 const PLAIN_OFFSET = /^(?:([Zz])|([+-])(\d{2}):?(\d{2}))$/;
 
-/** The `Etc/GMT±H` zones exist for whole hours from −14 through +12 — those are the bounds, and
- *  they are the *offset's*, so they read backwards from the names. See {@link fixedDisplayZone}. */
+/**
+ * The `Etc/GMT±H` zones exist for whole hours from −14 through +12 — those are the bounds, and
+ * they are the *offset's*, so they read backwards from the names. See {@link fixedDisplayZone}.
+ */
 const MAX_EAST_HOURS = 14;
 const MAX_WEST_HOURS = 12;
 
@@ -777,8 +831,10 @@ function plainExpression(reading: Reading, key: string, value: unknown): { expr:
   return plain.text ? { expr: stringLiteral(text), kind: "text" } : null;
 }
 
-/** The {@link PlainBindings} in force below the top level — the nested rule when the caller set
- *  one, and otherwise the same rule as everywhere else. */
+/**
+ * The {@link PlainBindings} in force below the top level — the nested rule when the caller set
+ * one, and otherwise the same rule as everywhere else.
+ */
 function nestedPlain(rules: PreambleRules): PlainBindings {
   return rules.plainNested ?? rules.plain;
 }
@@ -839,9 +895,11 @@ function hasBindableLeaf(
     : plainExpression(reading, key, value) !== null;
 }
 
-/** The shared recursion of {@link hasBindableLeaf}: each child at its own path, with the walk's own
- *  two guards — the depth limit and a cyclic YAML anchor — applied where the walk applies them,
- *  which is to a nested container and never to a leaf. */
+/**
+ * The shared recursion of {@link hasBindableLeaf}: each child at its own path, with the walk's own
+ * two guards — the depth limit and a cyclic YAML anchor — applied where the walk applies them,
+ * which is to a nested container and never to a leaf.
+ */
 function descend(
   reading: Reading,
   children: readonly (readonly [string, unknown])[],
@@ -868,8 +926,10 @@ function descend(
   });
 }
 
-/** One bound field of an object under construction: a leaf (`children === null`) or a nested
- *  object, in the order the fields were bound. */
+/**
+ * One bound field of an object under construction: a leaf (`children === null`) or a nested
+ * object, in the order the fields were bound.
+ */
 interface FieldNode {
   /** The field's Numbat-safe name within its parent struct. */
   name: string;
@@ -878,9 +938,11 @@ interface FieldNode {
   children: FieldNode[] | null;
 }
 
-/** An object property mid-derivation. The root name is claimed lazily — on the first leaf that
- *  actually binds — so an object holding nothing bindable stays silent instead of reserving a name
- *  or reporting a skip. */
+/**
+ * An object property mid-derivation. The root name is claimed lazily — on the first leaf that
+ * actually binds — so an object holding nothing bindable stays silent instead of reserving a name
+ * or reporting a skip.
+ */
 interface ObjectState {
   /** The object's frontmatter key, as written. */
   rootKey: string;
@@ -888,8 +950,10 @@ interface ObjectState {
   /** The Numbat name the object will bind, once a leaf claims it. */
   rootName: string;
 
-  /** A digest of the object's shape, so two identically-shaped objects share one generated `struct`
-   *  rather than declaring a duplicate. */
+  /**
+   * A digest of the object's shape, so two identically-shaped objects share one generated `struct`
+   * rather than declaring a duplicate.
+   */
   hash: string;
 
   /** The fields bound so far, in binding order. */
@@ -898,12 +962,16 @@ interface ObjectState {
   /** Distinguishes same-shaped objects that nonetheless need separate structs. */
   generation: number;
 
-  /** Whether {@link rootName} has been reserved — deferred until the first leaf actually binds, so
-   *  an object with nothing bindable reserves no name. */
+  /**
+   * Whether {@link rootName} has been reserved — deferred until the first leaf actually binds, so
+   * an object with nothing bindable reserves no name.
+   */
   claimed: boolean;
 
-  /** Whether derivation gave up on this object, so its remaining leaves are skipped rather than
-   *  half-bound. */
+  /**
+   * Whether derivation gave up on this object, so its remaining leaves are skipped rather than
+   * half-bound.
+   */
   failed: boolean;
 }
 
@@ -912,10 +980,12 @@ interface Walk {
   /** What the walk is allowed to bind — reserved names, the type registry. */
   rules: PreambleRules;
 
-  /** The {@link PlainBindings} in force *here*: `rules.plain` at the top level, and
-   *  `rules.plainNested` below it. Swapped by the two places that descend (an object property, and
-   *  an array's items) and restored on the way out, so every reading of an untyped value asks about
-   *  the depth it is actually at. */
+  /**
+   * The {@link PlainBindings} in force *here*: `rules.plain` at the top level, and
+   * `rules.plainNested` below it. Swapped by the two places that descend (an object property, and
+   * an array's items) and restored on the way out, so every reading of an untyped value asks about
+   * the depth it is actually at.
+   */
   plain: PlainBindings;
 
   /** Bindings accumulated so far, in frontmatter order. */
@@ -924,8 +994,10 @@ interface Walk {
   /** Skips accumulated so far. */
   skips: PropertySkip[];
 
-  /** Top-level Numbat names already bound — object roots included, since an object binds a `let` of
-   *  its own name like any other property. */
+  /**
+   * Top-level Numbat names already bound — object roots included, since an object binds a `let` of
+   * its own name like any other property.
+   */
   taken: Set<string>;
 }
 
@@ -941,15 +1013,19 @@ interface Walk {
  * type error stays Numbat's to report.
  */
 interface ItemKind {
-  /** What is held here, or `null` when nothing concrete has been seen yet: the element of an empty
-   *  list, which has no element type to disagree with and so fits beside any list. */
+  /**
+   * What is held here, or `null` when nothing concrete has been seen yet: the element of an empty
+   * list, which has no element type to disagree with and so fits beside any list.
+   */
   shape: ItemShape | null;
 
-  /** Whether anything at this position was *absent*, so every item must write it as a nullable —
-   *  see {@link renderNode}. This is what separates an absence (`shape: null, nullable: true`) from
-   *  an empty list's element (`shape: null, nullable: false`), which are otherwise alike and must
-   *  not merge: the first makes its neighbours nullable, the second must never make `[[], [1],
-   *  ["a"]]` bind. */
+  /**
+   * Whether anything at this position was *absent*, so every item must write it as a nullable —
+   * see {@link renderNode}. This is what separates an absence (`shape: null, nullable: true`) from
+   * an empty list's element (`shape: null, nullable: false`), which are otherwise alike and must
+   * not merge: the first makes its neighbors nullable, the second must never make `[[], [1],
+   * ["a"]]` bind.
+   */
   nullable: boolean;
 }
 
@@ -962,8 +1038,10 @@ type ItemShape =
   /** An object, and the fields it bound. */
   | { of: "struct"; fields: ItemField[]; };
 
-/** One bound field of an array element's struct type: its Numbat name, and what it holds — which
- *  every other element's field of that name is held to. */
+/**
+ * One bound field of an array element's struct type: its Numbat name, and what it holds — which
+ * every other element's field of that name is held to.
+ */
 interface ItemField {
   /** The field's Numbat name within its element's struct. */
   name: string;
@@ -983,9 +1061,11 @@ interface ItemField {
 type ItemNode =
   /** An explicit absence: an empty property at this position. */
   | { of: "absent"; }
-  /** A leaf, as the Numbat literal or expression it rode along as. `written` is what stood here
-   *  before {@link groundItemZero} substituted for it, and is present only where it did — see
-   *  {@link PropertyBinding.written} for what wants it. */
+  /**
+   * A leaf, as the Numbat literal or expression it rode along as. `written` is what stood here
+   * before {@link groundItemZero} substituted for it, and is present only where it did — see
+   * {@link PropertyBinding.written} for what wants it.
+   */
   | { of: "scalar"; expr: string; written?: string; }
   /** A nested list. */
   | { of: "list"; items: ItemNode[]; }
@@ -997,8 +1077,10 @@ interface ItemValue {
   /** The element as found, awaiting rendering. */
   node: ItemNode;
 
-  /** The kind every sibling must match, so an untyped `[1, "a"]` — or `[{a: 1}, {a: "x"}]`, which
-   *  differs only under its field names — stays out rather than binding a list Numbat rejects. */
+  /**
+   * The kind every sibling must match, so an untyped `[1, "a"]` — or `[{a: 1}, {a: "x"}]`, which
+   * differs only under its field names — stays out rather than binding a list Numbat rejects.
+   */
   kind: ItemKind;
 }
 
@@ -1015,37 +1097,51 @@ function kindOf(shape: ItemShape): ItemKind {
 
 /** One array binding under construction. */
 interface ListState {
-  /** The `struct` definitions the array's element type needs, innermost first — empty unless the
-   *  array holds objects. */
+  /**
+   * The `struct` definitions the array's element type needs, innermost first — empty unless the
+   * array holds objects.
+   */
   defs: string[];
 
-  /** A digest of the emitting note and the array's item path, keeping the generated struct names
-   *  apart from every other property's (a repeated `struct` definition is a hard error). */
+  /**
+   * A digest of the emitting note and the array's item path, keeping the generated struct names
+   * apart from every other property's (a repeated `struct` definition is a hard error).
+   */
   hash: string;
 
-  /** The struct name minted for each object position inside the array, by its dotted path. One type
-   *  per position, shared by every element — which is what makes the list homogeneous. */
+  /**
+   * The struct name minted for each object position inside the array, by its dotted path. One type
+   * per position, shared by every element — which is what makes the list homogeneous.
+   */
   structs: Map<string, string>;
 
-  /** Field-level skips found while building, held back until the array binds: an array that binds
-   *  nothing reports itself, and has no business also reporting its insides. */
+  /**
+   * Field-level skips found while building, held back until the array binds: an array that binds
+   * nothing reports itself, and has no business also reporting its insides.
+   */
   skips: PropertySkip[];
 
-  /** Item paths already reported in {@link skips}, so a bad field name is reported once for the
-   *  array rather than once per element. */
+  /**
+   * Item paths already reported in {@link skips}, so a bad field name is reported once for the
+   * array rather than once per element.
+   */
   reported: Set<string>;
 
   /** Why the array bound nothing — the first failure, reported on the array itself. */
   error: string | null;
 
-  /** Whether anything inside bound as an expression — a field of an array of objects can carry the
-   *  Numbat type even when the array itself does not. */
+  /**
+   * Whether anything inside bound as an expression — a field of an array of objects can carry the
+   * Numbat type even when the array itself does not.
+   */
   expressions: boolean;
 
-  /** The item paths where a **numbat-typed** bare zero was grounded (see {@link groundItemZero}),
-   *  deduplicated — every element of an array shares one path, so a list of ten zeros has one entry
-   *  and reports once. Empty for the plain numbers grounded beside them, which say nothing, exactly
-   *  as {@link zeroWarning} explains for a lone one. */
+  /**
+   * The item paths where a **numbat-typed** bare zero was grounded (see {@link groundItemZero}),
+   * deduplicated — every element of an array shares one path, so a list of ten zeros has one entry
+   * and reports once. Empty for the plain numbers grounded beside them, which say nothing, exactly
+   * as {@link zeroWarning} explains for a lone one.
+   */
   grounded: Set<string>;
 }
 
@@ -1065,7 +1161,7 @@ interface ListState {
  */
 function sameKind(a: ItemKind, b: ItemKind): boolean {
   // A position nothing concrete has reached — an empty list's element — agrees with anything, and
-  // Numbat gives it whatever its neighbours have.
+  // Numbat gives it whatever its neighbors have.
   if (a.shape === null || b.shape === null) {
     return true;
   }
@@ -1096,9 +1192,11 @@ function sameShape(a: ItemShape, b: ItemShape): boolean {
   return a.of === b.of;
 }
 
-/** The name of the first field two struct shapes both have and disagree under, quoted for a
- *  message, or `null` when they do not disagree that way. Only for naming the culprit in
- *  {@link listItems}' error — the check itself is {@link sameShape}'s. */
+/**
+ * The name of the first field two struct shapes both have and disagree under, quoted for a
+ * message, or `null` when they do not disagree that way. Only for naming the culprit in
+ * {@link listItems}' error — the check itself is {@link sameShape}'s.
+ */
 function disagreeingField(a: ItemShape, b: ItemShape): string | null {
   if (a.of !== "struct" || b.of !== "struct") {
     return null;
@@ -1496,14 +1594,18 @@ function structValue(
  */
 type RenderAs = "bound" | "written";
 
-/** The items of one list as a Numbat list literal, every item written to the *joined* element kind
- *  — which is what makes a position that was absent anywhere nullable everywhere. */
+/**
+ * The items of one list as a Numbat list literal, every item written to the *joined* element kind
+ * — which is what makes a position that was absent anywhere nullable everywhere.
+ */
 function renderList(state: ListState, items: readonly ItemNode[], element: ItemKind, as: RenderAs): string {
   return `[${items.map((item) => renderNode(state, item, element, as)).join(", ")}]`;
 }
 
-/** One position as Numbat source, wrapped as a nullable when anything at this position, in any
- *  item, was absent. */
+/**
+ * One position as Numbat source, wrapped as a nullable when anything at this position, in any
+ * item, was absent.
+ */
 function renderNode(state: ListState, node: ItemNode, kind: ItemKind, as: RenderAs): string {
   if (!kind.nullable) {
     return renderShape(state, node, kind.shape, as);
@@ -1649,8 +1751,10 @@ function typedHole(kind: PlainKind): { def: string; name: string; } {
   return { def: `let ${name}: ${NULLABLE_STRUCT}<${type}> = ${NULLABLE_ABSENT}`, name };
 }
 
-/** The Numbat field name for a key inside an array element, or `null` — with the skip that says why
- *  — when it cannot have one. Reported once per position, not once per element. */
+/**
+ * The Numbat field name for a key inside an array element, or `null` — with the skip that says why
+ * — when it cannot have one. Reported once per position, not once per element.
+ */
 function fieldName(walk: Walk, state: ListState, path: string[], bound: readonly ItemField[]): string | null {
   const key = dottedKey(path);
   const report = (reason: PropertySkipReason, message: string): null => {
@@ -1802,33 +1906,43 @@ function declaredKind(reading: Reading, key: string): PlainKind | null {
   return null;
 }
 
-/** One bound leaf as {@link leafExpression} resolves it: the Numbat expression to bind, whatever
- *  definitions that expression needs replayed first, and how it was read. */
+/**
+ * One bound leaf as {@link leafExpression} resolves it: the Numbat expression to bind, whatever
+ * definitions that expression needs replayed first, and how it was read.
+ */
 interface Leaf {
   /** The expression the binding evaluates. */
   expr: string;
 
-  /** Definitions `expr` depends on — an annotated `let` for a typed hole or a grounded zero, and
-   *  the element type of an array of objects. */
+  /**
+   * Definitions `expr` depends on — an annotated `let` for a typed hole or a grounded zero, and
+   * the element type of an array of objects.
+   */
   defs: string[];
 
   /** Whether the leaf is numbat-typed, or the plain kind it rode along as. */
   kind: "expression" | PlainKind;
 
-  /** The value as written, where `expr` is a substitution for it — see
-   *  {@link PropertyBinding.written}. */
+  /**
+   * The value as written, where `expr` is a substitution for it — see
+   * {@link PropertyBinding.written}.
+   */
   written?: string;
 
   /** What the derivation has to say about this leaf — see {@link PropertyBinding.warning}. */
   warning?: string;
 
-  /** Whether the value says nothing about its own type, so it cannot become a struct field at all
-   *  (see {@link isTypeFree}). */
+  /**
+   * Whether the value says nothing about its own type, so it cannot become a struct field at all
+   * (see {@link isTypeFree}).
+   */
   typeFree?: true;
 }
 
-/** The expression a property contributes, or `null` when it contributes nothing — either quietly
- *  (the common case: an untyped non-number) or as a pushed skip. */
+/**
+ * The expression a property contributes, or `null` when it contributes nothing — either quietly
+ * (the common case: an untyped non-number) or as a pushed skip.
+ */
 function leafExpression(
   walk: Walk,
   path: string[],
@@ -1929,21 +2043,27 @@ function leafExpression(
   return groundZero(key, { expr: plain.expr, defs: [], kind: plain.kind }, inObject);
 }
 
-/** A bare zero, in any spelling YAML or a Numbat expression can write one — `0`, `0.0`, `-0`,
- *  `+0.00`. A plain number always arrives as `String(0)`, so the wider forms are for a value
- *  written under the Numbat type. */
+/**
+ * A bare zero, in any spelling YAML or a Numbat expression can write one — `0`, `0.0`, `-0`,
+ * `+0.00`. A plain number always arrives as `String(0)`, so the wider forms are for a value
+ * written under the Numbat type.
+ */
 const ZERO_LITERAL = /^[+-]?0+(?:\.0*)?$/;
 
-/** Whether an expression is a bare zero — the value {@link groundZero} substitutes. Exported for
- *  the property widget, which judges the text being *typed* rather than the derived binding, so an
- *  advisory clears the moment the value stops being one. */
+/**
+ * Whether an expression is a bare zero — the value {@link groundZero} substitutes. Exported for
+ * the property widget, which judges the text being *typed* rather than the derived binding, so an
+ * advisory clears the moment the value stops being one.
+ */
 export function isBareZero(expr: string): boolean {
   return ZERO_LITERAL.test(expr.trim());
 }
 
-/** The `Scalar` zero {@link groundZero} substitutes, and its definition. One name for the whole
- *  preamble, redefined as often as it is needed — which Numbat allows for a `let`, and which
- *  {@link typedHole} already relies on. */
+/**
+ * The `Scalar` zero {@link groundZero} substitutes, and its definition. One name for the whole
+ * preamble, redefined as often as it is needed — which Numbat allows for a `let`, and which
+ * {@link typedHole} already relies on.
+ */
 const ZERO_NAME = "_Nb_zero_Scalar";
 const ZERO_DEF = `let ${ZERO_NAME}: ${PLAIN_TYPE.number} = 0`;
 
@@ -2023,8 +2143,10 @@ function claimName(walk: Walk, key: string, path: string[], report: boolean): st
   return name;
 }
 
-/** Add the field path to the object's field tree, or `false` when something is already bound there
- *  (two keys that sanitize alike, or a leaf and an object competing for one field name). */
+/**
+ * Add the field path to the object's field tree, or `false` when something is already bound there
+ * (two keys that sanitize alike, or a leaf and an object competing for one field name).
+ */
 function insertField(fields: FieldNode[], segments: readonly string[]): boolean {
   let level = fields;
   for (const [index, segment] of segments.entries()) {
@@ -2428,9 +2550,11 @@ export function derivePreamble(frontmatter: Record<string, unknown>, rules: Prea
 // LOCATING KEYS IN THE SOURCE
 // ================================================================================================
 
-/** Where a frontmatter key is written: the 0-indexed line of the `key:` itself, the column the key
- *  starts at (its indent), and the last line its value occupies — for a mapping, the last line of
- *  the block it opens. */
+/**
+ * Where a frontmatter key is written: the 0-indexed line of the `key:` itself, the column the key
+ * starts at (its indent), and the last line its value occupies — for a mapping, the last line of
+ * the block it opens.
+ */
 export interface KeySite {
   /** 0-indexed line the `key:` is written on. */
   line: number;
@@ -2442,8 +2566,10 @@ export interface KeySite {
   endLine: number;
 }
 
-/** A `key:` line: the indent, the key (bare, double- or single-quoted), and whatever follows the
- *  colon. */
+/**
+ * A `key:` line: the indent, the key (bare, double- or single-quoted), and whatever follows the
+ * colon.
+ */
 const KEY_LINE = /^(\x20*)(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([^\s#:][^:]*?))\x20*:(?:\x20(.*))?$/;
 
 /** A sequence item — never a key line, whatever follows the dash. */
@@ -2454,20 +2580,26 @@ function unquote(text: string, quote: "\"" | "'"): string {
   return quote === "\"" ? text.replace(/\\(.)/g, "$1") : text.replace(/''/g, "'");
 }
 
-/** The value text on a key line, with any trailing comment removed — so `costs: # rough` still
- *  reads as having no value. */
+/**
+ * The value text on a key line, with any trailing comment removed — so `costs: # rough` still
+ * reads as having no value.
+ */
 function valueText(value: string | undefined): string {
   return (value ?? "").replace(/(^|\x20)#.*$/, "$1").trim();
 }
 
-/** What one pass over a note's frontmatter finds: the keys, and the array-item values that have no
- *  key of their own. */
+/**
+ * What one pass over a note's frontmatter finds: the keys, and the array-item values that have no
+ * key of their own.
+ */
 interface FrontmatterScan {
   /** Every key by its dotted path — see {@link frontmatterKeySites}. */
   keys: Map<string, KeySite>;
 
-  /** Every array-item value, by the line it is written on. Keyed by line rather than by path
-   *  because a path (`rates.#`, `people.#.pace`) names one position and repeats once per item. */
+  /**
+   * Every array-item value, by the line it is written on. Keyed by line rather than by path
+   * because a path (`rates.#`, `people.#.pace`) names one position and repeats once per item.
+   */
   items: Map<number, PropertyValueSite>;
 
   /**
@@ -2689,11 +2821,15 @@ export function frontmatterKeySites(lines: Iterable<string>): Map<string, KeySit
 // LOCATING A PROPERTY'S VALUE
 // ================================================================================================
 
-/** A caret sitting in a frontmatter property's *value*: which property it is, and where on the line
- *  that value starts. */
+/**
+ * A caret sitting in a frontmatter property's *value*: which property it is, and where on the line
+ * that value starts.
+ */
 export interface PropertyValueSite {
-  /** The property's dotted path, as {@link PropertyBinding.key} and Obsidian's property UI spell
-   *  it. */
+  /**
+   * The property's dotted path, as {@link PropertyBinding.key} and Obsidian's property UI spell
+   * it.
+   */
   key: string;
 
   /** The column the value text begins at (just past `key:` and one space). */
@@ -2747,10 +2883,12 @@ export function propertyValueAt(
   return item !== undefined && ch >= item.valueCh ? item : null;
 }
 
-/** A trailing YAML comment: a `#` at the start of the value or preceded by whitespace. **A tab
- *  counts**, which is why this is a character class rather than the literal space it reads as —
- *  a comment {@link quoteZonedTimestamps} fails to strip makes the value in front of it match
- *  nothing, and the timestamp then goes unquoted and reads two ways. */
+/**
+ * A trailing YAML comment: a `#` at the start of the value or preceded by whitespace. **A tab
+ * counts**, which is why this is a character class rather than the literal space it reads as —
+ * a comment {@link quoteZonedTimestamps} fails to strip makes the value in front of it match
+ * nothing, and the timestamp then goes unquoted and reads two ways.
+ */
 const COMMENT_TAIL = /(^|[\x20\t])#.*$/;
 
 /**

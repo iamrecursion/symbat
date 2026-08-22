@@ -46,23 +46,31 @@ export interface ExprCompletion {
   /** The completion's kind (drives its label, color, and which toggle gates it). */
   category: ExprCategory;
 
-  /** What to ask the interpreter about when showing this row's signature and docs, when that
-   *  differs from what is inserted. A struct field inserts its bare name but is typed through its
-   *  whole path (`type(costs.total)`). */
+  /**
+   * What to ask the interpreter about when showing this row's signature and docs, when that
+   * differs from what is inserted. A struct field inserts its bare name but is typed through its
+   * whole path (`type(costs.total)`).
+   */
   probeName?: string;
 
-  /** What accepting the row writes, when that is more than `name`, and where the caret lands within
-   *  it. A decorator's parentheses are mandatory, so they are written with it and the caret is put
-   *  where the argument goes. */
+  /**
+   * What accepting the row writes, when that is more than `name`, and where the caret lands within
+   * it. A decorator's parentheses are mandatory, so they are written with it and the caret is put
+   * where the argument goes.
+   */
   applied?: { text: string; caret: number; };
 
-  /** A ready-made documentation card for a row the interpreter cannot be asked about (it knows no
-   *  decorator vocabulary). Rendered in place of a `print_info` lookup. */
+  /**
+   * A ready-made documentation card for a row the interpreter cannot be asked about (it knows no
+   * decorator vocabulary). Rendered in place of a `print_info` lookup.
+   */
   doc?: string;
 
-  /** What a locally-declared row's card says — a parameter or a `where`/`and` local, whose type and
-   *  owner come from the declaration rather than from the interpreter (see {@link
-   *  isInterpreterKnown}). Rendered in place of a `print_info` lookup, as `doc` is. */
+  /**
+   * What a locally-declared row's card says — a parameter or a `where`/`and` local, whose type and
+   * owner come from the declaration rather than from the interpreter (see {@link
+   * isInterpreterKnown}). Rendered in place of a `print_info` lookup, as `doc` is.
+   */
   declared?: {
     /** How the declaration introduces it, which heads the card. */
     kind: "parameter" | "local";
@@ -150,8 +158,10 @@ export const KEYWORDS: ReadonlySet<string> = new Set([
   "where",
 ]);
 
-/** Numbat's built-in / structural type names — surfaced as `type` (distinct from the physical
- *  `dimension` names). Numbat lists these among its keywords. */
+/**
+ * Numbat's built-in / structural type names — surfaced as `type` (distinct from the physical
+ * `dimension` names). Numbat lists these among its keywords.
+ */
 export const BUILTIN_TYPE_NAMES: ReadonlySet<string> = new Set([
   "Bool",
   "DateTime",
@@ -241,8 +251,10 @@ export function classifyCompletion(name: string, vocab: CompletionVocabulary): E
   return null;
 }
 
-/** Whether the group toggle covering `category` is enabled. Each of the five toggles gates one
- *  kind; variables and functions share the "identifiers" toggle. */
+/**
+ * Whether the group toggle covering `category` is enabled. Each of the five toggles gates one
+ * kind; variables and functions share the "identifiers" toggle.
+ */
 function categoryEnabled(category: ExprCategory, enabled: ExprCategories): boolean {
   switch (category) {
     case "variable": // Intentional fallthrough
@@ -300,8 +312,10 @@ export function expressionCompletions(
 // PARSING THE `LIST` COMMANDS' OUTPUT
 // ================================================================================================
 
-/** Decode the HTML entities Numbat's jQuery-terminal formatter emits in span text (it escapes
- *  `&`,`<`,`>` and writes `[`/`]` as numeric entities). */
+/**
+ * Decode the HTML entities Numbat's jQuery-terminal formatter emits in span text (it escapes
+ * `&`,`<`,`>` and writes `[`/`]` as numeric entities).
+ */
 function decodeEntities(text: string): string {
   return text
     .replace(/&#91;/g, "[")
@@ -345,12 +359,16 @@ const TYPE_ANNOTATION: ReadonlySet<ExprCategory> = new Set<ExprCategory>(["type"
 /** Categories a dimension position accepts: dimensions only. */
 const DIMENSION_ONLY: ReadonlySet<ExprCategory> = new Set<ExprCategory>(["dimension"]);
 
-/** The current line is a `unit <name>:` declaration (optionally decorated), whose `:` introduces a
- *  dimension rather than a full type. */
+/**
+ * The current line is a `unit <name>:` declaration (optionally decorated), whose `:` introduces a
+ * dimension rather than a full type.
+ */
 const UNIT_DECLARATION = /(?:^|\n)\s*(?:@\w+(?:\([^)]*\))?\s+)*unit\s[^\n]*$/;
 
-/** The current line is the body of a `dimension <name> = …` declaration (past the `=`), a dimension
- *  expression. */
+/**
+ * The current line is the body of a `dimension <name> = …` declaration (past the `=`), a dimension
+ * expression.
+ */
 const DIMENSION_DECLARATION = /(?:^|\n)\s*(?:@\w+(?:\([^)]*\))?\s+)*dimension\s+\w+[^\n]*=[^\n]*$/;
 
 /**
@@ -375,23 +393,31 @@ export function allowedCategoriesAt(before: string): ReadonlySet<ExprCategory> |
   return null;
 }
 
-/** The trailing Numbat identifier word before the caret: a run starting with a letter or `_` (never
- *  a digit, so numbers do not read as words). Empty when the text does not end in such a run.
- *  Unicode letters/digits are allowed. */
+/**
+ * The trailing Numbat identifier word before the caret: a run starting with a letter or `_` (never
+ * a digit, so numbers do not read as words). Empty when the text does not end in such a run.
+ * Unicode letters/digits are allowed.
+ */
 const TRAILING_WORD = /[\p{L}_][\p{L}\p{N}_]*$/u;
 
-/** Characters that can end an expression before a `.`/`:` trigger: an identifier tail, or a closing
- *  bracket. A digit is excluded so `3.`/`3:` do not trigger. */
+/**
+ * Characters that can end an expression before a `.`/`:` trigger: an identifier tail, or a closing
+ * bracket. A digit is excluded so `3.`/`3:` do not trigger.
+ */
 const EXPR_TAIL = /[\p{L}_)\]]/u;
 
-/** Where an expression completion should be inserted: the query typed so far, and how many
- *  characters before the caret it replaces. */
+/**
+ * Where an expression completion should be inserted: the query typed so far, and how many
+ * characters before the caret it replaces.
+ */
 export interface ExprTrigger {
   /** The text typed so far, matched against the completion vocabulary. */
   query: string;
 
-  /** How many characters before the caret the accepted completion replaces. This is not always
-   *  `query.length`: a member path completes only its final segment. */
+  /**
+   * How many characters before the caret the accepted completion replaces. This is not always
+   * `query.length`: a member path completes only its final segment.
+   */
   replaceLength: number;
 }
 
@@ -418,8 +444,10 @@ export function memberBaseAt(before: string): string | null {
   return MEMBER_PATH.exec(beforeWord.slice(0, -1))?.[0] ?? null;
 }
 
-/** The struct signature Numbat names in a "field does not exist" diagnostic. `.` is newline-blind,
- *  so the greedy match ends at the last quote on that line. */
+/**
+ * The struct signature Numbat names in a "field does not exist" diagnostic. `.` is newline-blind,
+ * so the greedy match ends at the last quote on that line.
+ */
 const MISSING_FIELD = /does not exist in struct '(.*)'/;
 
 /** The innermost balanced `{…}` group that `text` ends with, or `null`. */
@@ -444,8 +472,10 @@ function trailingBraces(text: string): string | null {
   return null;
 }
 
-/** One `name: Type` entry of a comma-separated declaration list — a struct's field, a function's
- *  parameter. `type` is `null` when the entry writes none. */
+/**
+ * One `name: Type` entry of a comma-separated declaration list — a struct's field, a function's
+ * parameter. `type` is `null` when the entry writes none.
+ */
 interface ListEntry {
   /** The entry's name, as written. */
   name: string;
@@ -454,9 +484,11 @@ interface ListEntry {
   type: string | null;
 }
 
-/** Split a declaration list on its top-level commas, returning each entry's name and written type.
- *  Brackets are tracked so an entry whose own type is a struct, a generic, or an `Fn[(A) -> B]`
- *  does not split in the middle. */
+/**
+ * Split a declaration list on its top-level commas, returning each entry's name and written type.
+ * Brackets are tracked so an entry whose own type is a struct, a generic, or an `Fn[(A) -> B]`
+ * does not split in the middle.
+ */
 function listEntries(inner: string): ListEntry[] {
   const entries: ListEntry[] = [];
   const open = "{[(<";
@@ -533,32 +565,42 @@ export function isTypePosition(beforeAnchor: string): boolean {
 // GENERICS: `<` POSITIONS AND TYPE PARAMETERS
 // ================================================================================================
 
-/** A capitalized identifier immediately followed by `<`: a generic type's parameter list being
- *  opened (`List<`, `MyStruct<`). Capitalization is the type-name convention (the tokenizer's own
- *  fallback heuristic), and requiring the `<` to touch the name keeps spaced comparisons (`a < b`)
- *  from reading as generics. */
+/**
+ * A capitalized identifier immediately followed by `<`: a generic type's parameter list being
+ * opened (`List<`, `MyStruct<`). Capitalization is the type-name convention (the tokenizer's own
+ * fallback heuristic), and requiring the `<` to touch the name keeps spaced comparisons (`a < b`)
+ * from reading as generics.
+ */
 const GENERIC_OPEN = /[\p{Lu}][\p{L}\p{N}_]*<$/u;
 
-/** Whether the anchor sits just inside an opened generic parameter list (`List<`, `x: List< `) — a
- *  type position. Trailing spaces are skipped, as for {@link isTypePosition}. */
+/**
+ * Whether the anchor sits just inside an opened generic parameter list (`List<`, `x: List< `) — a
+ * type position. Trailing spaces are skipped, as for {@link isTypePosition}.
+ */
 export function isGenericOpenPosition(beforeAnchor: string): boolean {
   return GENERIC_OPEN.test(beforeAnchor.replace(/\s+$/, ""));
 }
 
-/** The current line is a `fn` declaration (optionally decorated) ending on its return arrow (`fn
- *  f(x: Scalar) -> `). No `=` may have appeared: past the `=` an `->` is the conversion operator,
- *  whose target is a unit expression, not a return type. */
+/**
+ * The current line is a `fn` declaration (optionally decorated) ending on its return arrow (`fn
+ * f(x: Scalar) -> `). No `=` may have appeared: past the `=` an `->` is the conversion operator,
+ * whose target is a unit expression, not a return type.
+ */
 const FN_RETURN_ARROW = /(?:^|\n)\s*(?:@\w+(?:\([^)]*\))?\s+)*fn\s[^\n=]*->\s*$/u;
 
-/** Whether the anchor sits after a `fn` declaration's return arrow — a type position (the same `->`
- *  outside a declaration converts, and is left alone). */
+/**
+ * Whether the anchor sits after a `fn` declaration's return arrow — a type position (the same `->`
+ * outside a declaration converts, and is left alone).
+ */
 export function isReturnTypePosition(beforeAnchor: string): boolean {
   return FN_RETURN_ARROW.test(beforeAnchor);
 }
 
-/** `text` with its comments and string contents blanked out — punctuation inside either must not be
- *  read as code. Blanked rather than removed so every offset into it still lines up with the
- *  source. */
+/**
+ * `text` with its comments and string contents blanked out — punctuation inside either must not be
+ * read as code. Blanked rather than removed so every offset into it still lines up with the
+ * source.
+ */
 function codeOnly(text: string): string {
   const uncommented = text
     .split("\n")
@@ -571,10 +613,12 @@ function codeOnly(text: string): string {
   return blankStrings(uncommented);
 }
 
-/** How many lines above the anchor a declaration's header is looked for. A declaration reaches the
- *  anchor only if every line boundary between the two continues (see {@link declarationStillOpen}),
- *  which a long way up it never does — and this scan runs on every keystroke, so it is not paid
- *  over a whole document. */
+/**
+ * How many lines above the anchor a declaration's header is looked for. A declaration reaches the
+ * anchor only if every line boundary between the two continues (see {@link declarationStillOpen}),
+ * which a long way up it never does — and this scan runs on every keystroke, so it is not paid
+ * over a whole document.
+ */
 const MAX_HEADER_LOOKBACK = 200;
 
 /** The last {@link MAX_HEADER_LOOKBACK} lines of `before`, cut on a line boundary. */
@@ -594,13 +638,17 @@ function lookbackWindow(before: string): string {
   return before.slice(start + 1);
 }
 
-/** A `fn`/`struct` declaration header, up to and including the declared name, with any decorators
- *  between the line start and the keyword. The scrapers below scan forward from here. */
+/**
+ * A `fn`/`struct` declaration header, up to and including the declared name, with any decorators
+ * between the line start and the keyword. The scrapers below scan forward from here.
+ */
 const DECLARATION_HEADER =
   /(?:^|\n)[^\S\n]*(?:@\w+(?:\([^)]*\))?[^\S\n]+)*(fn|struct)[^\S\n]+([\p{L}_][\p{L}\p{N}_]*)/gu;
 
-/** One type-parameter entry: its leading identifier and, when present, its `: Dim` bound (the only
- *  bound the grammar admits); a malformed tail is ignored. */
+/**
+ * One type-parameter entry: its leading identifier and, when present, its `: Dim` bound (the only
+ * bound the grammar admits); a malformed tail is ignored.
+ */
 const TYPE_PARAM_ENTRY = /^\s*([\p{L}_][\p{L}\p{N}_]*)\s*(:\s*Dim\b)?/u;
 
 /** One declared type parameter, as the scraper reads it from the header. */
@@ -608,21 +656,26 @@ export interface TypeParameter {
   /** The parameter's name, as written in the declaration's header. */
   name: string;
 
-  /** Whether the parameter carries the `: Dim` bound — a dimension variable, surfaced (and colored)
-   *  as a dimension rather than a plain type. */
+  /**
+   * Whether the parameter carries the `: Dim` bound — a dimension variable, surfaced (and colored)
+   * as a dimension rather than a plain type.
+   */
   dimBound: boolean;
 }
 
-/** Line tails that continue a declaration across a newline at bracket depth 0 *beyond* the ones
- *  Numbat itself reads on from (syntax/statements.ts): an opener or separator, or `->`. A header
- *  still being typed ends on these, and offering its earlier parameters there is the whole point —
- *  which is why this list is wider than the grouper's. It can afford to be: a false positive here
- *  costs one stray suggestion, while the grouper would merge two real statements' output into one.
+/**
+ * Line tails that continue a declaration across a newline at bracket depth 0 *beyond* the ones
+ * Numbat itself reads on from (syntax/statements.ts): an opener or separator, or `->`. A header
+ * still being typed ends on these, and offering its earlier parameters there is the whole point —
+ * which is why this list is wider than the grouper's. It can afford to be: a false positive here
+ * costs one stray suggestion, while the grouper would merge two real statements' output into one.
  */
 const CONTINUES_AFTER = /[,([{<]$|->$/;
 
-/** Line heads that continue the previous line beyond the joining keywords: a closer or a
- *  separator. */
+/**
+ * Line heads that continue the previous line beyond the joining keywords: a closer or a
+ * separator.
+ */
 const CONTINUES_BEFORE = /^[)\]},]/;
 
 /**
@@ -677,8 +730,10 @@ export function declarationStillOpen(text: string): boolean {
   return true;
 }
 
-/** The `fn`/`struct` declaration a position sits inside, and its text from the header through that
- *  position. */
+/**
+ * The `fn`/`struct` declaration a position sits inside, and its text from the header through that
+ * position.
+ */
 export interface EnclosingDeclaration {
   /** Which keyword opened it. */
   keyword: "fn" | "struct";
@@ -689,8 +744,10 @@ export interface EnclosingDeclaration {
   /** The declaration's source from the start of its header line through the anchor. */
   header: string;
 
-  /** Offset within {@link header} just past the declared name — where its `<`/`(`/`{` list
-   *  opens. */
+  /**
+   * Offset within {@link header} just past the declared name — where its `<`/`(`/`{` list
+   * opens.
+   */
   nameEnd: number;
 }
 
@@ -736,9 +793,11 @@ export function enclosingDeclarationAt(before: string): EnclosingDeclaration | n
   };
 }
 
-/** The end of the `<…>` type-parameter list opening at `from` in `header`, or `from` when none
- *  opens there. The grammar keeps the list on one line, so an unclosed one (still being typed)
- *  ends at the line's end. */
+/**
+ * The end of the `<…>` type-parameter list opening at `from` in `header`, or `from` when none
+ * opens there. The grammar keeps the list on one line, so an unclosed one (still being typed)
+ * ends at the line's end.
+ */
 function typeParamsEnd(header: string, from: number): number {
   if (!/^[^\S\n]*</.test(header.slice(from))) {
     return from;
@@ -763,8 +822,10 @@ export function typeVariablesInScopeAt(before: string): TypeParameter[] {
   return declaration === null ? [] : typeParametersOf(declaration);
 }
 
-/** The type parameters `declaration` binds, for a caller that has already resolved it — so the
- *  hover, which needs the declaration itself as well, does not scan for it twice. */
+/**
+ * The type parameters `declaration` binds, for a caller that has already resolved it — so the
+ * hover, which needs the declaration itself as well, does not scan for it twice.
+ */
 export function typeParametersOf(declaration: EnclosingDeclaration): TypeParameter[] {
   const { header, nameEnd } = declaration;
   const open = /^[^\S\n]*</.exec(header.slice(nameEnd));
@@ -791,11 +852,15 @@ export function typeParametersOf(declaration: EnclosingDeclaration): TypeParamet
 // THE NAMES A DECLARATION BINDS
 // ================================================================================================
 
-/** A name a declaration introduces into its own body, which exists nowhere else — no interpreter
- *  context has heard of it, and an outer binding that happens to share it is a different thing. */
+/**
+ * A name a declaration introduces into its own body, which exists nowhere else — no interpreter
+ * context has heard of it, and an outer binding that happens to share it is a different thing.
+ */
 export interface DeclaredName {
-  /** How the declaration introduces it: a `fn`'s parameter, a `struct`'s field, or a `where`/`and`
-   *  local binding in a function's body. */
+  /**
+   * How the declaration introduces it: a `fn`'s parameter, a `struct`'s field, or a `where`/`and`
+   * local binding in a function's body.
+   */
   kind: "parameter" | "field" | "local";
 
   /** The name, as written. */
@@ -805,17 +870,23 @@ export interface DeclaredName {
   type: string | null;
 }
 
-/** A `where` or `and` local binding: the keyword, the bound name, its optional annotation, and the
- *  `=` that makes it a binding rather than a comparison. */
+/**
+ * A `where` or `and` local binding: the keyword, the bound name, its optional annotation, and the
+ * `=` that makes it a binding rather than a comparison.
+ */
 const WHERE_BINDING =
   /(?<![\p{L}\p{N}_])(?:where|and)[^\S\n]+([\p{L}_][\p{L}\p{N}_]*)[^\S\n]*(?::[^\S\n]*([^=\n]+?)[^\S\n]*)?=(?!=)/gu;
 
-/** An entry's name, as the grammar writes one — a half-typed list yields parts that are not names
- *  at all, and those are not offered. */
+/**
+ * An entry's name, as the grammar writes one — a half-typed list yields parts that are not names
+ * at all, and those are not offered.
+ */
 const NAME_ONLY = /^[\p{L}_][\p{L}\p{N}_]*$/u;
 
-/** The `[from, to)` of the list `opener` opens at or after `from` in `code`, or `null` when none
- *  does. An unclosed list — one still being typed — runs to the end of the text. */
+/**
+ * The `[from, to)` of the list `opener` opens at or after `from` in `code`, or `null` when none
+ * does. An unclosed list — one still being typed — runs to the end of the text.
+ */
 function listRange(code: string, from: number, opener: string): { from: number; to: number; } | null {
   const start = code.indexOf(opener, from);
   if (start === -1) {
@@ -954,8 +1025,10 @@ export function typeVariableCompletions(
     );
 }
 
-/** The current line is a `fn`/`struct` header whose type-parameter list is still open at the
- *  anchor, ending on a parameter's bound colon (`fn foo<D: `). */
+/**
+ * The current line is a `fn`/`struct` header whose type-parameter list is still open at the
+ * anchor, ending on a parameter's bound colon (`fn foo<D: `).
+ */
 const BOUND_POSITION =
   /(?:^|\n)[^\S\n]*(?:@\w+(?:\([^)]*\))?[^\S\n]+)*(?:fn|struct)[^\S\n]+[\p{L}_][\p{L}\p{N}_]*[^\S\n]*<[^>\n]*:[^\S\n]*$/u;
 
@@ -996,8 +1069,10 @@ interface DecoratorDef {
   /** The name, without its `@`. */
   name: string;
 
-  /** What is written after the `@`, and where the caret lands in it. Decorators that take an
-   *  argument write their mandatory punctuation, since the name alone never parses. */
+  /**
+   * What is written after the `@`, and where the caret lands in it. Decorators that take an
+   * argument write their mandatory punctuation, since the name alone never parses.
+   */
   applied: { text: string; caret: number; };
 
   /** The one-line description shown on the row's card. */
@@ -1043,9 +1118,11 @@ const DECORATORS: readonly DecoratorDef[] = [
   },
 ];
 
-/** The one-line description of the decorator `name` (written without its `@`), or `null` when it is
- *  not one of Numbat's. Lets a surface with only a name in hand — a hover — build the same card the
- *  completer shows. */
+/**
+ * The one-line description of the decorator `name` (written without its `@`), or `null` when it is
+ * not one of Numbat's. Lets a surface with only a name in hand — a hover — build the same card the
+ * completer shows.
+ */
 export function decoratorDoc(name: string): string | null {
   return DECORATORS.find((decorator) => decorator.name === name)?.doc ?? null;
 }
@@ -1076,9 +1153,11 @@ const TYPE_DOCS: ReadonlyMap<string, string> = new Map([
   [NULLABLE_STRUCT, NULLABLE_STRUCT_DOC],
 ]);
 
-/** The one-line description of the type `name`, or `null` when it is not one the plugin documents.
- *  Consulted only after the interpreter has been asked and had nothing to say, so a binding of the
- *  reader's own that happens to share the name is never spoken over. */
+/**
+ * The one-line description of the type `name`, or `null` when it is not one the plugin documents.
+ * Consulted only after the interpreter has been asked and had nothing to say, so a binding of the
+ * reader's own that happens to share the name is never spoken over.
+ */
 export function typeDoc(name: string): string | null {
   return TYPE_DOCS.get(name) ?? null;
 }
@@ -1095,9 +1174,11 @@ export function pluginTypeCandidates(query: string): string[] {
   return [...PLUGIN_TYPE_NAMES].filter((name) => name.startsWith(query));
 }
 
-/** The anchor sits directly after an `@` that opens a decorator: at the start of a statement, with
- *  only whitespace and complete decorators before it. Written against the whole text up to the
- *  anchor, so a mid-expression `@` — or one inside a string — does not match. */
+/**
+ * The anchor sits directly after an `@` that opens a decorator: at the start of a statement, with
+ * only whitespace and complete decorators before it. Written against the whole text up to the
+ * anchor, so a mid-expression `@` — or one inside a string — does not match.
+ */
 const DECORATOR_POSITION = /(?:^|\n)[^\S\n]*(?:@\w+(?:\([^)]*\))?[^\S\n]*)*@$/;
 
 /** Whether the anchor sits just after a decorator's `@`. */

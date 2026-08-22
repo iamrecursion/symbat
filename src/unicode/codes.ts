@@ -3,8 +3,10 @@
 // wasm), so this is unit-testable in isolation and can be reached from the input handler's
 // synchronous path. The codes themselves live in unicode/table.ts, resolved by unicode/expand.ts.
 
-/** A `\code` completion candidate: the code name (without the backslash) and its Unicode expansion,
- *  e.g. `{ name: "alpha", replacement: "α" }`. */
+/**
+ * A `\code` completion candidate: the code name (without the backslash) and its Unicode expansion,
+ * e.g. `{ name: "alpha", replacement: "α" }`.
+ */
 export interface UnicodeCode {
   /** The code name as typed after the leader, without it. */
   name: string;

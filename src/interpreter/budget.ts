@@ -55,32 +55,39 @@ export const EVALUATION_LIMIT_RESULT: { readonly output: string; readonly isErro
   isError: true,
 });
 
-/** Where the time comes from. Injected so the whole policy is testable with no interpreter and no
- *  timers (the same seam the outcome caches use for their freshness (properties/outcome-cache.ts)).
+/**
+ * Where the time comes from. Injected so the whole policy is testable with no interpreter and no
+ * timers (the same seam the outcome caches use for their freshness (properties/outcome-cache.ts)).
  */
 export type Clock = () => number;
 
-/** What a caller that passes no clock is measured by. Exported so the ledger next door reads the
- *  same clock rather than declaring its own copy of this line: the two halves of the limit compare
- *  their timestamps with each other's constants, and two independently-written defaults is how
- *  they would come to be measured against two different origins. */
+/**
+ * What a caller that passes no clock is measured by. Exported so the ledger next door reads the
+ * same clock rather than declaring its own copy of this line: the two halves of the limit compare
+ * their timestamps with each other's constants, and two independently-written defaults is how
+ * they would come to be measured against two different origins.
+ */
 export const defaultClock: Clock = () => performance.now();
 
 /** What one budgeted piece of work produced, and whether it was cut short. */
 export interface BudgetResult<T> {
   value: T;
 
-  /** Whether anything was actually *refused*, as opposed to merely finishing late. See
-   *  {@link withBudget} for why the difference decides what the caller does with `value`. */
+  /**
+   * Whether anything was actually *refused*, as opposed to merely finishing late. See
+   * {@link withBudget} for why the difference decides what the caller does with `value`.
+   */
   exceeded: boolean;
 }
 
 // THE ARMED DEADLINE
 // ================================================================================================
 
-/** The innermost armed budget, or `null` when nothing is under one (which is every interactive
- *  path) and is why the check {@link outOfBudget} makes on every statement costs a single null
- *  comparison there. */
+/**
+ * The innermost armed budget, or `null` when nothing is under one (which is every interactive
+ * path) and is why the check {@link outOfBudget} makes on every statement costs a single null
+ * comparison there.
+ */
 let arm: { deadline: number; clock: Clock; } | null = null;
 
 // Whether anything under the current arm was actually refused. Recorded here rather than re-derived
@@ -109,8 +116,10 @@ export function outOfBudget(): boolean {
   return true;
 }
 
-/** What arming a budget put aside, so that disarming can put it back. Opaque to callers: the two
- *  functions below are the only things that read it. */
+/**
+ * What arming a budget put aside, so that disarming can put it back. Opaque to callers: the two
+ * functions below are the only things that read it.
+ */
 interface Armed {
   readonly outerArm: { deadline: number; clock: Clock; } | null;
   readonly outerRefused: boolean;
@@ -151,8 +160,10 @@ function armBudget(budgetMs: number, options: { key?: string; clock?: Clock; }):
   return armed;
 }
 
-/** Take the deadline back out of force, and charge the note for the time that was actually spent
- * under it. */
+/**
+ * Take the deadline back out of force, and charge the note for the time that was actually spent
+ * under it.
+ */
 function disarmBudget(armed: Armed): void {
   // One read, so what was spent and when it was spent describe the same instant.
   const end = armed.clock();
@@ -299,8 +310,10 @@ function isThenable(value: unknown): boolean {
 
 const buckets = new Map<string, { spent: number; at: number; }>();
 
-/** How much of `key`'s allowance is already spent, or zero when the burst it was spent on is
- *  over. */
+/**
+ * How much of `key`'s allowance is already spent, or zero when the burst it was spent on is
+ * over.
+ */
 function carriedBy(key: string | undefined, now: number): number {
   if (key === undefined) {
     return 0;

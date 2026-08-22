@@ -24,8 +24,10 @@ import { digest } from "./parse";
 
 /** A persisted reserved-name set. Plain data, so it round-trips through `data.json` unchanged. */
 export interface ReservedNamesRecord {
-  /** What the set was built from — see {@link reservedNamesKey}. A record whose key no longer
-   *  matches is discarded rather than migrated: rebuilding it costs one evaluation. */
+  /**
+   * What the set was built from — see {@link reservedNamesKey}. A record whose key no longer
+   * matches is discarded rather than migrated: rebuilding it costs one evaluation.
+   */
   readonly key: string;
 
   /** The names themselves. */
@@ -67,8 +69,10 @@ export function seededReservedNames(stored: unknown, key: string): readonly stri
   return record.names.every((name) => typeof name === "string") ? record.names : null;
 }
 
-/** Whether two name sets differ — what decides whether an arriving set has to move `reservedEpoch`,
- *  or whether the seed already said the same thing and every open note can be left alone. */
+/**
+ * Whether two name sets differ — what decides whether an arriving set has to move `reservedEpoch`,
+ * or whether the seed already said the same thing and every open note can be left alone.
+ */
 export function reservedNamesDiffer(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return a.size !== b.size || [...a].some((name) => !b.has(name));
 }

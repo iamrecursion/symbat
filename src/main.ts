@@ -89,54 +89,74 @@ export default class SymbatPlugin extends Plugin {
   /** The plugin's settings, accessible through the plugin instance. */
   settings!: SymbatSettings;
 
-  /** The cross-note import graph: caches each note's `numbat-shared` block code so the note-scope
-   *  preamble can gather `numbat-use` imports synchronously. Created in {@link onload}; read by
-   *  properties/note.ts. */
+  /**
+   * The cross-note import graph: caches each note's `numbat-shared` block code so the note-scope
+   * preamble can gather `numbat-use` imports synchronously. Created in {@link onload}; read by
+   * properties/note.ts.
+   */
   moduleGraph?: ModuleGraph;
 
-  /** Reload guard for the user prelude. Versioned rather than a dirty flag because the read is
-   *  async and several surfaces await it at once — see {@link VersionedLoad}. */
+  /**
+   * Reload guard for the user prelude. Versioned rather than a dirty flag because the read is
+   * async and several surfaces await it at once — see {@link VersionedLoad}.
+   */
   private readonly prelude = new VersionedLoad(() => this.loadPrelude());
 
   /** Whether the on-disk exchange-rate cache has been read into memory yet (once). */
   private exchangeRatesSeeded = false;
 
-  /** The reserved-name record currently on disk, or `null` when there is none worth keeping. Held
-   *  so that a settings write made before any interpreter has answered puts it back rather than
-   *  deleting it — see {@link saveSettings}. */
+  /**
+   * The reserved-name record currently on disk, or `null` when there is none worth keeping. Held
+   * so that a settings write made before any interpreter has answered puts it back rather than
+   * deleting it — see {@link saveSettings}.
+   */
   private storedReservedNames: ReservedNamesRecord | null = null;
 
-  /** The settings tab, kept so a prelude path rewritten by a vault rename can re-render it in
-   *  place. Definitely assigned in {@link onload}. */
+  /**
+   * The settings tab, kept so a prelude path rewritten by a vault rename can re-render it in
+   * place. Definitely assigned in {@link onload}.
+   */
   private settingTab!: SymbatSettingTab;
 
-  /** The editor expression completer, kept so its floating popup can be freed on unload — and so
-   *  the hover can tell whether it is open (hover stands aside for a completer, which shows the
-   *  same card on its own dwell). */
+  /**
+   * The editor expression completer, kept so its floating popup can be freed on unload — and so
+   * the hover can tell whether it is open (hover stands aside for a completer, which shows the
+   * same card on its own dwell).
+   */
   exprSuggest?: NumbatExprEditorSuggest;
 
-  /** The registered inlay-hint editor extension, mutated in place and flushed with
-   *  `updateOptions()` so the "Inline results and type hints" toggles apply live. */
+  /**
+   * The registered inlay-hint editor extension, mutated in place and flushed with
+   * `updateOptions()` so the "Inline results and type hints" toggles apply live.
+   */
   private readonly inlayExtension: Extension[] = [];
 
-  /** The registered inline-evaluation editor extension, mutated in place and flushed with
-   *  `updateOptions()` so the "Inline expression evaluation" toggle (and prefix changes) apply
-   *  live. */
+  /**
+   * The registered inline-evaluation editor extension, mutated in place and flushed with
+   * `updateOptions()` so the "Inline expression evaluation" toggle (and prefix changes) apply
+   * live.
+   */
   private readonly inlineEvalExtension: Extension[] = [];
 
-  /** The registered hover extension, mutated in place and flushed with `updateOptions()` so the
-   *  "Hover information" settings apply live. */
+  /**
+   * The registered hover extension, mutated in place and flushed with `updateOptions()` so the
+   * "Hover information" settings apply live.
+   */
   private readonly hoverExtension: Extension[] = [];
 
-  /** The pending coalesced property-type refresh, or `null` when none is scheduled. See
-   *  {@link schedulePropertyTypeRefresh}. */
+  /**
+   * The pending coalesced property-type refresh, or `null` when none is scheduled. See
+   * {@link schedulePropertyTypeRefresh}.
+   */
   private typeChangeTimer: number | null = null;
 
   // LIFECYCLE
   // ==============================================================================================
 
-  /** Register the REPL view, code-block processors, highlighting, commands and the settings tab.
-   * The interpreter itself is initialized lazily on first use. */
+  /**
+   * Register the REPL view, code-block processors, highlighting, commands and the settings tab.
+   * The interpreter itself is initialized lazily on first use.
+   */
   async onload(): Promise<void> {
     await this.loadSettings();
 
@@ -483,9 +503,11 @@ export default class SymbatPlugin extends Plugin {
   // VAULT EVENTS
   // ==============================================================================================
 
-  /** A note's content or frontmatter changed: re-read its shared blocks if anything imports it, and
-   *  drop what was derived from it — its own preamble, and the preamble of every note that imported
-   *  it. */
+  /**
+   * A note's content or frontmatter changed: re-read its shared blocks if anything imports it, and
+   * drop what was derived from it — its own preamble, and the preamble of every note that imported
+   * it.
+   */
   private onNoteChanged(path: string): void {
     invalidatePreamblesFor(path);
     this.moduleGraph?.noteChanged(path);
@@ -835,8 +857,10 @@ export default class SymbatPlugin extends Plugin {
     await this.prelude.ensure();
   }
 
-  /** Read and apply the configured prelude files. Only {@link VersionedLoad} calls this, one pass
-   *  at a time. */
+  /**
+   * Read and apply the configured prelude files. Only {@link VersionedLoad} calls this, one pass
+   * at a time.
+   */
   private async loadPrelude(): Promise<void> {
     const files = this.preludeFiles();
     if (files.length === 0) {
@@ -898,15 +922,19 @@ export default class SymbatPlugin extends Plugin {
     return this.editorConfig("vimMode") === true;
   }
 
-  /** Whether Obsidian's own "Show line number" editor setting is on. The `.nbt` editor follows it
-   *  for the same reason it follows Vim: it is an editor in this app, and should look like the
-   *  others. */
+  /**
+   * Whether Obsidian's own "Show line number" editor setting is on. The `.nbt` editor follows it
+   * for the same reason it follows Vim: it is an editor in this app, and should look like the
+   * others.
+   */
   lineNumbersEnabled(): boolean {
     return this.editorConfig("showLineNumber") === true;
   }
 
-  /** One of Obsidian's editor settings, through the undocumented `getConfig` (a missing API reads
-   *  as unset, so every caller degrades to "off"). */
+  /**
+   * One of Obsidian's editor settings, through the undocumented `getConfig` (a missing API reads
+   * as unset, so every caller degrades to "off").
+   */
   private editorConfig(key: string): unknown {
     const config = this.app.vault as unknown as { getConfig?: (key: string) => unknown; };
     return config.getConfig?.(key);
@@ -922,7 +950,8 @@ export default class SymbatPlugin extends Plugin {
     }
   }
 
-  /** Rebuild every open scope inspector (after an import, property-type, or scope setting change).
+  /**
+   * Rebuild every open scope inspector (after an import, property-type, or scope setting change).
    */
   refreshScopeViews(): void {
     this.forEachScopeView((view) => view.requestRefresh());
@@ -946,15 +975,19 @@ export default class SymbatPlugin extends Plugin {
     this.forEachReplView((view) => view.applyHighlight());
   }
 
-  /** Re-apply the resolved Vim-mode setting to every open REPL view, and Obsidian's own to every
-   *  open `.nbt` editor (which follows it directly). */
+  /**
+   * Re-apply the resolved Vim-mode setting to every open REPL view, and Obsidian's own to every
+   * open `.nbt` editor (which follows it directly).
+   */
   refreshReplVim(): void {
     this.forEachReplView((view) => view.applyVim());
     this.forEachFileView((view) => view.applyVim());
   }
 
-  /** Re-apply the configured Tab indent width to every open `.nbt` editor. Nothing to do on load:
-   *  the editor reads the setting as it is built. */
+  /**
+   * Re-apply the configured Tab indent width to every open `.nbt` editor. Nothing to do on load:
+   * the editor reads the setting as it is built.
+   */
   refreshIndentWidth(): void {
     this.forEachFileView((view) => view.applyIndentWidth());
   }
@@ -1256,15 +1289,19 @@ export default class SymbatPlugin extends Plugin {
     }
   }
 
-  /** The vault path of the on-disk exchange-rate cache (inside the plugin folder), or `null` if the
-   *  plugin directory is unknown. */
+  /**
+   * The vault path of the on-disk exchange-rate cache (inside the plugin folder), or `null` if the
+   * plugin directory is unknown.
+   */
   private exchangeRatesCachePath(): string | null {
     const dir = this.manifest.dir;
     return dir != null && dir !== "" ? normalizePath(`${dir}/exchange-rates.xml`) : null;
   }
 
-  /** Read the on-disk exchange-rate cache into memory, once, so conversions work offline before the
-   *  first successful fetch. Missing/unreadable is non-fatal. */
+  /**
+   * Read the on-disk exchange-rate cache into memory, once, so conversions work offline before the
+   * first successful fetch. Missing/unreadable is non-fatal.
+   */
   private async seedExchangeRatesCache(): Promise<void> {
     if (this.exchangeRatesSeeded) {
       return;
@@ -1286,8 +1323,10 @@ export default class SymbatPlugin extends Plugin {
     }
   }
 
-  /** Persist freshly fetched exchange rates to the plugin folder, as the fallback for a future
-   *  fetch that times out or fails. Write failures are non-fatal. */
+  /**
+   * Persist freshly fetched exchange rates to the plugin folder, as the fallback for a future
+   * fetch that times out or fails. Write failures are non-fatal.
+   */
   private async writeExchangeRatesCache(xml: string): Promise<void> {
     const path = this.exchangeRatesCachePath();
     if (path === null) {
@@ -1333,8 +1372,10 @@ export default class SymbatPlugin extends Plugin {
     }
   }
 
-  /** What the persisted reserved-name set is stamped with — see
-   *  {@link import("./properties/reserved-names").reservedNamesKey}. */
+  /**
+   * What the persisted reserved-name set is stamped with — see
+   * {@link import("./properties/reserved-names").reservedNamesKey}.
+   */
   private reservedNamesKey(): string {
     return reservedNamesKey(
       this.manifest.version,

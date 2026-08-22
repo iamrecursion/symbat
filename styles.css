@@ -440,7 +440,7 @@
  *
  * The editor is *hidden*, never emptied: a reader who half-typed a line before a respawn still has
  * it when the interpreter comes back. The prompt goes with it, because a `>>>` with no caret after
- * it is an invitation the surface cannot honour. */
+ * it is an invitation the surface cannot honor. */
 .numbat-repl-input-row.numbat-repl-waiting .cm-editor,
 .numbat-repl-input-row.numbat-repl-waiting .numbat-repl-prompt {
   display: none;
@@ -1249,8 +1249,8 @@
 /* A focused cell wraps and grows its row, so the whole expression and its result are visible while
  * they are being edited, rather than the reader typing into a slot the width of a column.
  *
- * That this works at all is a fact about Bases rather than a wish: its tables are virtualised, and a
- * virtualised table is perfectly entitled to give its rows a fixed height and clip anything taller.
+ * That this works at all is a fact about Bases rather than a wish: its tables are virtualized, and a
+ * virtualized table is perfectly entitled to give its rows a fixed height and clip anything taller.
  * **Checked in the app — the row grows.** Worth re-checking if a Bases release ever makes a focused
  * cell show the top of its own editor; the answer then is a cell that scrolls sideways instead
  * (`flex-wrap: nowrap` with `overflow-x: auto` here and on `.cm-scroller`), which is a real
@@ -1289,7 +1289,7 @@
  * cell, where there is room for it.
  *
  * That leaves it overlapping the columns beside it, hence the background and the stacking context —
- * without them the neighbouring cells would read straight through the picker. The cell does clip,
+ * without them the neighboring cells would read straight through the picker. The cell does clip,
  * so the row also has to be let out of it: properties/host.ts marks the clipping boxes around a
  * focused row, and `.numbat-unclipped` below is what that mark does. */
 .numbat-zoned-date.numbat-property-compact.is-active,
@@ -1311,7 +1311,7 @@
 }
 
 /* Sized in characters from the zone's own name (properties/zone-editor.ts sets `size`), so it must
- * not be capped at a cell width the row no longer has — that is what was ellipsising
+ * not be capped at a cell width the row no longer has — that is what was ellipsizing
  * `America/Denver` to `America/D…`. */
 .numbat-zoned-date.numbat-property-compact.is-active .numbat-property-zone,
 .numbat-zoned-datetime.numbat-property-compact.is-active .numbat-property-zone {
@@ -1349,7 +1349,7 @@
 }
 
 /* Only where the cell was not positioned already (properties/host.ts checks): a grown cell overlaps
- * the one beside it, and without being lifted out of the normal paint order the neighbour's
+ * the one beside it, and without being lifted out of the normal paint order the neighbor's
  * background would be drawn over this one's trailing border. */
 .numbat-unclipped-lift {
   position: relative;
@@ -1413,7 +1413,7 @@
   background: var(--background-modifier-hover);
 }
 
-/* Focused it *is* a field being typed into, so it stops apologising for itself: full contrast, and
+/* Focused it *is* a field being typed into, so it stops apologizing for itself: full contrast, and
  * the box Obsidian gives every other focused input. */
 .numbat-property-zone:focus {
   color: var(--text-normal);

@@ -18,7 +18,7 @@
 // would freeze at whatever it read when the reader first scrolled past it, and no invalidation hook
 // could catch that. So a hit is used two different ways — see {@link IMPURE_FRESH_MS}.
 //
-// Ageing is used in notes that evaluate impure functions. The decision is the *writer's*, not the
+// Aging is used in notes that evaluate impure functions. The decision is the *writer's*, not the
 // reader's, because the writer is the one holding the scope — a reader that had to be told would be
 // a reader that could be told wrong.
 //
@@ -31,8 +31,10 @@ import type { PropertyDisplay } from "./display";
 import type { BindingOutcome } from "./outcomes";
 import { type NotePreamble, type PropertyBinding, scopeChunksAbove } from "./parse";
 
-/** A note-cache hit: the binding's evaluated outcome, and whether it is recent enough to be the
- *  whole answer. */
+/**
+ * A note-cache hit: the binding's evaluated outcome, and whether it is recent enough to be the
+ * whole answer.
+ */
 export interface CachedOutcome {
   /** What the evaluation produced, unprojected — see the note on the store below. */
   outcome: BindingOutcome;
@@ -77,16 +79,20 @@ export function outcomeEpoch(): number {
   return epoch;
 }
 
-/** Forget every cached outcome: the prelude, the note scope or the settings moved under them, and
- *  on unload. */
+/**
+ * Forget every cached outcome: the prelude, the note scope or the settings moved under them, and
+ * on unload.
+ */
 export function clearPropertyOutcomes(): void {
   noteOutcomes.clear();
   liveOutcomes.clear();
   epoch += 1;
 }
 
-/** The outcome known for a note's committed value in this scope, or `null`, including when an entry
- * exists but was computed for text the row no longer holds. */
+/**
+ * The outcome known for a note's committed value in this scope, or `null`, including when an entry
+ * exists but was computed for text the row no longer holds.
+ */
 export function noteOutcome(key: string, text: string, now = performance.now()): CachedOutcome | null {
   const hit = noteOutcomes.get(key);
   if (hit === undefined || hit.text !== text) {
@@ -122,11 +128,13 @@ export function liveOutcome(key: string, now = performance.now()): CachedDisplay
   return { display: hit.display, fresh: isFresh(hit, now) };
 }
 
-/** Record an outcome for text of the moment. Called on the way out of every live evaluation,
- *  including for a row whose element has since gone: the value is still true, and the next render
- *  of that row wants it. `impure` is as on {@link rememberNoteOutcome}, over the row's own text as
- *  well as its scope — this cache holds text the note does not, so the text is part of the
- *  question. */
+/**
+ * Record an outcome for text of the moment. Called on the way out of every live evaluation,
+ * including for a row whose element has since gone: the value is still true, and the next render
+ * of that row wants it. `impure` is as on {@link rememberNoteOutcome}, over the row's own text as
+ * well as its scope — this cache holds text the note does not, so the text is part of the
+ * question.
+ */
 export function rememberLiveOutcome(key: string, display: PropertyDisplay, impure: boolean): void {
   promote(liveOutcomes, key, { display, at: performance.now(), impure });
   evict(liveOutcomes, PROPERTY_LIVE_OUTCOME_ENTRIES);
@@ -163,8 +171,10 @@ function promote<T>(cache: Map<string, T>, key: string, entry: T): void {
   cache.set(key, entry);
 }
 
-/** Trim a cache to its cap, least-recently-used first (see {@link promote}). An evicted entry costs
- *  one evaluation, and on the note cache that evaluation is a standard-library load. */
+/**
+ * Trim a cache to its cap, least-recently-used first (see {@link promote}). An evicted entry costs
+ * one evaluation, and on the note cache that evaluation is a standard-library load.
+ */
 function evict<T>(cache: Map<string, T>, cap: number): void {
   while (cache.size > cap) {
     const oldest = cache.keys().next().value;
@@ -282,15 +292,21 @@ export function firstStale(keys: string[], bindings: PropertyBinding[], now = pe
 // COALESCING THE NOTE BATCH
 // ================================================================================================
 
-/** How one note's outcomes are produced, injected so the scheduling below can be tested without an
- *  interpreter, a clock or Obsidian. */
+/**
+ * How one note's outcomes are produced, injected so the scheduling below can be tested without an
+ * interpreter, a clock or Obsidian.
+ */
 export interface BatchDriver {
-  /** Run one pass over the note, filling the note cache. Never rejects as a failed pass leaves the
-   *  cache as it was, and the waiters are told regardless so nothing hangs on it. */
+  /**
+   * Run one pass over the note, filling the note cache. Never rejects as a failed pass leaves the
+   * cache as it was, and the waiters are told regardless so nothing hangs on it.
+   */
   run: () => Promise<void>;
 
-  /** Schedule the start of a pass, returning a cancel. This is the coalescing window: every widget
-   *  that asks inside it joins the same pass. */
+  /**
+   * Schedule the start of a pass, returning a cancel. This is the coalescing window: every widget
+   * that asks inside it joins the same pass.
+   */
   delay: (start: () => void) => () => void;
 }
 
@@ -355,8 +371,10 @@ export function requestBatch(key: string, driver: BatchDriver, done: () => void)
   };
 }
 
-/** Drop every pending pass (plugin unload). A pass already running finishes into a cache nobody
- *  will read; there is no way to interrupt a synchronous interpreter mid-note. */
+/**
+ * Drop every pending pass (plugin unload). A pass already running finishes into a cache nobody
+ * will read; there is no way to interrupt a synchronous interpreter mid-note.
+ */
 export function cancelBatches(): void {
   for (const job of jobs.values()) {
     job.cancelDelay?.();

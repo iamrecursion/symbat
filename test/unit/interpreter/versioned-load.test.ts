@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { VersionedLoad } from "../../../src/interpreter/versioned-load.ts";
 
-/** Let every already-runnable microtask settle. Counting individual ticks would couple the tests to
- *  the length of the guard's internal promise chain. */
+/**
+ * Let every already-runnable microtask settle. Counting individual ticks would couple the tests to
+ * the length of the guard's internal promise chain.
+ */
 function flush(): Promise<void> {
   return new Promise<void>((resolve) => setImmediate(resolve));
 }

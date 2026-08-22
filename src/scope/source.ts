@@ -19,8 +19,10 @@ import {
   type ScopeTree,
 } from "./model";
 
-/** The active note's text: the live editor buffer when the note is open (accurate mid-edit), else
- *  the vault's last-saved copy — mirroring ModuleGraph.read's `cachedRead`. */
+/**
+ * The active note's text: the live editor buffer when the note is open (accurate mid-edit), else
+ * the vault's last-saved copy — mirroring ModuleGraph.read's `cachedRead`.
+ */
 async function noteText(plugin: SymbatPlugin, file: TFile): Promise<string> {
   for (const leaf of plugin.app.workspace.getLeavesOfType("markdown")) {
     const { view } = leaf;
@@ -31,10 +33,12 @@ async function noteText(plugin: SymbatPlugin, file: TFile): Promise<string> {
   return plugin.app.vault.cachedRead(file);
 }
 
-/** The user prelude's `.nbt` files with their content, for the inspector's User prelude node — and,
- *  read ahead of time, for the hover's definition lookup (hover/definition.ts), which has to answer
- *  synchronously. A file that cannot be read is skipped (it just won't be listed). `adapter.read`
- *  mirrors how {@link SymbatPlugin.ensurePrelude} loads them. */
+/**
+ * The user prelude's `.nbt` files with their content, for the inspector's User prelude node — and,
+ * read ahead of time, for the hover's definition lookup (hover/definition.ts), which has to answer
+ * synchronously. A file that cannot be read is skipped (it just won't be listed). `adapter.read`
+ * mirrors how {@link SymbatPlugin.ensurePrelude} loads them.
+ */
 export async function preludeFiles(plugin: SymbatPlugin): Promise<PreludeFileLines[]> {
   const { adapter } = plugin.app.vault;
   const files: PreludeFileLines[] = [];
@@ -51,8 +55,10 @@ export async function preludeFiles(plugin: SymbatPlugin): Promise<PreludeFileLin
   return files;
 }
 
-/** The parsed top-level frontmatter record (for {@link importGroups}), or an empty record when the
- *  note has no frontmatter or its YAML is malformed. */
+/**
+ * The parsed top-level frontmatter record (for {@link importGroups}), or an empty record when the
+ * note has no frontmatter or its YAML is malformed.
+ */
 export function frontmatterRecord(body: string[] | null): Record<string, unknown> {
   if (body === null || body.length === 0) {
     return {};
@@ -70,14 +76,18 @@ export function frontmatterRecord(body: string[] | null): Record<string, unknown
   return {};
 }
 
-/** The result of {@link gatherScope}: the structural tree (no values yet) and whether the
- *  interpreter is ready for {@link evaluateScope} to fill values. */
+/**
+ * The result of {@link gatherScope}: the structural tree (no values yet) and whether the
+ * interpreter is ready for {@link evaluateScope} to fill values.
+ */
 export interface ScopeResult {
   /** The scope tree, structure only — its entries carry no `value` yet. */
   tree: ScopeTree;
 
-  /** Whether the interpreter came up. When false the caller renders the structure without values
-   *  rather than showing nothing. */
+  /**
+   * Whether the interpreter came up. When false the caller renders the structure without values
+   * rather than showing nothing.
+   */
   wasmReady: boolean;
 }
 
@@ -159,9 +169,11 @@ export async function gatherDocumentScope(plugin: SymbatPlugin, file: TFile): Pr
   return { tree, wasmReady };
 }
 
-/** The live buffer of an open `.nbt` editor for `file`, or `null` when none is open. The view is
- *  duck-typed rather than imported as a class, so this module does not depend on the view layer;
- *  only the view-type id is imported, so a rename of that id cannot silently orphan this lookup. */
+/**
+ * The live buffer of an open `.nbt` editor for `file`, or `null` when none is open. The view is
+ * duck-typed rather than imported as a class, so this module does not depend on the view layer;
+ * only the view-type id is imported, so a rename of that id cannot silently orphan this lookup.
+ */
 function numbatFileText(plugin: SymbatPlugin, file: TFile): string | null {
   for (const leaf of plugin.app.workspace.getLeavesOfType(VIEW_TYPE_NUMBAT_FILE)) {
     const view = leaf.view as { file?: { path?: string; }; getViewData?: () => string; };
@@ -174,13 +186,17 @@ function numbatFileText(plugin: SymbatPlugin, file: TFile): string | null {
 
 /** What one inspector evaluation produced, beyond the values it wrote into the tree. */
 export interface ScopeEvaluation {
-  /** Whether evaluation completed: `false` on a wasm failure, in which case the caller renders the
-   *  structure without values. */
+  /**
+   * Whether evaluation completed: `false` on a wasm failure, in which case the caller renders the
+   * structure without values.
+   */
   ready: boolean;
 
-  /** Whether the evaluation limit refused anything. The caller needs it to decide what to cache:
-   *  an answer that was cut short must not be aged, since re-asking would spend the note's whole
-   *  allowance again to be told the same thing. */
+  /**
+   * Whether the evaluation limit refused anything. The caller needs it to decide what to cache:
+   * an answer that was cut short must not be aged, since re-asking would spend the note's whole
+   * allowance again to be told the same thing.
+   */
   exceeded: boolean;
 }
 

@@ -58,9 +58,11 @@ const PROSE: FenceLine = { region: "prose" };
  * code, not a fence.
  */
 export class FenceWalk {
-  /** Matches the fence that would close the block currently open, or `null` when no block is open.
-   *  Built per opener, since the closer must be the same character and at least as long. Doubles as
-   *  the "inside a fence" flag. */
+  /**
+   * Matches the fence that would close the block currently open, or `null` when no block is open.
+   * Built per opener, since the closer must be the same character and at least as long. Doubles as
+   * the "inside a fence" flag.
+   */
   private closeFence: RegExp | null = null;
 
   /** How the open block's info string classified it; `"other"` when none is open. */
@@ -203,8 +205,10 @@ export interface NumbatBlockRange {
   /** 0-indexed document line of the opening fence. */
   openLine: number;
 
-  /** 0-indexed document line of the closing fence, or the count of lines when the block runs to the
-   *  end of the document without a closing fence. */
+  /**
+   * 0-indexed document line of the closing fence, or the count of lines when the block runs to the
+   * end of the document without a closing fence.
+   */
   closeLine: number;
 
   /** 0-indexed document line of the first body line (`openLine + 1`). */

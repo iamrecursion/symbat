@@ -14,19 +14,25 @@ export interface Attempt<T> {
   /** The thing being started. Usable only once {@link ready} resolves. */
   readonly value: T;
 
-  /** Resolves when it has _answered_, not when it was constructed. Construction succeeds on
-   * platforms where nothing else does. */
+  /**
+   * Resolves when it has _answered_, not when it was constructed. Construction succeeds on
+   * platforms where nothing else does.
+   */
   readonly ready: Promise<void>;
 
-  /** Undo an attempt that did not answer, whether it rejected or simply never spoke. Called at most
-   *  once, and never after {@link ready} resolves. */
+  /**
+   * Undo an attempt that did not answer, whether it rejected or simply never spoke. Called at most
+   * once, and never after {@link ready} resolves.
+   */
   readonly abandon: () => void;
 }
 
 /** One way of getting the interpreter running. */
 export interface Rung<T> {
-  /** How this rung is named in the status line and in the log. Reader-facing: "blob URL", not
-   *  "rung 0". */
+  /**
+   * How this rung is named in the status line and in the log. Reader-facing: "blob URL", not
+   * "rung 0".
+   */
   readonly detail: string;
 
   /** Try it. May throw, which counts as this rung failing rather than as the climb failing. */

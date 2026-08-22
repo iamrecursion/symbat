@@ -44,9 +44,11 @@ export interface HoverResolution {
   dom: HTMLElement;
 }
 
-/** Why there is no card here. A trigger the user did not ask for (the pointer, the dwell) shows
- *  nothing; one they *did* — the command, the Vim key — says this instead, because a key that
- *  silently does nothing is indistinguishable from a broken one. */
+/**
+ * Why there is no card here. A trigger the user did not ask for (the pointer, the dwell) shows
+ * nothing; one they *did* — the command, the Vim key — says this instead, because a key that
+ * silently does nothing is indistinguishable from a broken one.
+ */
 export interface HoverMiss {
   /** The message to show, phrased for a user who explicitly asked. */
   miss: string;
@@ -62,9 +64,11 @@ export interface HoverMiss {
  * lives in the driver, next to the triggers that have to agree with it.
  */
 export interface HoverPending {
-  /** Settles when the answer is there to be asked for again. Never rejects into anything the
-   *  driver has to interpret: a failed lookup settles like any other, and the second ask is what
-   *  discovers there is still nothing. */
+  /**
+   * Settles when the answer is there to be asked for again. Never rejects into anything the
+   * driver has to interpret: a failed lookup settles like any other, and the second ask is what
+   * discovers there is still nothing.
+   */
   pending: Promise<void>;
 
   /** What to say if the second ask comes to nothing after all. */
@@ -86,28 +90,36 @@ export function isPending(outcome: HoverOutcome): outcome is HoverPending {
 
 /** What one surface must supply for its text to be hoverable. */
 export interface HoverSource {
-  /** The card for the symbol at document position `pos`, or why there is none — not Numbat code,
-   *  not a symbol, or a name nothing knows about. */
+  /**
+   * The card for the symbol at document position `pos`, or why there is none — not Numbat code,
+   * not a symbol, or a name nothing knows about.
+   */
   resolve(view: EditorView, pos: number): HoverOutcome;
 
   /** Whether a completion popover is open on this surface (hover stands aside). */
   completerOpen(view: EditorView): boolean;
 
-  /** Whether a caret dwell counts right now — Vim's insert mode, on the surface's own Vim instance.
-   *  Defaults to {@link dwellCountsIn}, which reads Obsidian's. */
+  /**
+   * Whether a caret dwell counts right now — Vim's insert mode, on the surface's own Vim instance.
+   * Defaults to {@link dwellCountsIn}, which reads Obsidian's.
+   */
   dwellAllowed?(view: EditorView): boolean;
 
-  /** Start whatever `resolve` at `pos` is going to need, without producing anything.
+  /**
+   * Start whatever `resolve` at `pos` is going to need, without producing anything.
    *
-   *  Called when the caret dwell is armed rather than when it fires, so the work happens inside a
-   *  delay the reader is already waiting through — which is the difference between a card that
-   *  appears and a card that appears *late*. Optional: a surface that answers synchronously has
-   *  nothing to start. */
+   * Called when the caret dwell is armed rather than when it fires, so the work happens inside a
+   * delay the reader is already waiting through — which is the difference between a card that
+   * appears and a card that appears *late*. Optional: a surface that answers synchronously has
+   * nothing to start.
+   */
   prewarm?(view: EditorView, pos: number): void;
 }
 
-/** The surface's source, reachable from the module-scope plugin (and so from the Vim key and the
- *  command, which act on whatever view has focus). */
+/**
+ * The surface's source, reachable from the module-scope plugin (and so from the Vim key and the
+ * command, which act on whatever view has focus).
+ */
 const hoverSource = Facet.define<
   { plugin: SymbatPlugin; source: HoverSource; },
   { plugin: SymbatPlugin; source: HoverSource; } | null
@@ -118,8 +130,10 @@ const hoverSource = Facet.define<
 /** Show (or clear, with `null`) the card. */
 const setCard = StateEffect.define<CardState | null>();
 
-/** The card currently shown: its tooltip, the element it renders (for pointer containment), the
- *  range it describes, and which trigger opened it. */
+/**
+ * The card currently shown: its tooltip, the element it renders (for pointer containment), the
+ * range it describes, and which trigger opened it.
+ */
 interface CardState {
   /** The CodeMirror tooltip being shown. */
   tooltip: Tooltip;
@@ -133,8 +147,10 @@ interface CardState {
   /** Document offset one past its last character. */
   to: number;
 
-  /** What opened the card, which decides when it closes: a `caret` card follows the caret off its
-   *  symbol, a `mouse` card ignores the caret entirely. */
+  /**
+   * What opened the card, which decides when it closes: a `caret` card follows the caret off its
+   * symbol, a `mouse` card ignores the caret entirely.
+   */
   trigger: "caret" | "mouse";
 }
 
@@ -147,8 +163,10 @@ interface CardState {
 const hoverCard = StateField.define<CardState | null>({
   create: () => null,
 
-  /** Adopt whatever a `setCard` effect carries; otherwise drop a card the document or the caret has
-   *  moved out from under. */
+  /**
+   * Adopt whatever a `setCard` effect carries; otherwise drop a card the document or the caret has
+   * moved out from under.
+   */
   update(value, tr) {
     for (const effect of tr.effects) {
       if (effect.is(setCard)) {
@@ -170,24 +188,32 @@ const hoverCard = StateField.define<CardState | null>({
   provide: (field) => showTooltip.from(field, (value) => value?.tooltip ?? null),
 });
 
-/** How far outside the card (or the hovered word) the pointer may stray before it counts as having
- *  left, in px. Bridges the gap between the text and the card. */
+/**
+ * How far outside the card (or the hovered word) the pointer may stray before it counts as having
+ * left, in px. Bridges the gap between the text and the card.
+ */
 const POINTER_MARGIN = 8;
 
-/** How many answers one attempt may wait for. Two, because there are two: the wasm loading, and
- *  then the facts about the name being looked up in the scope it loaded. */
+/**
+ * How many answers one attempt may wait for. Two, because there are two: the wasm loading, and
+ * then the facts about the name being looked up in the scope it loaded.
+ */
 const MAX_WAITS = 2;
 
-/** How long the caret must sit still before its answer is sent for, in ms, capped by the hover
- *  delay itself, so a reader who has set a short one still gets the lookup started first.
+/**
+ * How long the caret must sit still before its answer is sent for, in ms, capped by the hover
+ * delay itself, so a reader who has set a short one still gets the lookup started first.
  *
- *  Short, because everything after it is head start: only that a caret still traveling does not
- *  send for an answer per line it passes. */
+ * Short, because everything after it is head start: only that a caret still traveling does not
+ * send for an answer per line it passes.
+ */
 const PREWARM_SETTLE_MS = 120;
 
-/** Build a tooltip from a resolution — anchored to the symbol, preferring above (the card is tall,
- *  and below would cover the lines being read). The wrapper carries the completer popup's own
- *  styling, so the two surfaces are one card. */
+/**
+ * Build a tooltip from a resolution — anchored to the symbol, preferring above (the card is tall,
+ * and below would cover the lines being read). The wrapper carries the completer popup's own
+ * styling, so the two surfaces are one card.
+ */
 function cardState(resolution: HoverResolution, trigger: "caret" | "mouse"): CardState {
   const dom = createDiv({ cls: "numbat-hover-tooltip" });
   dom.append(resolution.dom);
@@ -226,12 +252,16 @@ class HoverDriver {
   /** The deferred close scheduled by `clearSoon`; cleared on teardown. */
   private clearTimer: number | null = null;
 
-  /** The last pointer position seen, used to decide whether it is still over the card or its
-   *  symbol; `null` before the pointer has moved over this editor. */
+  /**
+   * The last pointer position seen, used to decide whether it is still over the card or its
+   * symbol; `null` before the pointer has moved over this editor.
+   */
   private pointer: { x: number; y: number; } | null = null;
 
-  /** Bumped whenever an attempt is abandoned outright (Escape, a blur, a completer taking over),
-   *  so an answer arriving afterwards knows the card it belonged to is no longer wanted. */
+  /**
+   * Bumped whenever an attempt is abandoned outright (Escape, a blur, a completer taking over),
+   * so an answer arriving afterwards knows the card it belonged to is no longer wanted.
+   */
   private attempt = 0;
 
   /** Set on teardown: a wait that settles afterwards must not touch the view. */
@@ -311,8 +341,10 @@ class HoverDriver {
   // THE POINTER
   // ==============================================================================================
 
-  /** Track the pointer: keep a card while it is over the card or the word it describes, drop it
-   *  when it leaves, and arm the delay wherever it settles. */
+  /**
+   * Track the pointer: keep a card while it is over the card or the word it describes, drop it
+   * when it leaves, and arm the delay wherever it settles.
+   */
   onMouseMove(event: MouseEvent): void {
     try {
       const config = this.view.state.facet(hoverSource);
@@ -345,8 +377,10 @@ class HoverDriver {
     }
   }
 
-  /** The pointer left the text: drop the card unless it went into the card itself (which is how its
-   *  go-to-definition gets clicked). */
+  /**
+   * The pointer left the text: drop the card unless it went into the card itself (which is how its
+   * go-to-definition gets clicked).
+   */
   onMouseLeave(event: MouseEvent): void {
     try {
       this.cancelPointer();
@@ -482,8 +516,10 @@ class HoverDriver {
     this.explain(explain, reason);
   }
 
-  /** Ask again once `pending` settles, provided the reader is still looking at the same thing and
-   *  the attempt has not been abandoned meanwhile. */
+  /**
+   * Ask again once `pending` settles, provided the reader is still looking at the same thing and
+   * the attempt has not been abandoned meanwhile.
+   */
   private waitFor(
     pending: Promise<void>,
     pos: number,
@@ -512,8 +548,10 @@ class HoverDriver {
     });
   }
 
-  /** Whether the trigger that opened this attempt is still on `pos` — the caret has not moved, or
-   *  the pointer is still over the same character. */
+  /**
+   * Whether the trigger that opened this attempt is still on `pos` — the caret has not moved, or
+   * the pointer is still over the same character.
+   */
   private stillAt(pos: number, trigger: "caret" | "mouse"): boolean {
     if (trigger === "caret") {
       return this.view.hasFocus && this.view.state.selection.main.head === pos;
@@ -530,8 +568,10 @@ class HoverDriver {
     }
   }
 
-  /** Drop a shown card (Escape, a completer taking over, the pointer leaving). Also abandons an
-   *  attempt still waiting for an answer, so it does not arrive as a card nobody asked for. */
+  /**
+   * Drop a shown card (Escape, a completer taking over, the pointer leaving). Also abandons an
+   * attempt still waiting for an answer, so it does not arrive as a card nobody asked for.
+   */
   clear(): void {
     this.attempt += 1;
     this.cancelCaret();
@@ -568,8 +608,10 @@ class HoverDriver {
     }
   }
 
-  /** The configured dwell, floored at zero — the setting is clamped on read, and a negative value
-   *  would make `setTimeout` fire immediately. */
+  /**
+   * The configured dwell, floored at zero — the setting is clamped on read, and a negative value
+   * would make `setTimeout` fire immediately.
+   */
   private delay(plugin: SymbatPlugin): number {
     return Math.max(0, plugin.settings.hoverDelayMs);
   }
@@ -594,8 +636,10 @@ class HoverDriver {
     }
   }
 
-  /** Drop all three timers with the view, so none can fire into a torn-down editor — and mark the
-   *  driver dead, since a pending answer cannot be cancelled, only ignored. */
+  /**
+   * Drop all three timers with the view, so none can fire into a torn-down editor — and mark the
+   * driver dead, since a pending answer cannot be canceled, only ignored.
+   */
   destroy(): void {
     this.destroyed = true;
     this.cancelCaret();
@@ -607,9 +651,11 @@ class HoverDriver {
 /** The hover extension: one {@link HoverDriver} per editor. */
 const hoverPlugin = ViewPlugin.fromClass(HoverDriver);
 
-/** Open the hover popup at the caret right now, bypassing the dwell — the Vim normal-mode key and
- *  the **Show info at the cursor** command. Both were asked for outright, so a miss explains
- *  itself. */
+/**
+ * Open the hover popup at the caret right now, bypassing the dwell — the Vim normal-mode key and
+ * the **Show info at the cursor** command. Both were asked for outright, so a miss explains
+ * itself.
+ */
 export function showHoverAtCursor(view: EditorView): void {
   const driver = view.plugin(hoverPlugin);
   if (driver === null) {
@@ -622,8 +668,10 @@ export function showHoverAtCursor(view: EditorView): void {
   driver.show(true);
 }
 
-/** Close a shown card — after its go-to-definition has been taken, so it does not linger over the
- *  place it just left. */
+/**
+ * Close a shown card — after its go-to-definition has been taken, so it does not linger over the
+ * place it just left.
+ */
 export function dismissHover(view: EditorView): void {
   try {
     view.plugin(hoverPlugin)?.clear();

@@ -159,8 +159,10 @@ test("a word that merely starts with the name is not the name", () => {
 
 // --- the diagnostic rewrite ---------------------------------------------------
 
-/** An error message as Numbat renders one: prose inside a single span, with the type argument's
- *  angle brackets left *unescaped* — which is why the span matching cannot reach it. */
+/**
+ * An error message as Numbat renders one: prose inside a single span, with the type argument's
+ * angle brackets left *unescaped* — which is why the span matching cannot reach it.
+ */
 const diagnostic = (text: string) => `<span class="numbat-diagnostic-red">${text}</span>`;
 
 /** The struct as an error message dumps it: the type argument, then the body holding it again. */

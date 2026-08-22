@@ -17,13 +17,17 @@ import { closeAllSessions, runTask } from "./tasks";
 
 const queue = createQueue();
 
-/** How a job is to be scheduled: the two things the asking side knows and the queue cannot work out
- *  for itself. */
+/**
+ * How a job is to be scheduled: the two things the asking side knows and the queue cannot work out
+ * for itself.
+ */
 export interface Schedule {
   readonly priority: Priority;
 
-  /** What this job is about, so a newer one about the same thing supersedes it. See
-   *  {@link import("./queue").QueueJob}. */
+  /**
+   * What this job is about, so a newer one about the same thing supersedes it. See
+   * {@link import("./queue").QueueJob}.
+   */
   readonly group?: string;
 
   /** The interpreter generation the request was made under. */
@@ -65,8 +69,10 @@ export function serveErased(
   return serve(name, request as TaskMap[TaskName]["request"], schedule);
 }
 
-/** Instantiate the interpreter from the base64 module the asking side holds. See
- *  {@link import("./engine").initEngine} for why `sync` is a parameter and not a guess. */
+/**
+ * Instantiate the interpreter from the base64 module the asking side holds. See
+ * {@link import("./engine").initEngine} for why `sync` is a parameter and not a guess.
+ */
 export function start(base64: string, sync: boolean): Promise<void> {
   return initEngine(base64, sync);
 }
@@ -117,8 +123,10 @@ export function cancel(group: string | null): void {
   }
 }
 
-/** Release the replayed completion contexts — the idle policy's effect, applied from wherever the
- *  clock the reader is looking at happens to be. */
+/**
+ * Release the replayed completion contexts — the idle policy's effect, applied from wherever the
+ * clock the reader is looking at happens to be.
+ */
 export function releaseContexts(): void {
   releaseCompletionContexts();
 }

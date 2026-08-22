@@ -26,12 +26,16 @@
 // take code text the caller has already stripped of comments and blanked of string contents, so a
 // `#` or a quoted `where` cannot be read as either.
 
-/** The keywords that join a definition's body to what came before it: the `where`/`and` local
- *  bindings, and the two halves of an `if`. Numbat skips a newline on either side of each. */
+/**
+ * The keywords that join a definition's body to what came before it: the `where`/`and` local
+ * bindings, and the two halves of an `if`. Numbat skips a newline on either side of each.
+ */
 const JOINING_KEYWORD = "where|and|then|else";
 
-/** A line's code ending on a keyword that continues, or on a definition's `=` — which is not the
- *  `=` of `==`/`!=`/`<=`/`>=`, none of which Numbat reads on from. */
+/**
+ * A line's code ending on a keyword that continues, or on a definition's `=` — which is not the
+ * `=` of `==`/`!=`/`<=`/`>=`, none of which Numbat reads on from.
+ */
 const CONTINUES_AFTER = new RegExp(`(?<![=!<>])=$|(?<![\\p{L}\\p{N}_])(?:${JOINING_KEYWORD})$`, "u");
 
 /** A line's code opening on a keyword that continues the previous line. */

@@ -24,8 +24,10 @@ import { IMPURE_FRESH_MS } from "../tuning";
 export interface CachedValue<T> {
   value: T;
 
-  /** `false` once an entry whose scope reads the clock is older than {@link IMPURE_FRESH_MS}. Still
-   *  the value to paint — see the note on staleness above. */
+  /**
+   * `false` once an entry whose scope reads the clock is older than {@link IMPURE_FRESH_MS}. Still
+   * the value to paint — see the note on staleness above.
+   */
   fresh: boolean;
 }
 
@@ -130,8 +132,10 @@ export class EvaluationCache<T> {
     }
   }
 
-  /** Forget everything. For a caller whose keys do not move on their own, and for the reset
-   *  command, which is written so that it needs no theory about what its callees do. */
+  /**
+   * Forget everything. For a caller whose keys do not move on their own, and for the reset
+   * command, which is written so that it needs no theory about what its callees do.
+   */
   clear(): void {
     this.entries.clear();
   }

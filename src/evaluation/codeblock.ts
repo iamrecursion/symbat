@@ -70,9 +70,11 @@ function renderInto(el: HTMLElement, result: NumbatResult): void {
   setNumbatHtml(output, result.output);
 }
 
-/** What a block shows when the interpreter had no answer to give at all — it is down, or it is
- *  being replaced. Deliberately not the limit's sentence, which would send the reader to a setting
- *  that was never the problem. */
+/**
+ * What a block shows when the interpreter had no answer to give at all — it is down, or it is
+ * being replaced. Deliberately not the limit's sentence, which would send the reader to a setting
+ * that was never the problem.
+ */
 const UNAVAILABLE: NumbatResult = {
   output: escapeHtml("Numbat is restarting; this block will evaluate on the next render."),
   isError: true,

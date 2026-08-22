@@ -230,7 +230,7 @@ on for all of them:
 
 - **the dimension and unit names a context build enumerated.** Nothing else announces them, and
   without them every unit silently stops being syntax-highlighted — no error, no missing feature to
-  report, just prose-coloured code.
+  report, just prose-colored code.
 - **a panic.** The answering side records one and carries on; it cannot restart itself. `ask`
   schedules the restart.
 - **the prelude error.** It used to be read out of module state immediately after `createContext`.
@@ -271,7 +271,7 @@ design that touches it says so out loud rather than papering over it:
   is the only diagnostic anybody can hand you;
 - off the worker path neither stop affordance can do anything, since while a main-thread evaluation
   runs the main thread _is_ the evaluation and no click is ever dispatched — so the **Stop all
-  running evaluations** command is hidden outright, and the REPL's ■ button greys out with a label
+  running evaluations** command is hidden outright, and the REPL's ■ button grays out with a label
   saying why.
 
 The two surfaces are treated differently on purpose. An inert entry in the command palette is a
@@ -285,7 +285,7 @@ view header. It was a header action added with `addAction`, and on desktop it ne
 icon id, the show/hide timing and the signal driving it were each ruled out in turn, and no
 explanation was established. `views/scope.ts` had already reached the same arrangement from the
 other direction, building its expand/collapse controls into the panel. The rule the two share: a
-load-bearing affordance does not depend on a surface whose behaviour nobody can account for.
+load-bearing affordance does not depend on a surface whose behavior nobody can account for.
 
 **Starting is a ladder, not a try/catch.** `interpreter/ladder.ts` takes the first rung that
 _answers_ — a blob URL, then a `data:` URL for a policy that refuses `blob:` — and abandons any that
@@ -315,7 +315,7 @@ bomb onto the thread with no way to survive it is not a fix. Otherwise the worke
 off for the session, with a `console.warn` and a line in the status and deliberately no `Notice`: a
 toast storm on top of a crash storm is a second failure, not a diagnosis.
 
-**Stopping escalates.** Cancelling the queue reaches every request that has not started, which for
+**Stopping escalates.** Canceling the queue reaches every request that has not started, which for
 the shapes the plugin actually produces is nearly all of it (a reading-view render is one task per
 code block, not one long one) and it keeps the wasm instance, the context pool, the applied rates
 and any REPL session. Terminating loses all four and is the only thing that stops a call already
@@ -673,10 +673,10 @@ carries a comment saying what it depends on:
   Obsidian draws these icons itself, into DOM the plugin never sees — so unlike a widget of its own,
   which is told which surface it is on in TypeScript, an icon can be told only by what it sits
   inside. `addIcon` has no counterpart, so those three ids are the one thing here that outlives
-  unload; with the stylesheet gone they draw in the same colour as any other icon.
+  unload; with the stylesheet gone they draw in the same color as any other icon.
 - **No Monkey-Patching of Property Widgets:** An earlier version replaced the `datetime` registry
   entry outright, behind a setting, to add the same zone field to Obsidian's own widget. It was
-  removed in favour of the `Zoned Datetime` type, which covers the same ground: a patch inherits
+  removed in favor of the `Zoned Datetime` type, which covers the same ground: a patch inherits
   every change Obsidian makes to the widget it wraps, has to be undone exactly on unload, and has to
   coexist with whatever else has wrapped the same entry — three standing risks the type does not
   carry. `docs/design/property-timezones.md` records what it did and why it went.

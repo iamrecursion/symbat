@@ -12,11 +12,15 @@
 
 /** Where a property widget is being drawn. */
 export type PropertyHost =
-  /** A property *row* — the note's frontmatter editor, the Properties sidebar, a hover popover.
-   *  Full width, its own line, and the widget it has always had. */
+  /**
+   * A property *row* — the note's frontmatter editor, the Properties sidebar, a hover popover.
+   * Full width, its own line, and the widget it has always had.
+   */
   | "panel"
-  /** Anything else, which today means a Bases table or card cell: a box with a fixed width, where
-   *  the widget shows a value until it is clicked into. */
+  /**
+   * Anything else, which today means a Bases table or card cell: a box with a fixed width, where
+   * the widget shows a value until it is clicked into.
+   */
   | "compact";
 
 /**
@@ -98,9 +102,11 @@ export function resolveHost(el: HTMLElement, corrected: () => void): () => Prope
   return () => host;
 }
 
-/** How many frames {@link resolveHost} waits for a row to reach the document before concluding it
- *  never will. Enough for an insertion a frame or two behind the render, few enough that a widget
- *  Obsidian threw away is not held for any length of time. */
+/**
+ * How many frames {@link resolveHost} waits for a row to reach the document before concluding it
+ * never will. Enough for an insertion a frame or two behind the render, few enough that a widget
+ * Obsidian threw away is not held for any length of time.
+ */
 const HOST_RETRY_FRAMES = 3;
 
 /**
@@ -115,14 +121,18 @@ export function windowFor(el: HTMLElement): Window | null {
   return el.ownerDocument.defaultView;
 }
 
-/** The class a compact widget carries, and the only thing styles.css keys off. The stylesheet never
- *  names an Obsidian DOM class to style a widget of ours: everything it needs to know is decided
- *  here. (The type-menu icon tint is the one rule that must, because the element it colors is one
- *  Obsidian draws itself — see properties/icon-svg.ts.) */
+/**
+ * The class a compact widget carries, and the only thing styles.css keys off. The stylesheet never
+ * names an Obsidian DOM class to style a widget of ours: everything it needs to know is decided
+ * here. (The type-menu icon tint is the one rule that must, because the element it colors is one
+ * Obsidian draws itself — see properties/icon-svg.ts.)
+ */
 export const COMPACT_CLASS = "numbat-property-compact";
 
-/** The class a compact widget carries *while it holds a live editor* — the "clicked into" state.
- *  Idle is the absence of it. */
+/**
+ * The class a compact widget carries *while it holds a live editor* — the "clicked into" state.
+ * Idle is the absence of it.
+ */
 export const ACTIVE_CLASS = "is-active";
 
 /**
@@ -192,7 +202,7 @@ export function unclipHost(el: HTMLElement): () => void {
         // Growing it makes it overlap the cell beside it, and an overlap is decided by paint order:
         // a later sibling's background covers an earlier sibling's border. Lifting it out of that
         // order needs it positioned — but only where it is not already, since replacing whatever
-        // positioning a virtualised table gave its cells would move them.
+        // positioning a virtualized table gave its cells would move them.
         if (style.position === "static") {
           mark(node, UNCLIPPED_LIFT_CLASS);
           marked.push([node, UNCLIPPED_LIFT_CLASS]);
@@ -225,7 +235,7 @@ export function unclipHost(el: HTMLElement): () => void {
  * the count: `hasClass` cannot tell one row's mark from two rows' marks, which is the entire
  * question.
  *
- * The elements counted are **Obsidian's own**, and a virtualised table discards them freely — so
+ * The elements counted are **Obsidian's own**, and a virtualized table discards them freely — so
  * this holds them weakly, and drops each as its last mark goes. Neither on its own would be enough:
  * the entries are cleaned up because leaving a stale count would be wrong, and the map is weak
  * because a cell thrown away mid-edit is a cell whose count is never given back.
@@ -274,28 +284,38 @@ function unmark(node: HTMLElement, cls: string): boolean {
   return true;
 }
 
-/** The class {@link unclipHost} marks a clipping ancestor with. Carried by elements this plugin
- *  does not own, so it is removed again exactly, and its rule in styles.css is deliberately
- *  narrow. */
+/**
+ * The class {@link unclipHost} marks a clipping ancestor with. Carried by elements this plugin
+ * does not own, so it is removed again exactly, and its rule in styles.css is deliberately
+ * narrow.
+ */
 export const UNCLIPPED_CLASS = "numbat-unclipped";
 
-/** {@link UNCLIPPED_CLASS} for the innermost clipping box — the cell, which grows with its contents
- *  so that its border and focus ring still describe them. */
+/**
+ * {@link UNCLIPPED_CLASS} for the innermost clipping box — the cell, which grows with its contents
+ * so that its border and focus ring still describe them.
+ */
 export const UNCLIPPED_CELL_CLASS = "numbat-unclipped-cell";
 
-/** Applied beside {@link UNCLIPPED_CELL_CLASS} on a cell that is not already positioned, so it can
- *  paint over the one it now overlaps. Separate because positioning a cell that a table has
- *  positioned itself would move it. */
+/**
+ * Applied beside {@link UNCLIPPED_CELL_CLASS} on a cell that is not already positioned, so it can
+ * paint over the one it now overlaps. Separate because positioning a cell that a table has
+ * positioned itself would move it.
+ */
 export const UNCLIPPED_LIFT_CLASS = "numbat-unclipped-lift";
 
-/** The width a grown cell may not go below: whatever it was before it grew, in pixels. Carried as a
- *  custom property because only this side knows the number — see {@link unclipHost}. */
+/**
+ * The width a grown cell may not go below: whatever it was before it grew, in pixels. Carried as a
+ * custom property because only this side knows the number — see {@link unclipHost}.
+ */
 const UNCLIPPED_FLOOR_PROP = "--numbat-unclipped-floor";
 
 /** What a box does with contents that do not fit, as far as {@link unclipHost} cares. */
 export type OverflowRole =
-  /** Scrolls on at least one axis. Its clipping *is* its scrolling, so it is never lifted, and the
-   *  walk stops at it: nothing outside it would be revealed by going further. */
+  /**
+   * Scrolls on at least one axis. Its clipping *is* its scrolling, so it is never lifted, and the
+   * walk stops at it: nothing outside it would be revealed by going further.
+   */
   | "scrolls"
   /** Cuts its contents off without scrolling them — the boxes this lifts. */
   | "clips"

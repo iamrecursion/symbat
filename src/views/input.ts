@@ -75,8 +75,10 @@ import { fuzzyFilter } from "./fuzzy";
 import { DEFAULT_INDENT_WIDTH, numbatIndentKeymap, numbatIndentUnit } from "./indent";
 import { type VimMode, vimModeFrom, vimModeOf } from "./vim-mode";
 
-/** The `userEvent` tagged on programmatic value changes (recall, clear) so the update listener can
- *  tell them apart from the user's own edits. */
+/**
+ * The `userEvent` tagged on programmatic value changes (recall, clear) so the update listener can
+ * tell them apart from the user's own edits.
+ */
 const SET_INPUT_EVENT = "numbat.set";
 
 /** What the documentation popup asks about a completion: the body, and the type line above it. */
@@ -117,16 +119,20 @@ export interface NumbatInputHost extends FactsHost {
   /** Recall a newer history entry (Arrow Down on the last line). */
   recallNewer?(): void;
 
-  /** The user edited the input (a programmatic set does not count). The REPL uses it to drop an
-   *  in-progress arrow-key recall; the property field re-evaluates. */
+  /**
+   * The user edited the input (a programmatic set does not count). The REPL uses it to drop an
+   * in-progress arrow-key recall; the property field re-evaluates.
+   */
   changed?(): void;
 
   /** The input lost focus. */
   blurred?(): void;
 
-  /** The caret moved to a new 0-indexed line. Only a `.nbt` file uses it, to report its caret to
-   *  the scope inspector — a custom view carries no `editorInfoField`, so the plugin's own editor
-   *  listener cannot see it. */
+  /**
+   * The caret moved to a new 0-indexed line. Only a `.nbt` file uses it, to report its caret to
+   * the scope inspector — a custom view carries no `editorInfoField`, so the plugin's own editor
+   * listener cannot see it.
+   */
   caretMoved?(line: number): void;
 
   /** Whether the on-screen soft keyboard is up (so Enter inserts a newline). */
@@ -135,40 +141,50 @@ export interface NumbatInputHost extends FactsHost {
   /** The current input history, oldest-first. */
   history?(): readonly string[];
 
-  /** The vault path of the file being edited, in `document` mode — so a file that is part of the
-   *  user prelude evaluates against the prelude *before* it rather than one that already defines
-   *  everything in it. `null` when unknown. */
+  /**
+   * The vault path of the file being edited, in `document` mode — so a file that is part of the
+   * user prelude evaluates against the prelude *before* it rather than one that already defines
+   * everything in it. `null` when unknown.
+   */
   filePath?(): string | null;
 
   /** Ctrl+L: scroll the visible log off-screen, shell-style (keeps scrollback). */
   clearScreen?(): void;
 
-  /** Categorized expression completions for `query`, from whichever scope this surface's cursor is
-   *  in: `enabled` is the user's category toggles, `allowed` restricts to what the cursor position
-   *  accepts (e.g. types/dimensions/units after a `:`), or is null to accept all.
+  /**
+   * Categorized expression completions for `query`, from whichever scope this surface's cursor is
+   * in: `enabled` is the user's category toggles, `allowed` restricts to what the cursor position
+   * accepts (e.g. types/dimensions/units after a `:`), or is null to accept all.
    *
-   *  Asynchronous because enumerating a scope's names is a request now, where it used to be a call
-   *  into a handle the surface was holding. The one consumer is already an `async` completion
-   *  source, so the wait has somewhere to go. */
+   * Asynchronous because enumerating a scope's names is a request now, where it used to be a call
+   * into a handle the surface was holding. The one consumer is already an `async` completion
+   * source, so the wait has somewhere to go.
+   */
   exprCompletions(
     query: string,
     enabled: ExprCategories,
     allowed: ReadonlySet<ExprCategory> | null,
   ): Promise<ExprCompletion[]>;
 
-  /** The hover card for `symbol` (see hover/content.ts). A surface that omits it simply does not
-   *  hover; no card carries a go-to-definition here, since neither the REPL session nor a property
-   *  field has a note position to jump *from*. */
+  /**
+   * The hover card for `symbol` (see hover/content.ts). A surface that omits it simply does not
+   * hover; no card carries a go-to-definition here, since neither the REPL session nor a property
+   * field has a note position to jump *from*.
+   */
   hoverCard?(symbol: HoverSymbol): HoverCard;
 
-  /** Vim's ex-mode command line opened or closed. Only the REPL uses it, to put its command line on
-   *  the prompt's row instead of below it; a surface that omits it pays nothing, since the watcher
-   *  is only installed for a host that asks. */
+  /**
+   * Vim's ex-mode command line opened or closed. Only the REPL uses it, to put its command line on
+   * the prompt's row instead of below it; a surface that omits it pays nothing, since the watcher
+   * is only installed for a host that asks.
+   */
   vimPanelChanged?(open: boolean): void;
 
-  /** Vim's mode changed, or Vim was switched off (`null`). Only the `.nbt` file editor uses it, to
-   *  light up its mobile visual-block button while that mode is live; as above, the watcher behind
-   *  it is only installed for a host that asks. */
+  /**
+   * Vim's mode changed, or Vim was switched off (`null`). Only the `.nbt` file editor uses it, to
+   * light up its mobile visual-block button while that mode is live; as above, the watcher behind
+   * it is only installed for a host that asks.
+   */
   vimModeChanged?(mode: VimMode | null): void;
 }
 
@@ -189,32 +205,42 @@ export interface NumbatInputOptions {
   /** Ghost text for an empty input. */
   placeholder: string;
 
-  /** One line only: newlines are refused, so Enter always means "accept". A YAML property value
-   *  cannot contain one, and Shift-Enter would silently produce a value the frontmatter could not
-   *  hold. */
+  /**
+   * One line only: newlines are refused, so Enter always means "accept". A YAML property value
+   * cannot contain one, and Shift-Enter would silently produce a value the frontmatter could not
+   * hold.
+   */
   singleLine?: boolean;
 
-  /** The input holds one *expression*, not a statement — a Numbat-typed property's value, which
-   *  commits a value rather than a definition. Decorators are then neither completed nor carded on
-   *  hover: there is nothing below an `@` for one to annotate. The REPL and a `.nbt` document both
-   *  evaluate statements, so neither sets it. Separate from {@link singleLine}, which is about what
-   *  YAML can hold rather than about what Numbat will parse. */
+  /**
+   * The input holds one *expression*, not a statement — a Numbat-typed property's value, which
+   * commits a value rather than a definition. Decorators are then neither completed nor carded on
+   * hover: there is nothing below an `@` for one to annotate. The REPL and a `.nbt` document both
+   * evaluate statements, so neither sets it. Separate from {@link singleLine}, which is about what
+   * YAML can hold rather than about what Numbat will parse.
+   */
   expressionOnly?: boolean;
 
-  /** A whole Numbat document rather than one expression (a `.nbt` file). Enter inserts a newline
-   *  and there is nothing to submit to, find/replace is available (Obsidian's own does not reach
-   *  a custom view), and the inlay hints cover every line instead of just the last one's typed
-   *  hole. */
+  /**
+   * A whole Numbat document rather than one expression (a `.nbt` file). Enter inserts a newline
+   * and there is nothing to submit to, find/replace is available (Obsidian's own does not reach
+   * a custom view), and the inlay hints cover every line instead of just the last one's typed
+   * hole.
+   */
   document?: boolean;
 
-  /** A line-number gutter. Follows Obsidian's own "Show line number" editor setting, so a Numbat
-   *  file looks like every other editor in the app; meaningless for a one-expression input, which
-   *  never sets it. */
+  /**
+   * A line-number gutter. Follows Obsidian's own "Show line number" editor setting, so a Numbat
+   * file looks like every other editor in the app; meaningless for a one-expression input, which
+   * never sets it.
+   */
   lineNumbers?: boolean;
 
-  /** Spaces one Tab inserts, in {@link document} mode only. A one-expression input leaves Tab to
-   *  the browser, which is how you move focus out of a panel widget — and leading spaces would
-   *  corrupt a YAML property value besides. */
+  /**
+   * Spaces one Tab inserts, in {@link document} mode only. A one-expression input leaves Tab to
+   * the browser, which is how you move focus out of a panel widget — and leading spaces would
+   * corrupt a YAML property value besides.
+   */
   indentWidth?: number;
 }
 
@@ -228,9 +254,11 @@ function caretOnLastLine(state: EditorState): boolean {
   return state.doc.lineAt(state.selection.main.to).number === state.doc.lines;
 }
 
-/** A REPL completion. At most one of the extra fields is set, tagging the row's kind for styling:
- *  `numbatGlyph` (a `\code` glyph gutter) or `numbatCategory` (an expression completion's category
- *  tag) — see the autocompletion config. */
+/**
+ * A REPL completion. At most one of the extra fields is set, tagging the row's kind for styling:
+ * `numbatGlyph` (a `\code` glyph gutter) or `numbatCategory` (an expression completion's category
+ * tag) — see the autocompletion config.
+ */
 interface ReplCompletion extends Completion {
   /** The Unicode glyph a `\code` completion expands to, shown in a gutter. */
   numbatGlyph?: string;
@@ -241,24 +269,32 @@ interface ReplCompletion extends Completion {
   /** The inline `type()` signature HTML, on expression completions that have one. */
   numbatSignature?: string;
 
-  /** A ready-made description for a row the interpreter cannot be asked about — a decorator, which
-   *  no context has ever heard of. */
+  /**
+   * A ready-made description for a row the interpreter cannot be asked about — a decorator, which
+   * no context has ever heard of.
+   */
   numbatDoc?: string;
 
-  /** What a locally-declared row's card says — a parameter or a `where`/`and` local, described by
-   *  its own declaration rather than by the interpreter. */
+  /**
+   * What a locally-declared row's card says — a parameter or a `where`/`and` local, described by
+   * its own declaration rather than by the interpreter.
+   */
   numbatDeclared?: ExprCompletion["declared"];
 }
 
-/** The inline signature for a row the interpreter cannot type: the declaration's own annotation on
- *  a parameter or local, and nothing at all for a decorator. */
+/**
+ * The inline signature for a row the interpreter cannot type: the declaration's own annotation on
+ * a parameter or local, and nothing at all for a decorator.
+ */
 function declaredSignature(completion: ExprCompletion): string | undefined {
   const type = completion.declared?.type;
   return type === undefined || type === null ? undefined : declaredTypeHtml(type);
 }
 
-/** How accepting `completion` writes it, or `undefined` to insert its name as usual. A decorator
- *  writes the punctuation its grammar requires and drops the caret where the argument goes. */
+/**
+ * How accepting `completion` writes it, or `undefined` to insert its name as usual. A decorator
+ * writes the punctuation its grammar requires and drops the caret where the argument goes.
+ */
 function applyOf(completion: ExprCompletion): Completion["apply"] {
   const { applied } = completion;
   if (applied === undefined) {
@@ -592,40 +628,54 @@ export class NumbatInput {
   /** Holds the document's indent unit, so a changed indent width applies live. */
   private readonly indentCompartment = new Compartment();
 
-  /** Holds the editable flag, so an input can be closed off while there is nothing behind it to
-   *  answer. See {@link setEditable}. */
+  /**
+   * Holds the editable flag, so an input can be closed off while there is nothing behind it to
+   * answer. See {@link setEditable}.
+   */
   private readonly editableCompartment = new Compartment();
 
-  /** The ghost text for an empty input, compartmentalized so a host can withdraw it. See
-   *  {@link setPlaceholder}. */
+  /**
+   * The ghost text for an empty input, compartmentalized so a host can withdraw it. See
+   * {@link setPlaceholder}.
+   */
   private readonly placeholderCompartment = new Compartment();
 
   /** The host, for documentation lookups on the dwell popup. */
   private readonly host: NumbatInputHost;
 
-  /** Whether this editor holds a whole Numbat document (see the `document` option), which changes
-   *  which inlay-hint extension the compartment carries. */
+  /**
+   * Whether this editor holds a whole Numbat document (see the `document` option), which changes
+   * which inlay-hint extension the compartment carries.
+   */
   private readonly documentMode: boolean;
 
-  /** Whether this editor holds one expression rather than a statement (see the `expressionOnly`
-   *  option), which decides whether a decorator can be written — and so completed or hovered — in
-   *  it. */
+  /**
+   * Whether this editor holds one expression rather than a statement (see the `expressionOnly`
+   * option), which decides whether a decorator can be written — and so completed or hovered — in
+   * it.
+   */
   private readonly expressionOnly: boolean;
 
-  /** The shared floating documentation popup, its dwell timer, and the completion it is (or will
-   *  be) showing — so re-selecting the same row does not re-arm it. */
+  /**
+   * The shared floating documentation popup, its dwell timer, and the completion it is (or will
+   * be) showing — so re-selecting the same row does not re-arm it.
+   */
   private readonly docPopup = new DocPopup();
 
   /** The pending dwell before the documentation popup opens. */
   private dwellTimer: number | null = null;
 
-  /** The completion the popup is showing or about to show, so re-selecting the same row does not
-   *  re-arm the dwell. */
+  /**
+   * The completion the popup is showing or about to show, so re-selecting the same row does not
+   * re-arm the dwell.
+   */
   private dwellLabel: string | null = null;
 
-  /** Room (px) to keep clear below the caret when scrolling it into view, for a control floating
-   *  over the editor's bottom edge. `0` unless a host sets it — see
-   *  {@link setScrollBottomMargin}. */
+  /**
+   * Room (px) to keep clear below the caret when scrolling it into view, for a control floating
+   * over the editor's bottom edge. `0` unless a host sets it — see
+   * {@link setScrollBottomMargin}.
+   */
   private scrollBottomMargin = 0;
 
   /**
@@ -989,8 +1039,10 @@ export class NumbatInput {
     return this.view.state.doc.toString();
   }
 
-  /** Replace the whole input and move the caret to the end. Tagged as a programmatic set so it does
-   *  not cancel an in-progress recall. */
+  /**
+   * Replace the whole input and move the caret to the end. Tagged as a programmatic set so it does
+   * not cancel an in-progress recall.
+   */
   setValue(value: string): void {
     this.view.dispatch({
       changes: { from: 0, to: this.view.state.doc.length, insert: value },
@@ -999,8 +1051,10 @@ export class NumbatInput {
     });
   }
 
-  /** Replace the whole document and put the caret at the top — how a file is loaded into a
-   *  `document`-mode editor, where the end is the wrong place to land. */
+  /**
+   * Replace the whole document and put the caret at the top — how a file is loaded into a
+   * `document`-mode editor, where the end is the wrong place to land.
+   */
   setDocument(value: string): void {
     this.view.dispatch({
       changes: { from: 0, to: this.view.state.doc.length, insert: value },
@@ -1024,9 +1078,11 @@ export class NumbatInput {
     this.view.focus();
   }
 
-  /** Re-measure, for a consumer whose element was not in the document when the editor was built (a
-   *  property widget: Obsidian renders the row detached and inserts it afterwards, so the first
-   *  layout happens against nothing). */
+  /**
+   * Re-measure, for a consumer whose element was not in the document when the editor was built (a
+   * property widget: Obsidian renders the row detached and inserts it afterwards, so the first
+   * layout happens against nothing).
+   */
   refresh(): void {
     this.view.requestMeasure();
   }
@@ -1041,18 +1097,22 @@ export class NumbatInput {
     this.view.focus();
   }
 
-  /** Whether keyboard focus is in the editor _right now_. Asked by a host that is about to hide the
-   *  editor and wants to know whether to give focus back afterwards: hiding a focused element drops
-   *  focus to `<body>`, and restoring it unconditionally would take the caret away from wherever
-   *  the reader actually moved it while they waited. */
+  /**
+   * Whether keyboard focus is in the editor _right now_. Asked by a host that is about to hide the
+   * editor and wants to know whether to give focus back afterwards: hiding a focused element drops
+   * focus to `<body>`, and restoring it unconditionally would take the caret away from wherever
+   * the reader actually moved it while they waited.
+   */
   hasFocus(): boolean {
     return this.view.hasFocus;
   }
 
-  /** Whether the completion popup is open. A host that tears the editor down when focus leaves it
-   *  must not do so while the reader is picking a completion: the popup is parented on
-   *  `document.body`, so pressing part of it blurs the editor without the reader having gone
-   *  anywhere (properties/focus-guard.ts). */
+  /**
+   * Whether the completion popup is open. A host that tears the editor down when focus leaves it
+   * must not do so while the reader is picking a completion: the popup is parented on
+   * `document.body`, so pressing part of it blurs the editor without the reader having gone
+   * anywhere (properties/focus-guard.ts).
+   */
   completionOpen(): boolean {
     return completionStatus(this.view.state) === "active";
   }
@@ -1086,8 +1146,10 @@ export class NumbatInput {
     });
   }
 
-  /** Re-measure after the editor has been hidden and shown again. CodeMirror caches the geometry it
-   *  last saw, and what it last saw inside a `display: none` box is zeroes. */
+  /**
+   * Re-measure after the editor has been hidden and shown again. CodeMirror caches the geometry it
+   * last saw, and what it last saw inside a `display: none` box is zeroes.
+   */
   remeasure(): void {
     this.view.requestMeasure();
   }
@@ -1106,8 +1168,10 @@ export class NumbatInput {
     });
   }
 
-  /** Apply a new Tab indent width without rebuilding the editor. Document mode only: elsewhere the
-   *  compartment is not in the configuration and reconfiguring it is simply inert. */
+  /**
+   * Apply a new Tab indent width without rebuilding the editor. Document mode only: elsewhere the
+   * compartment is not in the configuration and reconfiguring it is simply inert.
+   */
   setIndentWidth(width: number): void {
     this.view.dispatch({
       effects: this.indentCompartment.reconfigure(numbatIndentUnit(width)),
@@ -1130,8 +1194,10 @@ export class NumbatInput {
     });
   }
 
-  /** The hover extension for this input: the symbol under the pointer or the caret, carded by the
-   *  host against whatever context it evaluates in. */
+  /**
+   * The hover extension for this input: the symbol under the pointer or the caret, carded by the
+   * host against whatever context it evaluates in.
+   */
   private hoverExtension() {
     return numbatHover(this.plugin, {
       completerOpen: (view) => completionStatus(view.state) === "active",
@@ -1166,8 +1232,10 @@ export class NumbatInput {
     });
   }
 
-  /** This editor's inlay hints: every line's result and type for a document, and for an expression
-   *  just the incomplete-input hole at the end. */
+  /**
+   * This editor's inlay hints: every line's result and type for a document, and for an expression
+   * just the incomplete-input hole at the end.
+   */
   private inlayExtension() {
     return this.documentMode
       ? numbatDocumentInlays(this.plugin, () => this.host.filePath?.() ?? null)
@@ -1194,8 +1262,10 @@ export class NumbatInput {
     });
   }
 
-  /** Leave Vim insert mode (for the mobile Esc button — a soft keyboard has no Esc key). A no-op
-   *  when Vim is off or already in normal mode. */
+  /**
+   * Leave Vim insert mode (for the mobile Esc button — a soft keyboard has no Esc key). A no-op
+   * when Vim is off or already in normal mode.
+   */
   exitInsertMode(): void {
     const cm = getCM(this.view);
     if (cm) {
@@ -1208,7 +1278,7 @@ export class NumbatInput {
   /**
    * Press Escape in Vim, for a mobile key bar. Unlike {@link exitInsertMode} this is the whole key:
    * it leaves insert *and* visual mode, and cancels a half-typed operator or count — which is what
-   * a button labelled `Esc` has to do, since a soft keyboard gives no other way to take any of it
+   * a button labeled `Esc` has to do, since a soft keyboard gives no other way to take any of it
    * back. A no-op when Vim is off.
    *
    * `"user"` is the origin the library passes for a real keypress, so a recording macro sees this

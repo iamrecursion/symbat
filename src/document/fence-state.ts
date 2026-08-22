@@ -27,8 +27,10 @@ export interface FenceSpan {
   /** First body line (the line after the opening fence). */
   bodyStartLine: number;
 
-  /** The closing fence's line, or the document's line count when unclosed — so the body is
-   *  `[bodyStartLine, closeLine)`. */
+  /**
+   * The closing fence's line, or the document's line count when unclosed — so the body is
+   * `[bodyStartLine, closeLine)`.
+   */
   closeLine: number;
 }
 

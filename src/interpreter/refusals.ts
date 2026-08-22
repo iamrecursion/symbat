@@ -32,16 +32,20 @@ import { escapeHtml } from "./markup";
  */
 export const EVALUATION_STOPPED_TEXT = "Symbat: evaluation stopped";
 
-/** {@link EVALUATION_STOPPED_TEXT} as a result, for the surfaces that have to show a refusal where
- *  there is no context to produce one. Frozen for the same reason its sibling is: one object handed
- *  to every surface is the wrong place to find out that something started mutating it. */
+/**
+ * {@link EVALUATION_STOPPED_TEXT} as a result, for the surfaces that have to show a refusal where
+ * there is no context to produce one. Frozen for the same reason its sibling is: one object handed
+ * to every surface is the wrong place to find out that something started mutating it.
+ */
 export const EVALUATION_STOPPED_RESULT: { readonly output: string; readonly isError: boolean; } = Object.freeze({
   output: escapeHtml(EVALUATION_STOPPED_TEXT),
   isError: true,
 });
 
-/** What a refused note is shown. Held in the entry because there are two ways to end up here and
- * they need different sentences. */
+/**
+ * What a refused note is shown. Held in the entry because there are two ways to end up here and
+ * they need different sentences.
+ */
 type Refusal = { readonly output: string; readonly isError: boolean; };
 
 // Every access writes, so insertion order is recency and eviction is oldest-first without a
@@ -86,14 +90,18 @@ export function rememberStop(key: string, stamp: number, now = defaultClock()): 
   file(key, stamp, now, EVALUATION_STOPPED_RESULT);
 }
 
-/** Whether this note ran out of time recently enough, and under the same interpreter, that trying
- *  it again would only stall again. */
+/**
+ * Whether this note ran out of time recently enough, and under the same interpreter, that trying
+ * it again would only stall again.
+ */
 export function refusedRecently(key: string, stamp: number, now = defaultClock()): boolean {
   return refusalResult(key, stamp, now) !== null;
 }
 
-/** What to paint instead of evaluating, or `null` if this note may be tried. The same question as
- *  {@link refusedRecently}, for the surfaces that have somewhere to put the answer. */
+/**
+ * What to paint instead of evaluating, or `null` if this note may be tried. The same question as
+ * {@link refusedRecently}, for the surfaces that have somewhere to put the answer.
+ */
 export function refusalResult(key: string, stamp: number, now = defaultClock()): Refusal | null {
   const held = refusals.get(key);
   if (held === undefined || held.stamp !== stamp || now - held.at > OVER_BUDGET_COOLDOWN_MS) {
@@ -134,7 +142,7 @@ let announcedAt: number | null = null;
 /** How long the limit is, said the way a sentence to the reader needs it. */
 export function describeLimit(budgetMs: number): string {
   // Seconds once there are seconds to speak of: the setting is in milliseconds because the
-  // difference between two and five seconds is a real judgement about a machine, but "after 10000
+  // difference between two and five seconds is a real judgment about a machine, but "after 10000
   // ms" is not how anyone reads a sentence about how long they waited. One decimal keeps 2500 ms
   // honest without turning 10000 into "10.0".
   return budgetMs >= 1_000 ? `${Number((budgetMs / 1_000).toFixed(1))} s` : `${budgetMs} ms`;

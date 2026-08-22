@@ -205,8 +205,10 @@ describe("invalidatePreamblesFor", () => {
     counts.body = 0;
   });
 
-  /** Ask for `importer`'s walk (which transitively visited `order`) and for the preamble built on
-   *  it, counting whichever of the two actually had to be derived. */
+  /**
+   * Ask for `importer`'s walk (which transitively visited `order`) and for the preamble built on
+   * it, counting whichever of the two actually had to be derived.
+   */
   function populate(importer: string, order: string[]): void {
     cachedImportWalk(importer, ["[[Dep]]"], STAMP, () => {
       counts.walks += 1;

@@ -27,9 +27,11 @@ const CATEGORY_LABEL: Record<ExprCategory, string> = {
   decorator: "decorator",
 };
 
-/** The `numbat-*` syntax class each category's tag is colored with, so the tag reads in the same
- *  color the name highlights as in code. Each kind — including units and dimensions — has its own
- *  class and hue. */
+/**
+ * The `numbat-*` syntax class each category's tag is colored with, so the tag reads in the same
+ * color the name highlights as in code. Each kind — including units and dimensions — has its own
+ * class and hue.
+ */
 const CATEGORY_CLASS: Record<ExprCategory, string> = {
   variable: "numbat-identifier",
   function: "numbat-identifier",
@@ -75,9 +77,11 @@ export function renderExprSuggestion(
   el.append(renderCategoryTag(value.category));
 }
 
-/** A detached span holding the muted category tag that trails a completion row, colored with the
- *  category's own syntax class. Detached so a surface that builds the rest of the row itself can
- *  place it (the REPL renders into CM6's row). */
+/**
+ * A detached span holding the muted category tag that trails a completion row, colored with the
+ * category's own syntax class. Detached so a surface that builds the rest of the row itself can
+ * place it (the REPL renders into CM6's row).
+ */
 export function renderCategoryTag(category: ExprCategory): HTMLElement {
   return createSpan({
     cls: `numbat-expr-suggestion-kind ${CATEGORY_CLASS[category]}`,
@@ -186,8 +190,10 @@ const VIEWPORT_MARGIN = 8;
  * selection change / close.
  */
 export class DocPopup {
-  /** The popup element, created on first show and reused thereafter; `null` until then, so a
-   *  session that never opens one touches the DOM not at all. */
+  /**
+   * The popup element, created on first show and reused thereafter; `null` until then, so a
+   * session that never opens one touches the DOM not at all.
+   */
   private el: HTMLElement | null = null;
 
   /** Warms MathJax so the first popup's math renders without a flash of source. */

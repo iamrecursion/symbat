@@ -35,9 +35,11 @@ import { type HoverCard, NumbatInput } from "./input";
 import { SoftKeyboardTracker } from "./soft-keyboard";
 import type { VimMode } from "./vim-mode";
 
-/** Persisted in the vault's `workspace.json`, so this string is a compatibility contract, not a
- *  name: changing it turns every open `.nbt` pane into a "No view of type…" placeholder. It keeps
- *  the `numbat-` prefix for that reason alone. */
+/**
+ * Persisted in the vault's `workspace.json`, so this string is a compatibility contract, not a
+ * name: changing it turns every open `.nbt` pane into a "No view of type…" placeholder. It keeps
+ * the `numbat-` prefix for that reason alone.
+ */
 export const VIEW_TYPE_NUMBAT_FILE = "numbat-file";
 
 /**
@@ -90,56 +92,74 @@ export class NumbatFileView extends TextFileView {
   /** Read for settings and the interpreter; also what the editor is built against. */
   private readonly plugin: SymbatPlugin;
 
-  /** The container the CodeMirror editor is mounted in. Definitely assigned in {@link onOpen},
-   *  which Obsidian calls before the file is loaded. */
+  /**
+   * The container the CodeMirror editor is mounted in. Definitely assigned in {@link onOpen},
+   * which Obsidian calls before the file is loaded.
+   */
   private editorEl!: HTMLElement;
 
   /** The strip above the editor that reports the file's own evaluation errors. */
   private bannerEl!: HTMLElement;
 
-  /** The editor itself; absent before {@link onOpen} and after {@link onClose}, and replaced
-   *  outright when a different file is loaded into this view. */
+  /**
+   * The editor itself; absent before {@link onOpen} and after {@link onClose}, and replaced
+   * outright when a different file is loaded into this view.
+   */
   private input?: NumbatInput;
 
-  /** What the interpreter has said about the names in scope above the caret, for the completer's
-   *  signatures and its documentation popup. */
+  /**
+   * What the interpreter has said about the names in scope above the caret, for the completer's
+   * signatures and its documentation popup.
+   */
   private readonly completionFacts = scopeFactsHost(
     () => this.scopeAbove(),
     () => this.plugin.settings.completionIdleSeconds * 1000,
   );
 
-  /** The same, one line lower: the hover card resolves against the caret's *own* line too, so
-   *  hovering `speed` on its own `let speed = …` describes that binding rather than nothing. A
-   *  second host rather than a parameter, because the two are genuinely different scopes and each
-   *  files its answers under its own key. */
+  /**
+   * The same, one line lower: the hover card resolves against the caret's *own* line too, so
+   * hovering `speed` on its own `let speed = …` describes that binding rather than nothing. A
+   * second host rather than a parameter, because the two are genuinely different scopes and each
+   * files its answers under its own key.
+   */
   private readonly hoverFacts = scopeFactsHost(
     () => this.scopeAbove(true),
     () => this.plugin.settings.completionIdleSeconds * 1000,
   );
 
-  /** The mobile key bar below the editor, shown only while the soft keyboard is up; null on desktop
-   *  and until the view is built. */
+  /**
+   * The mobile key bar below the editor, shown only while the soft keyboard is up; null on desktop
+   * and until the view is built.
+   */
   private keyBarEl: HTMLElement | null = null;
 
-  /** The key bar's Vim buttons — Escape and the visual-block toggle — shown only while Vim is on.
-   *  The third button (hide the keyboard) needs no reference: with the bar up it is never
-   *  hidden. */
+  /**
+   * The key bar's Vim buttons — Escape and the visual-block toggle — shown only while Vim is on.
+   * The third button (hide the keyboard) needs no reference: with the bar up it is never
+   * hidden.
+   */
   private escButtonEl: HTMLButtonElement | null = null;
   private blockButtonEl: HTMLButtonElement | null = null;
 
-  /** The on-screen keyboard overlapping this view's bottom edge, which is both what the bar is
-   *  lifted clear of and the signal for showing it at all. Built in {@link onOpen}. */
+  /**
+   * The on-screen keyboard overlapping this view's bottom edge, which is both what the bar is
+   * lifted clear of and the signal for showing it at all. Built in {@link onOpen}.
+   */
   private keyboard?: SoftKeyboardTracker;
 
-  /** The editor's current Vim mode, or `null` when Vim is off — reported by the editor, and read to
-   *  light up the visual-block button. */
+  /**
+   * The editor's current Vim mode, or `null` when Vim is off — reported by the editor, and read to
+   * light up the visual-block button.
+   */
   private vimMode: VimMode | null = null;
 
   /** The pending debounced banner evaluation, or `null` when none is scheduled. */
   private bannerTimer: number | null = null;
 
-  /** Whether the current editor was built with Vim bindings on. Held so re-reading Obsidian's
-   *  editor settings on a layout change only dispatches when one moved. */
+  /**
+   * Whether the current editor was built with Vim bindings on. Held so re-reading Obsidian's
+   * editor settings on a layout change only dispatches when one moved.
+   */
   private vimOn = false;
 
   /** Whether the current editor was built with the line-number gutter on. */
@@ -207,7 +227,7 @@ export class NumbatFileView extends TextFileView {
     this.applyLineNumbers();
   }
 
-  /** Tear the editor down with the view, cancelling the pending banner evaluation. */
+  /** Tear the editor down with the view, canceling the pending banner evaluation. */
   async onClose(): Promise<void> {
     this.clearBannerTimer();
     this.input?.destroy();
@@ -224,8 +244,10 @@ export class NumbatFileView extends TextFileView {
   // THE FILE (TEXTFILEVIEW'S CONTRACT)
   // ==============================================================================================
 
-  /** The text to save: the editor's current content, falling back to the last text loaded when
-   *  there is no editor (before open, after close). */
+  /**
+   * The text to save: the editor's current content, falling back to the last text loaded when
+   * there is no editor (before open, after close).
+   */
   getViewData(): string {
     return this.input?.getValue() ?? this.data;
   }
@@ -288,8 +310,10 @@ export class NumbatFileView extends TextFileView {
     this.input?.setInlayHoles(this.plugin.settings.inlayHints);
   }
 
-  /** Recompute this file's inlay hints because what they *mean* changed (e.g. a change to a prelude
-   * or the exchange rates) rather than because the file did. */
+  /**
+   * Recompute this file's inlay hints because what they *mean* changed (e.g. a change to a prelude
+   * or the exchange rates) rather than because the file did.
+   */
   refreshInlays(): void {
     this.input?.refreshInlays();
   }
@@ -321,8 +345,10 @@ export class NumbatFileView extends TextFileView {
     }
   }
 
-  /** Re-check the prelude banner (the prelude files, or their contents, changed). Not typing, so
-   *  it reports promptly — see {@link BANNER_PROMPT_DELAY_MS}. */
+  /**
+   * Re-check the prelude banner (the prelude files, or their contents, changed). Not typing, so
+   * it reports promptly — see {@link BANNER_PROMPT_DELAY_MS}.
+   */
   refreshBanner(): void {
     this.scheduleBanner(BANNER_PROMPT_DELAY_MS);
   }
@@ -478,8 +504,10 @@ export class NumbatFileView extends TextFileView {
     this.input?.setScrollBottomMargin(height);
   }
 
-  /** Record the editor's Vim mode and light the visual-block button while that mode is the live
-   *  one — a toggle that does not say which way it is toggled is a guess. */
+  /**
+   * Record the editor's Vim mode and light the visual-block button while that mode is the live
+   * one — a toggle that does not say which way it is toggled is a guess.
+   */
   private setVimMode(mode: VimMode | null): void {
     this.vimMode = mode;
     this.blockButtonEl?.toggleClass("is-active", mode === "visual-block");

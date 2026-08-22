@@ -27,8 +27,10 @@ import {
 } from "../../../src/completion/expressions.ts";
 import { NULLABLE_STRUCT, NULLABLE_STRUCT_DOC } from "../../../src/interpreter/nullable.ts";
 
-/** Build a vocabulary from plain name lists (the shape interpreter/numbat.ts assembles from the
- *  `list functions|units|variables|dimensions` commands). */
+/**
+ * Build a vocabulary from plain name lists (the shape interpreter/numbat.ts assembles from the
+ * `list functions|units|variables|dimensions` commands).
+ */
 function vocab(
   { dimensions = [], units = [], functions = [], variables = [] }: {
     dimensions?: string[];

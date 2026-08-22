@@ -17,17 +17,21 @@ import type { InterpreterPath, Transport, TransportHost } from "./transport";
 import type { HostMessage, WireReply, WorkerMessage } from "./wire";
 import type { Schedule } from "./worker/entry";
 
-/** A worker's address, and how to give it back. `URL.createObjectURL` leaks until revoked, and a
- *  respawn mints a fresh one. The pairing is carried together rather than left to a call site to
- *  remember. */
+/**
+ * A worker's address, and how to give it back. `URL.createObjectURL` leaks until revoked, and a
+ * respawn mints a fresh one. The pairing is carried together rather than left to a call site to
+ * remember.
+ */
 interface WorkerUrl {
   readonly href: string;
   readonly revoke: () => void;
 }
 
-/** A blob URL, revoked once the worker has loaded from it. Minted per spawn as revoking at
- *  construction races the load, and revoking once for good leaves a later respawn with nothing to
- *  construct from. */
+/**
+ * A blob URL, revoked once the worker has loaded from it. Minted per spawn as revoking at
+ * construction races the load, and revoking once for good leaves a later respawn with nothing to
+ * construct from.
+ */
 export function blobWorkerUrl(source: string): WorkerUrl {
   const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
   return {
@@ -38,8 +42,10 @@ export function blobWorkerUrl(source: string): WorkerUrl {
   };
 }
 
-/** A `data:` URL, for a policy that refuses `blob:`. `encodeURIComponent` rather than `btoa`, which
- *  throws on any character outside Latin-1 — and the worker bundle contains plenty. */
+/**
+ * A `data:` URL, for a policy that refuses `blob:`. `encodeURIComponent` rather than `btoa`, which
+ * throws on any character outside Latin-1 — and the worker bundle contains plenty.
+ */
 export function dataWorkerUrl(source: string): WorkerUrl {
   return {
     href: `data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`,

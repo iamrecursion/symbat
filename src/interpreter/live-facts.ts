@@ -107,16 +107,22 @@ export function scopeFactsHost(scope: () => ScopeSpec | null, idleMs: () => numb
 
 /** A REPL session, as the facts layer sees it. */
 export interface SessionScope {
-  /** What identifies this session's exact state. It has to move whenever anything could have
-   *  changed what a name in it means — for the REPL, every line it evaluates. */
+  /**
+   * What identifies this session's exact state. It has to move whenever anything could have
+   * changed what a name in it means — for the REPL, every line it evaluates.
+   */
   readonly key: string;
 
-  /** The integer the interpreter knows this session by. Not a handle: an id the interpreter has
-   *  forgotten is a miss, where a pointer into a heap that has been replaced is a crash. */
+  /**
+   * The integer the interpreter knows this session by. Not a handle: an id the interpreter has
+   * forgotten is a miss, where a pointer into a heap that has been replaced is a crash.
+   */
   readonly id: number;
 
-  /** Whether an answer from it could differ next time — the prelude, or the session's own
-   *  definitions, reading the clock (interpreter/purity.ts). */
+  /**
+   * Whether an answer from it could differ next time — the prelude, or the session's own
+   * definitions, reading the clock (interpreter/purity.ts).
+   */
   readonly impure: boolean;
 }
 

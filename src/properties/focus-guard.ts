@@ -70,16 +70,18 @@ const POINTER_GRACE_MS = 100;
  */
 const pending = new Set<() => void>();
 
-/** Start recording pointer presses, in every window the app has open and any it opens later.
- *  Called once from the plugin's `onload`; the listeners, the witness and any parked question are
- *  all released on unload. */
+/**
+ * Start recording pointer presses, in every window the app has open and any it opens later.
+ * Called once from the plugin's `onload`; the listeners, the witness and any parked question are
+ * all released on unload.
+ */
 export function watchPointerDown(plugin: SymbatPlugin): void {
   // Per call rather than module-level, so that re-enabling the plugin re-registers rather than
   // finding every document already "watched" by listeners that unload has since removed.
   const watched = new WeakSet<Document>();
   let loaded = true;
   const watch = (doc: Document): void => {
-    // `onLayoutReady` below cannot be cancelled, and a plugin disabled in the moment before the
+    // `onLayoutReady` below cannot be canceled, and a plugin disabled in the moment before the
     // workspace settles would otherwise register listeners into a component with no unload left to
     // remove them.
     if (!loaded || watched.has(doc)) {
@@ -218,8 +220,10 @@ export function whenFocusLeaves(row: HTMLElement, left: () => void): void {
   }
 }
 
-/** Park the question until `type` fires on `win`, then ask it again. Registered in {@link pending},
- *  so unload drops it — listener, timer and all. */
+/**
+ * Park the question until `type` fires on `win`, then ask it again. Registered in {@link pending},
+ * so unload drops it — listener, timer and all.
+ */
 function askAgainOn(win: Window, type: "focus" | "pointerdown", row: HTMLElement, left: () => void): void {
   // Captured for `pointerdown`, matching the witness above, so the press cannot be swallowed before
   // this sees it. `once` does the removal in the ordinary case; `cancel` covers unload.

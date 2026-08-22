@@ -13,16 +13,20 @@ import { Vim as bundledVim } from "@replit/codemirror-vim";
 
 /** The shape we read off the CM5-compat object: vim's own state, when vim is on. */
 interface VimCompat {
-  /** Vim's per-editor state; `insertMode` is what distinguishes normal mode, where the hover key is
-   *  bound, from insert mode, where it must type a character. */
+  /**
+   * Vim's per-editor state; `insertMode` is what distinguishes normal mode, where the hover key is
+   * bound, from insert mode, where it must type a character.
+   */
   state?: { vim?: { insertMode?: boolean; }; };
 }
 
 /** Vim's key-mapping API, as exposed on `window.CodeMirrorAdapter`. */
 interface VimApi {
-  /** Register a named action. Global to the vim adapter and with no counterpart to remove it, which
-   *  is why the action here closes over a module-level reference rather than the plugin — see
-   *  {@link refreshHover}. */
+  /**
+   * Register a named action. Global to the vim adapter and with no counterpart to remove it, which
+   * is why the action here closes over a module-level reference rather than the plugin — see
+   * {@link refreshHover}.
+   */
   defineAction?: (name: string, action: (cm: unknown) => void) => void;
 
   /** Bind a key sequence to a registered action, in a given mode context. */
@@ -38,9 +42,11 @@ interface VimApi {
   unmap?: (keys: string, context?: string) => boolean;
 }
 
-/** The CM5-compat object for `view`, or `null` when vim is not active on it. Its mere presence *is*
- *  the "vim is on" signal — the vim extension attaches it when it loads and deletes it when it
- *  unloads (which is also what `getCM` reads). */
+/**
+ * The CM5-compat object for `view`, or `null` when vim is not active on it. Its mere presence *is*
+ * the "vim is on" signal — the vim extension attaches it when it loads and deletes it when it
+ * unloads (which is also what `getCM` reads).
+ */
 function vimCompat(view: EditorView): VimCompat | null {
   const compat = (view as unknown as { cm?: VimCompat; }).cm;
   return compat != null && typeof compat === "object" ? compat : null;
@@ -59,8 +65,10 @@ export function dwellCountsIn(view: EditorView): boolean {
   return compat === null || compat.state?.vim?.insertMode === true;
 }
 
-/** Whether `view` is in Vim's **normal** mode right now — Vim is on, and not inserting. Gates the
- *  editor-level fallback for the normal-mode key, so it never swallows an ordinary keystroke. */
+/**
+ * Whether `view` is in Vim's **normal** mode right now — Vim is on, and not inserting. Gates the
+ * editor-level fallback for the normal-mode key, so it never swallows an ordinary keystroke.
+ */
 export function inVimNormalMode(view: EditorView): boolean {
   const compat = vimCompat(view);
   return compat !== null && compat.state?.vim?.insertMode !== true;
@@ -103,13 +111,17 @@ function vimApis(): VimApi[] {
 /** The action name registered with vim; also the id it is mapped by. */
 const ACTION = "numbatShowHover";
 
-/** The key currently bound, so it can be unmapped before another takes its place; `null` when
- *  nothing is bound. */
+/**
+ * The key currently bound, so it can be unmapped before another takes its place; `null` when
+ * nothing is bound.
+ */
 let mappedKey: string | null = null;
 
-/** What the setting last asked for — including `""`, which means "no key". Kept apart from {@link
- *  mappedKey} so the no-key case engages the fast path too, instead of re-running the unmap loop on
- *  every `refreshHover()`. */
+/**
+ * What the setting last asked for — including `""`, which means "no key". Kept apart from {@link
+ * mappedKey} so the no-key case engages the fast path too, instead of re-running the unmap loop on
+ * every `refreshHover()`.
+ */
 let requestedKey: string | null = null;
 
 /**

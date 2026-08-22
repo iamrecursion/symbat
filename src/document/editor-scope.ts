@@ -33,8 +33,10 @@ export function cursorInNumbatFence(doc: Text, pos: number, spans?: readonly Fen
   return insideNumbatFence(doc.iterLines(1, cursorLine));
 }
 
-/** Whether document position `pos` sits inside an inline-eval span's expression region, on a line
- *  that is in an inline-eval scope (prose, or frontmatter / a non-numbat fence per the config). */
+/**
+ * Whether document position `pos` sits inside an inline-eval span's expression region, on a line
+ * that is in an inline-eval scope (prose, or frontmatter / a non-numbat fence per the config).
+ */
 export function cursorInInlineExpr(doc: Text, pos: number, config: InlineEvalConfig): boolean {
   const line = doc.lineAt(pos);
   if (spanAtColumn(line.text, pos - line.from, config) === null) {
@@ -73,9 +75,11 @@ export function cursorInFrontmatter(doc: Text, pos: number): boolean {
   return seen > 0; // the opening delimiter itself is not inside
 }
 
-/** Either of the first two: the caret is somewhere the text alone says is Numbat, not Markdown
- *  prose. `inline` is `null` when inline evaluation is disabled (then only the fenced blocks
- *  count). */
+/**
+ * Either of the first two: the caret is somewhere the text alone says is Numbat, not Markdown
+ * prose. `inline` is `null` when inline evaluation is disabled (then only the fenced blocks
+ * count).
+ */
 export function cursorInNumbatCode(
   doc: Text,
   pos: number,

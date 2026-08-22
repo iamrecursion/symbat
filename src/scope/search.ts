@@ -17,12 +17,16 @@ import type { DeclKind, ScopeEntry, ScopeNode, ScopeTree, SkipEntry } from "./mo
 // THE MODEL
 // ================================================================================================
 
-/** Whether a result is one of the note's own bindings or comes from the bundled Numbat prelude.
- *  Only a `scope` result has somewhere to jump to. */
+/**
+ * Whether a result is one of the note's own bindings or comes from the bundled Numbat prelude.
+ * Only a `scope` result has somewhere to jump to.
+ */
 export type SearchOrigin = "scope" | "builtin";
 
-/** What a result points at. A discriminated union rather than parallel nullable fields, so the view
- *  narrows it instead of asserting. */
+/**
+ * What a result points at. A discriminated union rather than parallel nullable fields, so the view
+ * narrows it instead of asserting.
+ */
 export type SearchTarget =
   | { kind: "entry"; entry: ScopeEntry; }
   | { kind: "skip"; skip: SkipEntry; }
@@ -30,25 +34,33 @@ export type SearchTarget =
 
 /** One searchable item. */
 export interface SearchCandidate {
-  /** The row's stable identity — see {@link searchRowKey}. Empty for a builtin, which has no row in
-   *  the tree. Two candidates may share a key (a property searchable by both its key and the name
-   *  it binds). */
+  /**
+   * The row's stable identity — see {@link searchRowKey}. Empty for a builtin, which has no row in
+   * the tree. Two candidates may share a key (a property searchable by both its key and the name
+   * it binds).
+   */
   key: string;
 
-  /** The ids of the nodes from the root down to the one holding this row, so the view can
-   *  force-expand the whole chain (a child node's rows stay hidden unless its *parent* is expanded
-   *  too). Empty for a builtin. */
+  /**
+   * The ids of the nodes from the root down to the one holding this row, so the view can
+   * force-expand the whole chain (a child node's rows stay hidden unless its *parent* is expanded
+   * too). Empty for a builtin.
+   */
   trail: string[];
 
   /** The containing node's label, for a muted provenance hint. Empty for a builtin. */
   nodeLabel: string;
 
-  /** The exact string that is both scored and rendered — match offsets index into it, so it must
-   *  never be a composite. */
+  /**
+   * The exact string that is both scored and rendered — match offsets index into it, so it must
+   * never be a composite.
+   */
   text: string;
 
-  /** Where the candidate came from — the note's scope or the interpreter's builtins — which decides
-   *  its ranking tier. */
+  /**
+   * Where the candidate came from — the note's scope or the interpreter's builtins — which decides
+   * its ranking tier.
+   */
   origin: SearchOrigin;
 
   /** The completion category (unit, function, constant, …), for the row's icon. */
@@ -57,9 +69,11 @@ export interface SearchCandidate {
   /** What choosing the row does: reveal a tree row, or jump to a definition. */
   target: SearchTarget;
 
-  /** A builtin whose name is also bound by the note (rendered muted). The builtin is deliberately
-   *  still listed: the note's binding may shadow it, or — for a prelude alias like `m` or `g` — may
-   *  silently never have defined at all, and then the builtin is the only real entity. */
+  /**
+   * A builtin whose name is also bound by the note (rendered muted). The builtin is deliberately
+   * still listed: the note's binding may shadow it, or — for a prelude alias like `m` or `g` — may
+   * silently never have defined at all, and then the builtin is the only real entity.
+   */
   shadowedByScope: boolean;
 }
 
@@ -81,8 +95,10 @@ export interface SearchHit {
   /** The matched character ranges in `candidate.text`, for highlighting. */
   matches: [number, number][];
 
-  /** The ranking tier, which outranks {@link score}: note bindings sort above builtins however well
-   *  a builtin matches. */
+  /**
+   * The ranking tier, which outranks {@link score}: note bindings sort above builtins however well
+   * a builtin matches.
+   */
   tier: number;
 }
 
@@ -105,8 +121,10 @@ export function searchRowKey(nodeId: string, kind: "entry" | "skip", index: numb
   return [nodeId, kind, String(index)].join(KEY_SEP);
 }
 
-/** A declaration keyword's completion category, so a note's own bindings are tagged without
- *  consulting the wasm vocabulary at all. */
+/**
+ * A declaration keyword's completion category, so a note's own bindings are tagged without
+ * consulting the wasm vocabulary at all.
+ */
 function categoryOf(declKind: DeclKind): ExprCategory {
   switch (declKind) {
     case "unit":
@@ -242,9 +260,11 @@ export function scopeSearchCandidates(
 // RANKING
 // ================================================================================================
 
-/** How well a candidate matches, before its fuzzy score is consulted. Lower is better; a note's own
- *  binding outranks a builtin at equal quality, because only it is actionable and this is the
- *  *note* scope inspector. */
+/**
+ * How well a candidate matches, before its fuzzy score is consulted. Lower is better; a note's own
+ * binding outranks a builtin at equal quality, because only it is actionable and this is the
+ * *note* scope inspector.
+ */
 function tierOf(candidate: SearchCandidate, query: string): number {
   const later = candidate.origin === "scope" ? 0 : 1;
   if (candidate.text === query) {

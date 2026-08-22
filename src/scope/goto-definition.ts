@@ -5,8 +5,10 @@
 import { type App, MarkdownView, TFile } from "obsidian";
 import type { DefSite } from "./model";
 
-/** Moves the caret in an already-open editor that is not a Markdown note — today just the `.nbt`
- *  file editor. Returns whether it found one for `path`. */
+/**
+ * Moves the caret in an already-open editor that is not a Markdown note — today just the `.nbt`
+ * file editor. Returns whether it found one for `path`.
+ */
 type CaretTarget = (path: string, line: number, ch: number) => boolean;
 
 // Registered by the plugin at load (and cleared on unload). It is handed in rather than imported so
@@ -70,8 +72,10 @@ function openFileAt(app: App, path: string, line: number | null, fromPath: strin
   return true;
 }
 
-/** Whether {@link jumpToDefinition} has anywhere to go — a defsite in another file, or a located
- *  line in the note it came from. */
+/**
+ * Whether {@link jumpToDefinition} has anywhere to go — a defsite in another file, or a located
+ * line in the note it came from.
+ */
 export function hasDefinitionTarget(defsite: DefSite, fromPath: string | null): boolean {
   return defsite.notePath !== null || (fromPath !== null && defsite.line !== null);
 }

@@ -44,18 +44,19 @@ shell, so `make check` works from a bare terminal too but will be a little bit s
 
 `make help` lists every target, but the main ones you will use are listed below.
 
-| Target           | What it does                                                                  |
-| ---------------- | ----------------------------------------------------------------------------- |
-| `make build`     | wasm + typecheck + bundle — a release `main.js`                               |
-| `make dev`       | rebuild `main.js` on change, with sourcemaps                                  |
-| `make install`   | build, then copy the plugin into `$DEV_VAULT_PATH`                            |
-| `make link`      | symlink this checkout into `$DEV_VAULT_PATH` instead of copying               |
-| `make unlink`    | swap that symlink back for a copied build                                     |
-| `make check`     | **everything CI checks**: format, typecheck, lint, doors, tests, bundle       |
-| `make doors`     | assert only the intended modules import the wasm, its bindings and the worker |
-| `make test-unit` | the pure tests only — fast, no wasm needed                                    |
-| `make format`    | reformat Markdown, JSON, CSS, TOML, and TypeScript with dprint                |
-| `make clean`     | drop build output, keep the numbat checkout and `node_modules`                |
+| Target           | What it does                                                                      |
+| ---------------- | --------------------------------------------------------------------------------- |
+| `make build`     | wasm + typecheck + bundle — a release `main.js`                                   |
+| `make dev`       | rebuild `main.js` on change, with sourcemaps                                      |
+| `make install`   | build, then copy the plugin into `$DEV_VAULT_PATH`                                |
+| `make link`      | symlink this checkout into `$DEV_VAULT_PATH` instead of copying                   |
+| `make unlink`    | swap that symlink back for a copied build                                         |
+| `make check`     | **everything CI checks**: format, comments, typecheck, lint, doors, tests, bundle |
+| `make doors`     | assert only the intended modules import the wasm, its bindings and the worker     |
+| `make docstyle`  | assert every comment is in one of the three shapes below                          |
+| `make test-unit` | the pure tests only — fast, no wasm needed                                        |
+| `make format`    | reformat Markdown, JSON, CSS, TOML, and TypeScript with dprint                    |
+| `make clean`     | drop build output, keep the numbat checkout and `node_modules`                    |
 
 We do not really support building without Nix (and hence recommend using WSL for development on
 Windows). If you want to try anyway, you will at a minimum need: Node.js 24, a Rust toolchain that
@@ -128,8 +129,8 @@ source and compares the result against the released `main.js`, so the two have t
 bundle; since esbuild inlines the wasm, that means the release must inline the committed binary. It
 cannot also compile from source during the release run, because the Numbat wasm build is **not
 reproducible** — two builds of the same tag, on the same machine, in this same devshell, differ by a
-few hundred bytes of data-segment layout. Same strings, same behaviour, different bytes. So a
-rebuilt release could never match a clean-checkout build, and 1.0.1 was flagged for exactly that.
+few hundred bytes of data-segment layout. Same strings, same behavior, different bytes. So a rebuilt
+release could never match a clean-checkout build, and 1.0.1 was flagged for exactly that.
 
 What holds the bindings up instead: `build-wasm.xsh` is the only thing that writes them, CI fails if
 they do not carry the pinned tag or if they look unoptimized, the release workflow re-checks the
@@ -232,6 +233,16 @@ Coding style in this repository is mostly automated, so just keep the following 
 - **Module Headers are Useful:** Nearly every file in `src/` opens with a comment that describes
   what it is and why it is separate from its neighbors. All new modules should do this. Naming
   siblings should be by path inside `src` so references remain unambiguous.
+- **Comments Come in Three Shapes:** A module header is `//` lines; a doc comment that fits on one
+  line is `/** … */`; one that does not is canonical JSDoc — `/**` alone, `*` continuations, `*/`
+  alone. Which shape a comment takes follows from what it _is_ rather than from how long it is: a
+  header is prose about a module and not documentation of a declaration, so giving it `/**` attaches
+  it to whatever import happens to follow. `make docstyle` checks all three, because nothing else
+  can — dprint treats a comment's text as opaque and there is no jsdoc plugin here — and it also
+  reports a doc comment sitting directly against the one above it, which is what an insert that
+  landed above the wrong declaration looks like. `make docstyle-fix` re-delimits the blocks that are
+  only wrongly wrapped, and never touches the prose inside them — so the 100-column wrap below is
+  still yours to hold.
 - **Explain Non-Obvious Things:** Due to the way we use (and abuse) the WASM entry points for
   Numbat, Symbat has to do a bunch of quite subtle things. Comments are key for keeping us sane and
   explaining the subtleties.

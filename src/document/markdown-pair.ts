@@ -25,12 +25,16 @@ import { cursorInNumbatProperty } from "./editor-property";
 import { cursorInNumbatCode } from "./editor-scope";
 import { numbatFenceState } from "./fence-state";
 
-/** The characters Obsidian pairs as Markdown emphasis which are Numbat syntax instead (`*`
- *  multiplication / exponent, `_` in identifiers). */
+/**
+ * The characters Obsidian pairs as Markdown emphasis which are Numbat syntax instead (`*`
+ * multiplication / exponent, `_` in identifiers).
+ */
 const GUARDED = new Set(["*", "_"]);
 
-/** The Markdown auto-pair guard editor extension. Reads the inline-eval settings live, so no
- *  re-registration is needed when they change. */
+/**
+ * The Markdown auto-pair guard editor extension. Reads the inline-eval settings live, so no
+ * re-registration is needed when they change.
+ */
 export function numbatMarkdownPairGuard(plugin: SymbatPlugin): Extension {
   return Prec.highest(
     EditorView.inputHandler.of((view, from, to, text) => {

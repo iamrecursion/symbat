@@ -23,16 +23,20 @@ export interface UnicodeCompletion {
   replacement: string;
 }
 
-/** Every code name to its replacement. Numbat's own lookup walks the table testing whether the
- *  input ends with `\name`; a map is exactly equivalent because no name contains a backslash, so
- *  at most one row can match and the matching one always begins right after the final leader. */
+/**
+ * Every code name to its replacement. Numbat's own lookup walks the table testing whether the
+ * input ends with `\name`; a map is exactly equivalent because no name contains a backslash, so
+ * at most one row can match and the matching one always begins right after the final leader.
+ */
 const REPLACEMENTS = new Map<string, string>(
   UNICODE_INPUT.flatMap(([codes, replacement]) => codes.map((code): [string, string] => [code, replacement])),
 );
 
-/** The full `\code` list for the popover, de-duplicated and sorted once. The sort is by code unit,
- *  so `Omega` sorts before `omega` rather than beside it — which is what keeps the two visibly
- *  distinct in a list where their glyphs are not. */
+/**
+ * The full `\code` list for the popover, de-duplicated and sorted once. The sort is by code unit,
+ * so `Omega` sorts before `omega` rather than beside it — which is what keeps the two visibly
+ * distinct in a list where their glyphs are not.
+ */
 const UNICODE_CODES: readonly UnicodeCode[] = [...REPLACEMENTS]
   .map(([name, replacement]): UnicodeCode => ({ name, replacement }))
   .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

@@ -166,7 +166,7 @@ jobs:
       # assertion at module load whenever CI is set, so a green run cannot mean
       # "the tests were skipped".
       #
-      # The size ceiling is the last line of defence for `wasm-opt`. The release
+      # The size ceiling is the last line of defense for `wasm-opt`. The release
       # ships the committed binary as-is, and an unoptimized one is roughly three
       # times larger — a regression nobody would notice by reading a diff of a
       # 1.8 MiB blob. build-wasm.xsh refuses to write one at all unless it is
@@ -196,6 +196,13 @@ jobs:
 
       - name: Lint
         run: make lint
+
+      # The three comment shapes. dprint's TypeScript plugin treats a comment's
+      # text as opaque and there is no jsdoc plugin here, so without this the
+      # delimiters are nobody's job — which is how the repository came to have
+      # two multi-line doc styles of near-equal size inside the same files.
+      - name: Check the comment shapes
+        run: make docstyle
 
       # The interpreter's three import doors. Every failure mode is silent: a
       # second `.wasm` importer doubles main.js, a second bindings importer puts

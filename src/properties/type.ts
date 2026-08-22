@@ -118,18 +118,24 @@ interface LiveEditor {
    */
   input: NumbatInput | null;
 
-  /** Whether {@link el} has ever been seen in the document. Until it has, the row is exempt from
-   *  sweeping: Obsidian renders into a detached element and inserts it afterwards, so a naive check
-   *  would destroy each editor as the next rendered. */
+  /**
+   * Whether {@link el} has ever been seen in the document. Until it has, the row is exempt from
+   * sweeping: Obsidian renders into a detached element and inserts it afterwards, so a naive check
+   * would destroy each editor as the next rendered.
+   */
   attached: boolean;
 
-  /** The row's pending debounced evaluation, cancelled when the row is swept. Held here rather than
-   *  in the render closure so the sweep can reach it: a timer left to fire after unload rebuilds —
-   *  and re-*initialises* — the wasm module that `onunload` has just released. */
+  /**
+   * The row's pending debounced evaluation, canceled when the row is swept. Held here rather than
+   * in the render closure so the sweep can reach it: a timer left to fire after unload rebuilds —
+   * and re-*initializes* — the wasm module that `onunload` has just released.
+   */
   cancelPending: () => void;
 
-  /** Start the row's evaluation over: disown whatever is in flight and schedule a fresh round. What
-   *  {@link refreshPropertyEditors} reaches every row through. */
+  /**
+   * Start the row's evaluation over: disown whatever is in flight and schedule a fresh round. What
+   * {@link refreshPropertyEditors} reaches every row through.
+   */
   refresh: () => void;
 }
 
@@ -610,8 +616,10 @@ function propertyCompletions(plugin: SymbatPlugin, ctx: PropertyWidgetContext): 
 // SHOWING AN OUTCOME
 // ================================================================================================
 
-/** Render an outcome into the result span, in whichever shape the mode calls for
- *  (properties/display.ts). */
+/**
+ * Render an outcome into the result span, in whichever shape the mode calls for
+ * (properties/display.ts).
+ */
 function showOutcome(resultEl: HTMLElement, outcome: PropertyDisplay, mode: DisplayMode): void {
   const plan = displayPlan(outcome, mode);
   resultEl.empty();

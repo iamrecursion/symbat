@@ -36,8 +36,10 @@ function parse(marked: string): Marked {
   return { doc, selection: EditorSelection.create(ranges) };
 }
 
-/** Run `command` over a marked document, returning the resulting text with the carets marked back
- *  in — so a test asserts on both the edit and where the cursor ended up. */
+/**
+ * Run `command` over a marked document, returning the resulting text with the carets marked back
+ * in — so a test asserts on both the edit and where the cursor ended up.
+ */
 function run(command: StateCommand, marked: string, width = 2): string {
   const { doc, selection } = parse(marked);
   const state = EditorState.create({

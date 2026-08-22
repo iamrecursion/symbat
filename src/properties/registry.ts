@@ -69,9 +69,11 @@ export function installTypeOrder(plugin: SymbatPlugin): void {
   });
 }
 
-/** The name a registry entry shows under, or its id when it will not say — including when a
- *  foreign widget's `name()` throws, which is a reason to leave the menu alone rather than to fail
- *  a plugin load. */
+/**
+ * The name a registry entry shows under, or its id when it will not say — including when a
+ * foreign widget's `name()` throws, which is a reason to leave the menu alone rather than to fail
+ * a plugin load.
+ */
 function displayName(widget: unknown, key: string): string {
   try {
     return (widget as PropertyWidget | undefined)?.name?.() ?? key;
@@ -83,9 +85,11 @@ function displayName(widget: unknown, key: string): string {
 // THE NON-NATIVE ICONS
 // ================================================================================================
 
-/** Icon ids this plugin has registered, by the Lucide name they were copied from — or that name
- *  itself, where the copy could not be made. Memoized because `addIcon` is a global write and the
- *  answer cannot change within a session. */
+/**
+ * Icon ids this plugin has registered, by the Lucide name they were copied from — or that name
+ * itself, where the copy could not be made. Memoized because `addIcon` is a global write and the
+ * answer cannot change within a session.
+ */
 const tinted = new Map<string, string>();
 
 /**
@@ -97,7 +101,7 @@ const tinted = new Map<string, string>();
  * so the glyph tracks whatever Lucide version the app ships.
  *
  * `addIcon` has no counterpart, so the ids registered here outlive the plugin's unload — three of
- * them, until the app restarts. With styles.css gone they simply draw in the colour every other
+ * them, until the app restarts. With styles.css gone they simply draw in the color every other
  * icon does, which is why this is left as it is rather than worked around.
  */
 export function tintedIcon(lucide: string): string {

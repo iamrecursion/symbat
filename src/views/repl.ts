@@ -36,12 +36,16 @@ import { fuzzyFilter } from "./fuzzy";
 import { type HoverCard, NumbatInput } from "./input";
 import { SoftKeyboardTracker } from "./soft-keyboard";
 
-/** Persisted in the vault's `workspace.json` — see the note on `VIEW_TYPE_NUMBAT_FILE` in
- *  views/nbt.ts. Renaming it orphans open REPL panes. */
+/**
+ * Persisted in the vault's `workspace.json` — see the note on `VIEW_TYPE_NUMBAT_FILE` in
+ * views/nbt.ts. Renaming it orphans open REPL panes.
+ */
 export const VIEW_TYPE_NUMBAT_REPL = "numbat-repl";
 
-/** The ghost text the empty input shows while it is the reader's turn — and only then, which is
- *  why it is named rather than written at the one place that installs it. See `applyInputState`. */
+/**
+ * The ghost text the empty input shows while it is the reader's turn — and only then, which is
+ * why it is named rather than written at the one place that installs it. See `applyInputState`.
+ */
 const REPL_PLACEHOLDER = "Enter a Numbat expression…";
 
 /**
@@ -69,48 +73,64 @@ export class NumbatReplView extends ItemView {
   /** Read for settings and the prelude; also what the input editor is built against. */
   private readonly plugin: SymbatPlugin;
 
-  /** The session the interpreter is keeping for this view — persistent, so each line sees what
-   *  earlier ones defined. `null` before it is opened and after a restart discards it.
+  /**
+   * The session the interpreter is keeping for this view — persistent, so each line sees what
+   * earlier ones defined. `null` before it is opened and after a restart discards it.
    *
-   *  **An integer, never a handle**, and that is the design rule the whole conversion rests on. The
-   *  interpreter validates it against its own table, so an id that outlived a restart is a miss the
-   *  view recovers from; a pointer into a heap that has been replaced is a crash it cannot. */
+   * **An integer, never a handle**, and that is the design rule the whole conversion rests on. The
+   * interpreter validates it against its own table, so an id that outlived a restart is a miss the
+   * view recovers from; a pointer into a heap that has been replaced is a crash it cannot.
+   */
   private sessionId: number | null = null;
 
-  /** Categorized completion vocabulary for the current session context, built on demand and
-   *  invalidated whenever the context changes or a line is evaluated (which may define a new
-   *  name). */
+  /**
+   * Categorized completion vocabulary for the current session context, built on demand and
+   * invalidated whenever the context changes or a line is evaluated (which may define a new
+   * name).
+   */
   private completionVocab: CompletionVocabulary | null = null;
 
-  /** How many times this session's context has changed. Part of the key every fact about a name in
-   *  it is filed under, and the whole reason that key can be trusted: a REPL context accumulates
-   *  definitions, so anything evaluated here may have changed what every name already asked about
-   *  means. */
+  /**
+   * How many times this session's context has changed. Part of the key every fact about a name in
+   * it is filed under, and the whole reason that key can be trusted: a REPL context accumulates
+   * definitions, so anything evaluated here may have changed what every name already asked about
+   * means.
+   */
   private factsEpoch = 0;
 
-  /** Whether anything this session has evaluated reads the clock or the RNG. Latched rather than
-   *  re-derived, because it stays true: `fn t() = now()` leaves nothing impure-looking in a later
-   *  line, and a fact about `t` that never expired would freeze at whatever it first said. */
+  /**
+   * Whether anything this session has evaluated reads the clock or the RNG. Latched rather than
+   * re-derived, because it stays true: `fn t() = now()` leaves nothing impure-looking in a later
+   * line, and a fact about `t` that never expired would freeze at whatever it first said.
+   */
   private sessionImpure = false;
 
-  /** What the interpreter has said about the names in this session — the completer's signatures,
-   *  the dwell popup's documentation and the hover card, all read from one place. */
+  /**
+   * What the interpreter has said about the names in this session — the completer's signatures,
+   * the dwell popup's documentation and the hover card, all read from one place.
+   */
   private readonly facts = sessionFactsHost(() => this.session());
 
   /** The scrolling output log. Definitely assigned in `onOpen`. */
   private logEl!: HTMLElement;
 
-  /** The CodeMirror 6 input editor (syntax highlighting, `\code` expansion and completer, history
-   *  recall, and — when Obsidian's Vim mode is on — vim key bindings); undefined until the view is
-   *  built. */
+  /**
+   * The CodeMirror 6 input editor (syntax highlighting, `\code` expansion and completer, history
+   * recall, and — when Obsidian's Vim mode is on — vim key bindings); undefined until the view is
+   * built.
+   */
   private input?: NumbatInput;
 
-  /** The mobile-only "evaluate" button, shown only while the soft keyboard is up (see
-   *  syncSubmitButton); null on desktop and until the view is built. */
+  /**
+   * The mobile-only "evaluate" button, shown only while the soft keyboard is up (see
+   * syncSubmitButton); null on desktop and until the view is built.
+   */
   private submitButtonEl: HTMLButtonElement | null = null;
 
-  /** The mobile-only Vim "Esc" button, shown when Vim is on and the soft keyboard is up (which has
-   *  no Esc key); null on desktop and until the view is built. */
+  /**
+   * The mobile-only Vim "Esc" button, shown when Vim is on and the soft keyboard is up (which has
+   * no Esc key); null on desktop and until the view is built.
+   */
   private escButtonEl: HTMLButtonElement | null = null;
 
   /** The input row, so it can be dimmed while the interpreter is not there to answer. */
@@ -119,12 +139,16 @@ export class NumbatReplView extends ItemView {
   /** The sentence shown in place of the input while it is closed. */
   private statusTextEl: HTMLElement | null = null;
 
-  /** The stop control. Present in the input row whenever this interpreter can be stopped at all,
-   *  and enabled only while there is something running to stop. */
+  /**
+   * The stop control. Present in the input row whenever this interpreter can be stopped at all,
+   * and enabled only while there is something running to stop.
+   */
   private stopButtonEl: HTMLButtonElement | null = null;
 
-  /** What the input row is currently showing. Held so a burst of announcements costs one CodeMirror
-   *  transaction rather than one each. */
+  /**
+   * What the input row is currently showing. Held so a burst of announcements costs one CodeMirror
+   * transaction rather than one each.
+   */
   private inputState: InputState = "open";
 
   /** When the starting cue went up, so it can be held for {@link REPL_STARTING_CUE_MIN_MS}. */
@@ -133,20 +157,28 @@ export class NumbatReplView extends ItemView {
   /** The pending "the cue has been up long enough" timer. */
   private cueTimer: number | null = null;
 
-  /** Whether a line is in flight. Not derived from anything: the interpreter has no notion of which
-   *  view asked, and two REPLs are two independent answers to this. */
+  /**
+   * Whether a line is in flight. Not derived from anything: the interpreter has no notion of which
+   * view asked, and two REPLs are two independent answers to this.
+   */
   private evaluating = false;
 
-  /** Whether a session rebuild is already in flight, so a burst of announcements opens one session
-   *  rather than several. */
+  /**
+   * Whether a session rebuild is already in flight, so a burst of announcements opens one session
+   * rather than several.
+   */
   private rebuilding = false;
 
-  /** Whether the interpreter was announced while a rebuild was in flight, and the view therefore
-   *  still owes itself a look. See {@link finishRebuild}. */
+  /**
+   * Whether the interpreter was announced while a rebuild was in flight, and the view therefore
+   * still owes itself a look. See {@link finishRebuild}.
+   */
   private resyncWanted = false;
 
-  /** Whether Vim key bindings are currently active in the input (the resolved `replVimMode`); gates
-   *  the mobile Esc button. */
+  /**
+   * Whether Vim key bindings are currently active in the input (the resolved `replVimMode`); gates
+   * the mobile Esc button.
+   */
   private replVimOn = false;
 
   /** Submitted inputs, oldest-first, capped to the configured history limit. */
@@ -155,8 +187,10 @@ export class NumbatReplView extends ItemView {
   /** Running count of visible lines in the log (for buffer trimming). */
   private visibleLines = 0;
 
-  /** Whatever overlaps the view's bottom edge — the mobile keyboard, or the desktop status bar
-   *  under the sidebar's bottom split. Built in `onOpen`, since it measures `contentEl`. */
+  /**
+   * Whatever overlaps the view's bottom edge — the mobile keyboard, or the desktop status bar
+   * under the sidebar's bottom split. Built in `onOpen`, since it measures `contentEl`.
+   */
   private keyboard?: SoftKeyboardTracker;
 
   // Prefix history-recall state (arrow keys). `recallIndex === -1` means no recall is in progress
@@ -166,17 +200,23 @@ export class NumbatReplView extends ItemView {
   /** Position in {@link recallMatches}, or `-1` when no recall is in progress. */
   private recallIndex = -1;
 
-  /** The text the user had typed when recall began, restored on stepping back past the newest
-   *  match. */
+  /**
+   * The text the user had typed when recall began, restored on stepping back past the newest
+   * match.
+   */
   private recallQuery = "";
 
-  /** Whether the input held keyboard focus when it was last hidden, and so should get it back when
-   *  it returns. See {@link applyInputState}. */
+  /**
+   * Whether the input held keyboard focus when it was last hidden, and so should get it back when
+   * it returns. See {@link applyInputState}.
+   */
   private refocusWhenOpen = false;
 
-  /** How many times the reader has stopped an evaluation in this view. Read by {@link evaluate}
-   *  across its `await`, so a submission can tell "the answer never came" from "the answer was
-   *  thrown away, by the person now reading the screen". */
+  /**
+   * How many times the reader has stopped an evaluation in this view. Read by {@link evaluate}
+   * across its `await`, so a submission can tell "the answer never came" from "the answer was
+   * thrown away, by the person now reading the screen".
+   */
   private stopEpoch = 0;
 
   /** @param leaf the workspace leaf to mount in. @param plugin the plugin to read. */
@@ -422,8 +462,10 @@ export class NumbatReplView extends ItemView {
     return { preludeError: session.preludeError };
   }
 
-  /** Tell the interpreter this view is done with its session. Fire-and-forget: the id is dropped
-   *  here and now, so nothing can ask about it again whatever the answer. */
+  /**
+   * Tell the interpreter this view is done with its session. Fire-and-forget: the id is dropped
+   * here and now, so nothing can ask about it again whatever the answer.
+   */
   private closeSession(): void {
     const id = this.sessionId;
     this.sessionId = null;
@@ -473,8 +515,10 @@ export class NumbatReplView extends ItemView {
     this.syncEscButton();
   }
 
-  /** Whether the REPL input should show the incomplete-expression inlay hint: the master inlay
-   *  toggle plus the type-hint sub-toggle (a hole is a type hint). */
+  /**
+   * Whether the REPL input should show the incomplete-expression inlay hint: the master inlay
+   * toggle plus the type-hint sub-toggle (a hole is a type hint).
+   */
   private inlayHolesOn(): boolean {
     return this.plugin.settings.inlayHints && this.plugin.settings.inlayTypes;
   }
@@ -586,9 +630,11 @@ export class NumbatReplView extends ItemView {
     return this.openSession();
   }
 
-  /** Leave the rebuild, and take up any announcement that arrived while it was in flight. Skipping
-   *  those outright would lose the one that matters: the interpreter being replaced *during* the
-   *  rebuild is exactly when the session just opened is already stale. */
+  /**
+   * Leave the rebuild, and take up any announcement that arrived while it was in flight. Skipping
+   * those outright would lose the one that matters: the interpreter being replaced *during* the
+   * rebuild is exactly when the session just opened is already stale.
+   */
   private finishRebuild(): void {
     this.rebuilding = false;
     if (this.resyncWanted) {
@@ -778,7 +824,7 @@ export class NumbatReplView extends ItemView {
    * It also has to be somewhere to look _before_ the moment it is wanted, and an affordance that
    * exists only while you are already waiting is one that a fast machine never shows at all.
    *
-   * The label carries what the greying cannot: off the worker path the button is permanently dim,
+   * The label carries what the graying cannot: off the worker path the button is permanently dim,
    * because a REPL submission there runs inline and while it is running the main thread _is_ the
    * evaluation, so no click would ever be dispatched. That is a real property of the path the
    * reader chose, not a fault, and it is what the setting's own description promises.
@@ -813,7 +859,7 @@ export class NumbatReplView extends ItemView {
   private async stopEvaluating(): Promise<void> {
     // Bumped *before* the terminate, not after it. The line in flight settles as `null` the moment
     // the worker dies, which can be ahead of this function's next line, and the whole point of the
-    // epoch is that the submission recognises its own answer as one the reader threw away.
+    // epoch is that the submission recognizes its own answer as one the reader threw away.
     this.stopEpoch += 1;
 
     if (!await stopEvaluations(true)) {
@@ -1155,8 +1201,10 @@ export class NumbatReplView extends ItemView {
     this.registerEntry(entry, countLines(entry.textContent ?? ""));
   }
 
-  /** Append a plugin message — a command's response, or a status note — which is plain text and
-   *  styled apart from interpreter output. */
+  /**
+   * Append a plugin message — a command's response, or a status note — which is plain text and
+   * styled apart from interpreter output.
+   */
   private appendInfo(text: string): void {
     const entry = this.logEl.createDiv({ cls: "numbat-repl-entry numbat-repl-info", text });
     this.registerEntry(entry, countLines(text));

@@ -81,8 +81,10 @@ export class SymbatSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  /** Re-render the tab if it is currently open (e.g. after a prelude path is updated by a file
-   *  rename). Safe to call whether or not it is displayed. */
+  /**
+   * Re-render the tab if it is currently open (e.g. after a prelude path is updated by a file
+   * rename). Safe to call whether or not it is displayed.
+   */
   refresh(): void {
     this.update();
   }
@@ -125,9 +127,11 @@ export class SymbatSettingTab extends PluginSettingTab {
     return withDescFragments(items);
   }
 
-  /** One descriptor as a declarative settings item. Typed as a `SettingGroupItem` rather than the
-   *  wider `SettingDefinitionItem`: a group's items are plain settings, never nested groups or
-   *  pages. */
+  /**
+   * One descriptor as a declarative settings item. Typed as a `SettingGroupItem` rather than the
+   * wider `SettingDefinitionItem`: a group's items are plain settings, never nested groups or
+   * pages.
+   */
   private declarativeItem(descriptor: SettingDescriptor): SettingGroupItem {
     const control = { ...descriptor.control };
     if (control.type === "number") {
@@ -161,8 +165,10 @@ export class SymbatSettingTab extends PluginSettingTab {
     return Boolean(this.plugin.settings[visibleWhen]);
   }
 
-  /** Obsidian's write path: persist the new value, then rebuild whatever the setting declares it
-   *  invalidates. */
+  /**
+   * Obsidian's write path: persist the new value, then rebuild whatever the setting declares it
+   * invalidates.
+   */
   async setControlValue(key: string, value: unknown): Promise<void> {
     (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
     // Obsidian's `validate` shows a message but stores the value regardless, so the bounds a
@@ -234,8 +240,10 @@ export class SymbatSettingTab extends PluginSettingTab {
   // THE PRELUDE FILE LIST
   // ==============================================================================================
 
-  /** One name+path row per configured prelude file (rendered imperatively so a single list item
-   *  carries both fields). */
+  /**
+   * One name+path row per configured prelude file (rendered imperatively so a single list item
+   * carries both fields).
+   */
   private preludeListItems(): SettingGroupItem[] {
     return this.plugin.settings.preludeFiles.map((file) => ({
       name: "",
@@ -352,8 +360,10 @@ export class SymbatSettingTab extends PluginSettingTab {
   }
 }
 
-/** Build a settings-description fragment, rendering backtick spans as monospaced `<code>` (see
- *  {@link parseCodeSpans}) rather than showing literal backticks. */
+/**
+ * Build a settings-description fragment, rendering backtick spans as monospaced `<code>` (see
+ * {@link parseCodeSpans}) rather than showing literal backticks.
+ */
 function descFragment(markup: string): DocumentFragment {
   return createFragment((frag) => {
     for (const segment of parseCodeSpans(markup)) {

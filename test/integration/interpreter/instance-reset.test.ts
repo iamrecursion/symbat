@@ -19,8 +19,10 @@ import { loadEngine, skip, wasmBase64 } from "../wasm-pkg.ts";
 
 const SCHEDULE = { priority: "visible", generation: 0 } as const;
 
-/** A pass with two expressions, which is enough for one cooperative boundary and for a pooled
- *  context to be taken and given back. */
+/**
+ * A pass with two expressions, which is enough for one cooperative boundary and for a pooled
+ * context to be taken and given back.
+ */
 function pass(expr: string) {
   return {
     entries: [

@@ -61,10 +61,12 @@ import {
 // CONFIGURATION
 // ================================================================================================
 
-/** Dispatched after an off-path evaluation populates the cache, so the plugin rebuilds its
- *  decorations to include the newly-available result widgets. Also dispatched by {@link
- *  refreshNumbatInline} when the note scope changes out-of-band (a cross-note import's source note
- *  was edited). */
+/**
+ * Dispatched after an off-path evaluation populates the cache, so the plugin rebuilds its
+ * decorations to include the newly-available result widgets. Also dispatched by {@link
+ * refreshNumbatInline} when the note scope changes out-of-band (a cross-note import's source note
+ * was edited).
+ */
 const inlineEvalReady = StateEffect.define<void>();
 
 /**
@@ -77,13 +79,17 @@ export function refreshNumbatInline(view: EditorView): void {
   view.dispatch({ effects: inlineEvalReady.of() });
 }
 
-/** Marks a transaction that only writes computed values into concrete spans, for clarity when
- *  inspecting transactions (the value regions are excluded from the eval signature, so such a write
- *  never itself schedules a re-evaluation). */
+/**
+ * Marks a transaction that only writes computed values into concrete spans, for clarity when
+ * inspecting transactions (the value regions are excluded from the eval signature, so such a write
+ * never itself schedules a re-evaluation).
+ */
 const materialization = Annotation.define<boolean>();
 
-/** The default decimal places from its setting: a non-negative integer string, capped; anything
- *  else (blank included) reads as full precision. */
+/**
+ * The default decimal places from its setting: a non-negative integer string, capped; anything
+ * else (blank included) reads as full precision.
+ */
 function defaultDecimalPlaces(text: string): number | null {
   const trimmed = text.trim();
   if (!/^\d+$/.test(trimmed)) {
@@ -112,9 +118,11 @@ export function commitText(expr: string, plain: string, retainExpr: boolean): st
 // RENDERING
 // ================================================================================================
 
-/** Numbat-colored HTML for a plain value text, via the shared tokenizer — used for a rounded
- *  display, whose text comes from a Numbat-formatted string rather than the formatter's own
- *  HTML. */
+/**
+ * Numbat-colored HTML for a plain value text, via the shared tokenizer — used for a rounded
+ * display, whose text comes from a Numbat-formatted string rather than the formatter's own
+ * HTML.
+ */
 function tokenizedHtml(text: string): string {
   let html = "";
   let at = 0;
@@ -133,8 +141,10 @@ function tokenizedHtml(text: string): string {
 /** The single-class operator span Numbat's formatter emits for the leading `=`. */
 const EQUALS_HTML = `<span class="numbat-operator">=</span>`;
 
-/** The bare-value HTML to display for a result: the tokenized rounded text when decimal places
- *  applied, else the formatter's own fragment. */
+/**
+ * The bare-value HTML to display for a result: the tokenized rounded text when decimal places
+ * applied, else the formatter's own fragment.
+ */
 export function displayValueHtml(result: InlineResult): string | null {
   if (result.rounded && result.plain !== null) {
     return tokenizedHtml(result.plain);
@@ -143,8 +153,10 @@ export function displayValueHtml(result: InlineResult): string | null {
   return result.valueHtml;
 }
 
-/** The `= value` HTML to display for a result (widget / binding hint), rounded when decimal places
- *  applied. */
+/**
+ * The `= value` HTML to display for a result (widget / binding hint), rounded when decimal places
+ * applied.
+ */
 export function displayResultHtml(result: InlineResult): string | null {
   if (result.rounded && result.plain !== null) {
     return `${EQUALS_HTML} ${tokenizedHtml(result.plain)}`;
@@ -153,8 +165,10 @@ export function displayResultHtml(result: InlineResult): string | null {
   return result.resultHtml;
 }
 
-/** Replace an inline span (from its prefix to its closing backtick) with its committed plain-text
- *  value, honoring the retain-expression setting. */
+/**
+ * Replace an inline span (from its prefix to its closing backtick) with its committed plain-text
+ * value, honoring the retain-expression setting.
+ */
 function commitSpan(view: EditorView, from: number, to: number, insert: string): void {
   view.dispatch({ changes: { from, to, insert } });
 }
@@ -189,8 +203,10 @@ class InlineResultWidget extends WidgetType {
     super();
   }
 
-  /** Compare on the position as well as the text: committing one span shifts the ones after it, and
-   *  a widget that kept a stale `from`/`to` would overwrite the wrong range on click. */
+  /**
+   * Compare on the position as well as the text: committing one span shifts the ones after it, and
+   * a widget that kept a stale `from`/`to` would overwrite the wrong range on click.
+   */
   eq(other: InlineResultWidget): boolean {
     return other.html === this.html && other.expr === this.expr && other.plain === this.plain
       && other.from === this.from && other.to === this.to;
@@ -242,8 +258,10 @@ class InlineHintWidget extends WidgetType {
     super();
   }
 
-  /** Compare by the two rendered inputs; unlike the result widget these carry no position, having
-   *  nothing to commit. */
+  /**
+   * Compare by the two rendered inputs; unlike the result widget these carry no position, having
+   * nothing to commit.
+   */
   eq(other: InlineHintWidget): boolean {
     return other.kind === this.kind && other.content === this.content;
   }
@@ -272,9 +290,11 @@ class InlineHintWidget extends WidgetType {
   }
 }
 
-/** The hint widget for a result that shows one — a binding's value, an error summary, or a
- *  typed-hole placeholder — or `null` (a committable value has the clickable widget instead; "none"
- *  shows nothing). */
+/**
+ * The hint widget for a result that shows one — a binding's value, an error summary, or a
+ * typed-hole placeholder — or `null` (a committable value has the clickable widget instead; "none"
+ * shows nothing).
+ */
 function hintFor(result: InlineResult): InlineHintWidget | null {
   if (result.kind === "binding") {
     const html = displayResultHtml(result);
@@ -345,8 +365,10 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
       /** The pending debounced evaluation, or `null` when none is scheduled. */
       private timer: number | null = null;
 
-      /** The pending debounced write-back of concrete spans; separate from {@link timer} because it
-       *  is driven by caret movement as well as edits. */
+      /**
+       * The pending debounced write-back of concrete spans; separate from {@link timer} because it
+       * is driven by caret movement as well as edits.
+       */
       private materializeTimer: number | null = null;
 
       /** Set on teardown, so work already in flight discards its results. */
@@ -357,8 +379,10 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
         this.decorations = this.build(view);
       }
 
-      /** Rebuild on text, viewport or out-of-band changes, and separately re-attempt the concrete
-       *  write-back whenever the caret or the text moves. */
+      /**
+       * Rebuild on text, viewport or out-of-band changes, and separately re-attempt the concrete
+       * write-back whenever the caret or the text moves.
+       */
       update(update: ViewUpdate): void {
         const arrived = update.transactions.some((tr) => tr.effects.some((e) => e.is(inlineEvalReady)));
         if (update.docChanged || update.viewportChanged || arrived) {
@@ -466,8 +490,10 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
         return Decoration.set(ranges, true);
       }
 
-      /** Whether `[from, to]` overlaps anything the editor is currently showing, so off-screen
-       *  spans cost no decorations. */
+      /**
+       * Whether `[from, to]` overlaps anything the editor is currently showing, so off-screen
+       * spans cost no decorations.
+       */
       private isVisible(view: EditorView, from: number, to: number): boolean {
         return view.visibleRanges.some((range) => from <= range.to && to >= range.from);
       }
@@ -484,8 +510,10 @@ export function numbatInlineEval(plugin: SymbatPlugin): Extension {
         }, INLINE_EVAL_DEBOUNCE_MS);
       }
 
-      /** Debounced retry of the concrete write-back against the *cached* results (a fresh
-       *  evaluation dispatches its own; see {@link evaluate}). */
+      /**
+       * Debounced retry of the concrete write-back against the *cached* results (a fresh
+       * evaluation dispatches its own; see {@link evaluate}).
+       */
       private scheduleMaterialize(view: EditorView): void {
         if (this.materializeTimer !== null) {
           window.clearTimeout(this.materializeTimer);

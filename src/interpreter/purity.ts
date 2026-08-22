@@ -62,9 +62,11 @@ export const IMPURE_NAMES: readonly string[] = [
 
 const IMPURE = new Set(IMPURE_NAMES);
 
-/** Runs of identifier characters, built from the shared character class (syntax/identifier.ts) so
+/**
+ * Runs of identifier characters, built from the shared character class (syntax/identifier.ts) so
  * the two cannot drift. Matching whole words this way rather than with a lookbehind keeps the
- * expression portable. */
+ * expression portable.
+ */
 const WORDS = new RegExp(`${WORD_CHAR.source}+`, "gu");
 
 /**

@@ -76,18 +76,24 @@ export { cancelBatches, clearPropertyOutcomes, outcomeEpoch };
 // WHICH PATH A WIDGET IS ON
 // ================================================================================================
 
-/** Where a fresher outcome would come from: nowhere (the answer is already complete), the note
- *  batch, or this one property evaluated on its own. */
+/**
+ * Where a fresher outcome would come from: nowhere (the answer is already complete), the note
+ * batch, or this one property evaluated on its own.
+ */
 export type OutcomeMode = "none" | "note" | "live";
 
 /** What a widget should paint right now, and what — if anything — it should ask for next. */
 export interface ResolvedOutcome {
-  /** What to paint, or `null` when nothing is known about this text yet and the row should keep
-   *  showing whatever it has. */
+  /**
+   * What to paint, or `null` when nothing is known about this text yet and the row should keep
+   * showing whatever it has.
+   */
   display: PropertyDisplay | null;
 
-  /** Whether {@link display} is recent enough to stand in for the evaluation, so the widget can
-   *  schedule nothing at all. Always true where {@link mode} is `none`. */
+  /**
+   * Whether {@link display} is recent enough to stand in for the evaluation, so the widget can
+   * schedule nothing at all. Always true where {@link mode} is `none`.
+   */
   fresh: boolean;
 
   mode: OutcomeMode;
@@ -174,8 +180,10 @@ export function requestNoteOutcomes(
   }, done);
 }
 
-/** What a pass is about: the scope it evaluates, stamped with the interpreter the answers would
- *  come from. Every binding statement and every import is in `preamble.source`. */
+/**
+ * What a pass is about: the scope it evaluates, stamped with the interpreter the answers would
+ * come from. Every binding statement and every import is in `preamble.source`.
+ */
 function batchKey(plugin: SymbatPlugin, preamble: NotePreamble): string {
   return wholeScopeKey(interpreterGeneration(), preamble.source)
     + (plugin.settings.fetchExchangeRates ? "\u00001" : "\u00000");
@@ -378,20 +386,26 @@ export async function evaluateLiveOutcome(
  * this and on the text cannot disagree on the outcome.
  */
 interface PropertyScope {
-  /** The bindings replayed before the value: the note's imports, then the properties written
-   *  *above* this one (never those below, and never the note's shared blocks). */
+  /**
+   * The bindings replayed before the value: the note's imports, then the properties written
+   * *above* this one (never those below, and never the note's shared blocks).
+   */
   chunks: string[];
 
-  /** A key-level skip (a reserved or unusable name, a duplicate), reported as the same error the
-   *  binding side skips it with, in place of any evaluation. */
+  /**
+   * A key-level skip (a reserved or unusable name, a duplicate), reported as the same error the
+   * binding side skips it with, in place of any evaluation.
+   */
   skip: string | null;
 
   /** A derivation advisory attached to this binding (today: a bare `0` read as a `Scalar`). */
   warning: string | null;
 }
 
-/** {@link PropertyScope} for one widget context. Pure frontmatter reading with no wasm, and no
- * awaits. */
+/**
+ * {@link PropertyScope} for one widget context. Pure frontmatter reading with no wasm, and no
+ * awaits.
+ */
 function propertyScope(preamble: NotePreamble, key: string): PropertyScope {
   // Key-level skips are stable while typing the value; value-shaped ones (empty / unsupported) are
   // judged from the live text instead. An array item is shown its array's skip (`rates.#` reads

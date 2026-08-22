@@ -27,8 +27,10 @@ import {
 // DECLARATIONS
 // ================================================================================================
 
-/** The Numbat declaration keywords the inspector lists. `let` and `unit` bindings evaluate to a
- *  value; `fn` and `dimension` are shown by name + kind only. */
+/**
+ * The Numbat declaration keywords the inspector lists. `let` and `unit` bindings evaluate to a
+ * value; `fn` and `dimension` are shown by name + kind only.
+ */
 export type DeclKind = "let" | "unit" | "fn" | "dimension";
 
 // A `let`/`unit`/`fn`/`dimension` declaration and its declared name, past any decorators written on
@@ -48,9 +50,11 @@ export function scopeDeclaration(line: string): { keyword: DeclKind; name: strin
 // THE MODEL
 // ================================================================================================
 
-/** Where a binding is defined, for click-to-jump. `notePath` is `null` for a binding in the active
- *  note (jump within it); an imported binding names its source note (round 1 opens that note; the
- *  exact line is round 2, hence `line: null`). Lines are 0-indexed. */
+/**
+ * Where a binding is defined, for click-to-jump. `notePath` is `null` for a binding in the active
+ * note (jump within it); an imported binding names its source note (round 1 opens that note; the
+ * exact line is round 2, hence `line: null`). Lines are 0-indexed.
+ */
 export interface DefSite {
   /** The defining note's vault path, or `null` when it is the active note. */
   notePath: string | null;
@@ -65,9 +69,11 @@ export interface DefSite {
 /** The kind of value a binding evaluated to (filled by scope/eval.ts). */
 export type ScopeValueKind = "value" | "hole" | "error" | "none";
 
-/** A binding's evaluated display, mirroring the inlay surfaces. `type` is the formatter's inferred
- *  `: Type` fragment (HTML) when the binding is a `let` whose echo carries one — the same fragment
- *  the block type-hints render. */
+/**
+ * A binding's evaluated display, mirroring the inlay surfaces. `type` is the formatter's inferred
+ * `: Type` fragment (HTML) when the binding is a `let` whose echo carries one — the same fragment
+ * the block type-hints render.
+ */
 export interface ScopeValue {
   /** Which outcome this is, and so which of the fields below are populated. */
   kind: ScopeValueKind;
@@ -91,32 +97,42 @@ export interface ScopeValue {
   type: string | null;
 }
 
-/** Which of a note's scope sources a binding came from. `local` is a plain `numbat` block —
- *  evaluated for the inspector but *not* exported into scope; `prelude` is the user's own `.nbt`
- *  prelude. */
+/**
+ * Which of a note's scope sources a binding came from. `local` is a plain `numbat` block —
+ * evaluated for the inspector but *not* exported into scope; `prelude` is the user's own `.nbt`
+ * prelude.
+ */
 export type ScopeSourceKind =
   | "import"
   /** A frontmatter property assigned the Numbat type, whose value is an expression. */
   | "property"
-  /** A frontmatter property that rode along untyped, as whichever plain value it holds — a number,
-   *  a string, a date, a boolean. */
+  /**
+   * A frontmatter property that rode along untyped, as whichever plain value it holds — a number,
+   * a string, a date, a boolean.
+   */
   | "plain"
   | "shared"
   | "local"
   | "inline"
   | "prelude"
-  /** A declaration in a standalone `.nbt` file being edited (see {@link buildDocumentScopeTree}) —
-   *  the whole file is the scope. */
+  /**
+   * A declaration in a standalone `.nbt` file being edited (see {@link buildDocumentScopeTree}) —
+   * the whole file is the scope.
+   */
   | "file";
 
-/** One binding in the note's scope. Built pure (no value); scope/eval.ts fills {@link value} by
- *  reference. */
+/**
+ * One binding in the note's scope. Built pure (no value); scope/eval.ts fills {@link value} by
+ * reference.
+ */
 export interface ScopeEntry {
   /** Which of the note's scope sources contributed this binding. */
   sourceKind: ScopeSourceKind;
 
-  /** The declaration keyword — `let`/`unit` carry a value, `fn`/`dimension` a kind label only. A
-   *  property binds a `let`. */
+  /**
+   * The declaration keyword — `let`/`unit` carry a value, `fn`/`dimension` a kind label only. A
+   * property binds a `let`.
+   */
   declKind: DeclKind;
 
   /** The Numbat identifier the binding introduces. */
@@ -125,32 +141,44 @@ export interface ScopeEntry {
   /** What to label the row — the property key when it differs from `name`, else `name`. */
   label: string;
 
-  /** For a frontmatter property, the keys leading to it (`["costs", "total"]`); absent for every
-   *  other kind of binding. Drives the nested grouping under the Frontmatter node, and the leaf-key
-   *  search candidate. */
+  /**
+   * For a frontmatter property, the keys leading to it (`["costs", "total"]`); absent for every
+   * other kind of binding. Drives the nested grouping under the Frontmatter node, and the leaf-key
+   * search candidate.
+   */
   path?: string[];
 
-  /** The definition expression — a property's value, or a `let`'s RHS. What scope/eval.ts *runs*
-   *  when {@link probe} is `expr`, so it is the derived form and not always the written one; a
-   *  surface showing it to a reader wants {@link written} in front. */
+  /**
+   * The definition expression — a property's value, or a `let`'s RHS. What scope/eval.ts *runs*
+   * when {@link probe} is `expr`, so it is the derived form and not always the written one; a
+   * surface showing it to a reader wants {@link written} in front.
+   */
   expr: string;
 
-  /** {@link expr} as the reader wrote it, present only where the derivation substituted for it —
-   *  see {@link PropertyBinding.written}. Display only: it is never run, because the whole reason
-   *  it differs is that the substitution is what Numbat can read. */
+  /**
+   * {@link expr} as the reader wrote it, present only where the derivation substituted for it —
+   * see {@link PropertyBinding.written}. Display only: it is never run, because the whole reason
+   * it differs is that the substitution is what Numbat can read.
+   */
   written?: string;
 
-  /** The full statement to run when evaluating (`let name = (expr)` for a property; the verbatim
-   *  `let` statement for a block / inline / import binding). */
+  /**
+   * The full statement to run when evaluating (`let name = (expr)` for a property; the verbatim
+   * `let` statement for a block / inline / import binding).
+   */
   code: string;
 
-  /** Definitions {@link expr} itself needs, run before it (see {@link PropertyBinding.defs}) — a
-   *  frontmatter property's, and empty or absent everywhere else. */
+  /**
+   * Definitions {@link expr} itself needs, run before it (see {@link PropertyBinding.defs}) — a
+   * frontmatter property's, and empty or absent everywhere else.
+   */
   defs?: string[];
 
-  /** How scope/eval.ts probes this binding: `expr` evaluates the RHS then defines the statement
-   *  (properties, matching the frontmatter inlays); `definition` runs the statement then reads the
-   *  bound name (blocks, inline, imports). */
+  /**
+   * How scope/eval.ts probes this binding: `expr` evaluates the RHS then defines the statement
+   * (properties, matching the frontmatter inlays); `definition` runs the statement then reads the
+   * bound name (blocks, inline, imports).
+   */
   probe: "expr" | "definition";
 
   /** Where the binding is defined, for click-to-jump. */
@@ -159,8 +187,10 @@ export interface ScopeEntry {
   /** Whether a later binding of the same name supersedes this one in scope. */
   shadowed: boolean;
 
-  /** The evaluated display, filled in by scope/eval.ts — absent until the tree has been evaluated,
-   *  and on a tree built purely for structure. */
+  /**
+   * The evaluated display, filled in by scope/eval.ts — absent until the tree has been evaluated,
+   * and on a tree built purely for structure.
+   */
   value?: ScopeValue;
 }
 
@@ -180,12 +210,16 @@ export type ScopeNodeKind =
   | "prelude-file"
   | "file";
 
-/** One node of the scope tree — a collapsible group with either leaf `entries`, `skips`, or child
- *  nodes. */
+/**
+ * One node of the scope tree — a collapsible group with either leaf `entries`, `skips`, or child
+ * nodes.
+ */
 export interface ScopeNode {
-  /** Stable across refreshes (never line-based), so expansion state survives an edit: `imports`,
-   *  `import:<notePath>`, `frontmatter`, `property:<dotted key>`, `skipped`, `block:<n>`,
-   *  `inline`. */
+  /**
+   * Stable across refreshes (never line-based), so expansion state survives an edit: `imports`,
+   * `import:<notePath>`, `frontmatter`, `property:<dotted key>`, `skipped`, `block:<n>`,
+   * `inline`.
+   */
   id: string;
 
   /** Which kind of group this is, selecting the row's icon and styling. */
@@ -197,8 +231,10 @@ export interface ScopeNode {
   /** A short qualifier shown by the label (`local`, `exports`, a count), or null. */
   badge: string | null;
 
-  /** The node's contiguous span in the active note (0-indexed, inclusive), for caret→current-node
-   *  mapping; `null` for external / scattered nodes. */
+  /**
+   * The node's contiguous span in the active note (0-indexed, inclusive), for caret→current-node
+   * mapping; `null` for external / scattered nodes.
+   */
   range: { fromLine: number; toLine: number; } | null;
 
   /** The bindings shown directly under this node. */
@@ -210,18 +246,24 @@ export interface ScopeNode {
   /** Nested groups — import notes, frontmatter objects, prelude files. */
   children: ScopeNode[];
 
-  /** For a `frontmatter-object` node, the object property the group *is* — its dotted key and where
-   *  it is written. An object binds no entry of its own (its leaves do), so this is the only thing
-   *  that can answer "where is `costs` defined?" as opposed to `costs.total`. See {@link
-   *  findDefinition}; absent on every other kind of node. */
+  /**
+   * For a `frontmatter-object` node, the object property the group *is* — its dotted key and where
+   * it is written. An object binds no entry of its own (its leaves do), so this is the only thing
+   * that can answer "where is `costs` defined?" as opposed to `costs.total`. See {@link
+   * findDefinition}; absent on every other kind of node.
+   */
   owner?: { key: string; defsite: DefSite; sourceKind: ScopeSourceKind; };
 }
 
-/** A `numbat` / `numbat-shared` block's scope, for evaluation: its statements (each a run-step,
- *  with a `let`'s display entry attached) and the whole body used to seed later blocks. */
+/**
+ * A `numbat` / `numbat-shared` block's scope, for evaluation: its statements (each a run-step,
+ * with a `let`'s display entry attached) and the whole body used to seed later blocks.
+ */
 export interface BlockScope {
-  /** Whether this is a `numbat-shared` block, whose bindings enter the note's scope and are visible
-   *  to importers; a plain `numbat` block is evaluated for display only. */
+  /**
+   * Whether this is a `numbat-shared` block, whose bindings enter the note's scope and are visible
+   * to importers; a plain `numbat` block is evaluated for display only.
+   */
   exported: boolean;
 
   /** 0-indexed line of the opening fence. */
@@ -233,30 +275,40 @@ export interface BlockScope {
   /** The body verbatim, replayed as a unit to seed the blocks below it. */
   wholeBody: string;
 
-  /** The body split into run-steps, each with the display entry it declares (or `null` for a
-   *  statement that binds nothing). */
+  /**
+   * The body split into run-steps, each with the display entry it declares (or `null` for a
+   * statement that binds nothing).
+   */
   statements: { code: string; entry: ScopeEntry | null; }[];
 }
 
-/** The imports of a note grouped by source note, for evaluation: each note's raw chunks (replayed
- *  whole) and the display entries parsed out of them. */
+/**
+ * The imports of a note grouped by source note, for evaluation: each note's raw chunks (replayed
+ * whole) and the display entries parsed out of them.
+ */
 export interface ImportScope {
   /** Vault path of the note the bindings were imported from. */
   notePath: string;
 
-  /** That note's contributed code, replayed verbatim to define the bindings — its typed-property
-   *  chunks then its `numbat-shared` bodies. */
+  /**
+   * That note's contributed code, replayed verbatim to define the bindings — its typed-property
+   * chunks then its `numbat-shared` bodies.
+   */
   chunks: string[];
 
   /** Every display entry, flat: the evaluator probes these and {@link markShadows} orders them. */
   entries: ScopeEntry[];
 
-  /** The entries shown directly under the source note — its shared-block declarations and its
-   *  non-object properties. */
+  /**
+   * The entries shown directly under the source note — its shared-block declarations and its
+   * non-object properties.
+   */
   rootEntries: ScopeEntry[];
 
-  /** Imported object properties as sub-trees, mirroring how the note's own frontmatter objects
-   *  render. The same entry objects as {@link entries}, by reference. */
+  /**
+   * Imported object properties as sub-trees, mirroring how the note's own frontmatter objects
+   * render. The same entry objects as {@link entries}, by reference.
+   */
   objectNodes: ScopeNode[];
 }
 
@@ -286,8 +338,10 @@ export interface ImportGroup {
   };
 }
 
-/** One user-prelude `.nbt` file's declarations. The prelude is loaded into every context, so its
- *  bindings' values are probed directly (no chunk replay). */
+/**
+ * One user-prelude `.nbt` file's declarations. The prelude is loaded into every context, so its
+ * bindings' values are probed directly (no chunk replay).
+ */
 export interface PreludeScope {
   /** A display label — the file's configured name, else its basename. */
   label: string;
@@ -316,8 +370,10 @@ export interface PreludeFileLines {
   lines: string[];
 }
 
-/** The whole note-scope model: the render tree, the evaluation-oriented views onto the same entry
- *  objects, and the cache signature. */
+/**
+ * The whole note-scope model: the render tree, the evaluation-oriented views onto the same entry
+ * objects, and the cache signature.
+ */
 export interface ScopeTree {
   /** The active note's vault path — what the tree describes. */
   file: string;
@@ -340,37 +396,47 @@ export interface ScopeTree {
   /** The user prelude's declarations, one group per configured file. */
   prelude: PreludeScope[];
 
-  /** The scanNote units, in document order — the interleave of shared blocks and inline spans
-   *  scope/eval.ts replays for the in-scope inline values. */
+  /**
+   * The scanNote units, in document order — the interleave of shared blocks and inline spans
+   * scope/eval.ts replays for the in-scope inline values.
+   */
   units: ReturnType<typeof scanNote>;
 
-  /** The note's property bindings and skips, as properties/parse.ts produced them — the source
-   *  `properties` above is derived from. */
+  /**
+   * The note's property bindings and skips, as properties/parse.ts produced them — the source
+   * `properties` above is derived from.
+   */
   preamble: NotePreamble;
 
   /** Doc lines carrying an inline `let` span, for caret→current mapping. */
   inlineLines: number[];
 
-  /** Everything this tree was built from, folded into one string. The inspector caches evaluated
-   *  values against it, so a tree that would evaluate identically is not re-run — and one that
-   *  would not, is. */
+  /**
+   * Everything this tree was built from, folded into one string. The inspector caches evaluated
+   * values against it, so a tree that would evaluate identically is not re-run — and one that
+   * would not, is.
+   */
   signature: string;
 
-  /** Whether the note contributed no bindings at all, so the view can show its empty state rather
-   *  than a tree of empty groups. */
+  /**
+   * Whether the note contributed no bindings at all, so the view can show its empty state rather
+   * than a tree of empty groups.
+   */
   empty: boolean;
 }
 
 // BUILDING THE PIECES
 // ================================================================================================
 
-/** The right-hand side of a `let` statement, for display — the text past the first `=`, trimmed.
+/**
+ * The right-hand side of a `let` statement, for display — the text past the first `=`, trimmed.
  * Falls back to the whole statement when there is no `=`.
  *
  * A statement is not always one line: it carries any decorators written above the declaration, so
  * the `=` is sought in code rather than in a string a decorator's own text may hold
  * (`@description("x = 5")`). Blanking preserves length, so the index is still an index of
- * `statement`. */
+ * `statement`.
+ */
 function letRhs(statement: string): string {
   const eq = blankStrings(statement).indexOf("=");
   return eq === -1 ? statement.trim() : statement.slice(eq + 1).trim();
@@ -398,8 +464,10 @@ function declEntry(
 
 // YAML frontmatter delimiters, matching properties/parse.ts / NoteWalk.
 
-/** The `[fromLine, toLine]` span of the note's frontmatter (the `---` fences included), or `null`
- *  when it has none. */
+/**
+ * The `[fromLine, toLine]` span of the note's frontmatter (the `---` fences included), or `null`
+ * when it has none.
+ */
 function frontmatterRange(lines: string[]): { fromLine: number; toLine: number; } | null {
   if (lines.length === 0 || !FRONTMATTER_OPEN.test(lines[0])) {
     return null;
@@ -483,8 +551,10 @@ function buildImports(groups: readonly ImportGroup[]): ImportScope[] {
   });
 }
 
-/** The sub-tree node an imported object property's leaf belongs under, created on first use. Ids
- *  carry the source note, so two imported notes with an object of the same name stay distinct. */
+/**
+ * The sub-tree node an imported object property's leaf belongs under, created on first use. Ids
+ * carry the source note, so two imported notes with an object of the same name stay distinct.
+ */
 function importObjectNode(notePath: string, path: string[], roots: ScopeNode[]): ScopeNode {
   const parent = path.length === 1 ? { children: roots } : importObjectNode(notePath, path.slice(0, -1), roots);
   const id = `import:${notePath}:${path.join(".")}`;
@@ -595,8 +665,10 @@ function buildProperties(preamble: NotePreamble, lines: string[]): {
   return { entries, rootEntries, objectNodes };
 }
 
-/** Every `numbat` / `numbat-shared` block as a {@link BlockScope}: its declarations become display
- *  entries; non-declaration statements are run-only steps that still accumulate state. */
+/**
+ * Every `numbat` / `numbat-shared` block as a {@link BlockScope}: its declarations become display
+ * entries; non-declaration statements are run-only steps that still accumulate state.
+ */
 function buildBlocks(lines: string[]): BlockScope[] {
   return numbatBlockRanges(lines).map((block) => ({
     exported: block.shared,
@@ -634,8 +706,10 @@ function blockStatements(
   });
 }
 
-/** The inline declaration spans as scope entries, in document order, paired with the scanNote units
- *  (needed for the in-scope replay order). */
+/**
+ * The inline declaration spans as scope entries, in document order, paired with the scanNote units
+ * (needed for the in-scope replay order).
+ */
 function buildInline(units: ReturnType<typeof scanNote>): { entries: ScopeEntry[]; lines: number[]; } {
   const entries: ScopeEntry[] = [];
   const lines: number[] = [];
@@ -656,8 +730,10 @@ function buildInline(units: ReturnType<typeof scanNote>): { entries: ScopeEntry[
   return { entries, lines };
 }
 
-/** The user prelude's declarations, one {@link PreludeScope} per `.nbt` file. Each file is grouped
- *  into statements; every declaration becomes an entry defined in that file. */
+/**
+ * The user prelude's declarations, one {@link PreludeScope} per `.nbt` file. Each file is grouped
+ * into statements; every declaration becomes an entry defined in that file.
+ */
 function buildPrelude(files: PreludeFileLines[]): PreludeScope[] {
   return files.map((file) => {
     const entries: ScopeEntry[] = [];
@@ -676,10 +752,12 @@ function buildPrelude(files: PreludeFileLines[]): PreludeScope[] {
   });
 }
 
-/** Mark every binding a later same-name binding supersedes. In-scope order is imports → properties
- *  → the document-order interleave of shared-block and inline `let`s; the last binding of a name
- *  wins (matching replayPreamble's last-wins), earlier ones are flagged. Local (plain-block)
- *  bindings are not in scope, so they do not participate. */
+/**
+ * Mark every binding a later same-name binding supersedes. In-scope order is imports → properties
+ * → the document-order interleave of shared-block and inline `let`s; the last binding of a name
+ * wins (matching replayPreamble's last-wins), earlier ones are flagged. Local (plain-block)
+ * bindings are not in scope, so they do not participate.
+ */
 function markShadows(
   imports: ImportScope[],
   properties: ScopeEntry[],
@@ -704,8 +782,10 @@ function markShadows(
   });
 }
 
-/** Build the render tree from the evaluation-oriented collections. Nodes appear in scope order:
- *  imports, frontmatter (+ skipped), then every block in document order, then the inline spans. */
+/**
+ * Build the render tree from the evaluation-oriented collections. Nodes appear in scope order:
+ * imports, frontmatter (+ skipped), then every block in document order, then the inline spans.
+ */
 function buildNodes(
   imports: ImportScope[],
   properties: { rootEntries: ScopeEntry[]; objectNodes: ScopeNode[]; },
@@ -838,8 +918,10 @@ function importLabel(notePath: string): string {
 // BUILDING THE TREE
 // ================================================================================================
 
-/** Build the note-scope tree from a derived preamble, the imports grouped by source note, the
- *  note's raw lines, and the inline config. Pure — values are filled in by scope/eval.ts. */
+/**
+ * Build the note-scope tree from a derived preamble, the imports grouped by source note, the
+ * note's raw lines, and the inline config. Pure — values are filled in by scope/eval.ts.
+ */
 export function buildScopeTree(input: {
   file: string;
   lines: string[];
@@ -847,9 +929,11 @@ export function buildScopeTree(input: {
   preamble: NotePreamble;
   importGroups: readonly ImportGroup[];
   preludeFiles?: PreludeFileLines[];
-  /** `interpreterGeneration()`, folded into the tree's signature so a prelude edit or a change to
-   *  the exchange rates invalidates cached values. Defaults to 0 for trees built in isolation
-   *  (tests), where there is no interpreter to track. */
+  /**
+   * `interpreterGeneration()`, folded into the tree's signature so a prelude edit or a change to
+   * the exchange rates invalidates cached values. Defaults to 0 for trees built in isolation
+   * (tests), where there is no interpreter to track.
+   */
   generation?: number;
 }): ScopeTree {
   const { file, lines, config, preamble, importGroups, preludeFiles = [], generation = 0 } = input;
@@ -993,8 +1077,10 @@ export function treeReadsClockOrRandom(tree: ScopeTree): boolean {
     || tree.blocks.some((block) => readsClockOrRandom(block.wholeBody));
 }
 
-/** Every binding in the tree, in a fixed order (imports, properties, block statements, inline,
- *  prelude) — the positional basis for caching values by signature. */
+/**
+ * Every binding in the tree, in a fixed order (imports, properties, block statements, inline,
+ * prelude) — the positional basis for caching values by signature.
+ */
 export function scopeEntries(tree: ScopeTree): ScopeEntry[] {
   return [
     ...tree.imports.flatMap((group) => group.entries),
@@ -1076,18 +1162,24 @@ export function currentNodePath(tree: ScopeTree, caretLine: number | null): stri
 // GO TO DEFINITION
 // ================================================================================================
 
-/** What {@link findDefinition} resolved a hovered name to: where to go, and how to describe the
- *  place in the popup's link. */
+/**
+ * What {@link findDefinition} resolved a hovered name to: where to go, and how to describe the
+ * place in the popup's link.
+ */
 export interface DefinitionMatch {
   /** Where to jump to. */
   defsite: DefSite;
 
-  /** The binding, when the name resolved to one; `null` for an object *node* (a frontmatter object
-   *  has a key to jump to but binds nothing itself). */
+  /**
+   * The binding, when the name resolved to one; `null` for an object *node* (a frontmatter object
+   * has a key to jump to but binds nothing itself).
+   */
   entry: ScopeEntry | null;
 
-  /** A short description of where it is — `Frontmatter`, `Shared block`, the source note's name —
-   *  for the link's trailing detail. */
+  /**
+   * A short description of where it is — `Frontmatter`, `Shared block`, the source note's name —
+   * for the link's trailing detail.
+   */
   where: string;
 }
 
@@ -1138,8 +1230,10 @@ export function findDefinition(
   return null;
 }
 
-/** The binding among `candidates` that is authoritative at `line` (see {@link findDefinition}), or
- *  `null` when there are none. */
+/**
+ * The binding among `candidates` that is authoritative at `line` (see {@link findDefinition}), or
+ * `null` when there are none.
+ */
 function pickBinding(candidates: readonly ScopeEntry[], line: number | null): ScopeEntry | null {
   if (candidates.length === 0) {
     return null;

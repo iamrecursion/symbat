@@ -15,8 +15,10 @@ import { buildScopeTree } from "../../../src/scope/model.ts";
 import { type FuzzyScorer, rankSearchCandidates, scopeSearchCandidates } from "../../../src/scope/search.ts";
 import { loadNumbat, skip } from "../wasm-pkg.ts";
 
-/** The four flat name buckets, exactly as interpreter/numbat.ts's `buildCompletionVocabulary` reads
- *  them — the only vocabulary the wasm exposes. */
+/**
+ * The four flat name buckets, exactly as interpreter/numbat.ts's `buildCompletionVocabulary` reads
+ * them — the only vocabulary the wasm exposes.
+ */
 function vocabularyFor(nb: any): CompletionVocabulary {
   const list = (what: string): Set<string> => {
     const command = nb.try_run_command(`list ${what}`);
@@ -32,8 +34,10 @@ function vocabularyFor(nb: any): CompletionVocabulary {
   };
 }
 
-/** A deterministic subsequence scorer, so ranking is exercised against the real vocabulary without
- *  pulling in Obsidian's `prepareFuzzySearch`. */
+/**
+ * A deterministic subsequence scorer, so ranking is exercised against the real vocabulary without
+ * pulling in Obsidian's `prepareFuzzySearch`.
+ */
 function scorerFor(query: string): FuzzyScorer {
   const needle = query.toLowerCase();
   return (text: string) => {

@@ -17,8 +17,10 @@
 // Two pairs look like duplicates and are not — `Omega` is U+03A9 and `ohm` is U+2126, `mu` is
 // U+03BC and `micro` is U+00B5. Numbat distinguishes them, so this file does too.
 
-/** One row of the table: the code names (aliases share a replacement) and the text they expand to.
- *  Names carry no leader — `alpha`, not `\alpha`. */
+/**
+ * One row of the table: the code names (aliases share a replacement) and the text they expand to.
+ * Names carry no leader — `alpha`, not `\alpha`.
+ */
 export type UnicodeEntry = readonly [codes: readonly string[], replacement: string];
 
 /** Every `\code` Numbat knows, in the upstream file's order. */

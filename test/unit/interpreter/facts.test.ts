@@ -35,8 +35,10 @@ function facts(signature: string, fields: readonly string[] | null = null): Symb
   return { signature, info: null, valueHtml: null, fields };
 }
 
-/** A reader that answers every probe it is given, recording the batches and the purposes it was
- *  asked for. */
+/**
+ * A reader that answers every probe it is given, recording the batches and the purposes it was
+ * asked for.
+ */
 function stubReader(impure = false): {
   read: (probes: readonly string[], want: number) => Promise<FactsFill | null>;
   batches: string[][];

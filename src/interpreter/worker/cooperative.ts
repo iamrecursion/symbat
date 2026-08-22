@@ -77,8 +77,10 @@ function holdLoop(hold: boolean): void {
   }
 }
 
-/** Build a lane and start both its ports. Neither is ever closed: the channel lives as long as the
- *  worker does, and closing one would strand a yield already in flight. */
+/**
+ * Build a lane and start both its ports. Neither is ever closed: the channel lives as long as the
+ * worker does, and closing one would strand a yield already in flight.
+ */
 function openLane(): Lane {
   const lane: Lane = { channel: new MessageChannel(), waiting: [] };
   lane.channel.port1.onmessage = () => {
@@ -130,8 +132,10 @@ class TaskAborted extends Error {
   }
 }
 
-/** Whether `error` is a task unwinding because it was told to stop, rather than something going
- *  wrong. The queue settles the first as an ordinary "no answer" and logs the second. */
+/**
+ * Whether `error` is a task unwinding because it was told to stop, rather than something going
+ * wrong. The queue settles the first as an ordinary "no answer" and logs the second.
+ */
 export function taskWasAborted(error: unknown): boolean {
   return error instanceof TaskAborted;
 }
@@ -140,7 +144,7 @@ export function taskWasAborted(error: unknown): boolean {
  * A place a long task can be stopped: check, stand aside for a round of messages, and check again.
  *
  * Both checks earn their place. The first is what makes a boundary useful when the answer is
- * already known: a job cancelled while the previous item ran should not start another. The second
+ * already known: a job canceled while the previous item ran should not start another. The second
  * is that the message that cancels it can only be *delivered* in the gap, so asking before the gap
  * and not after would be asking before the answer could exist.
  *

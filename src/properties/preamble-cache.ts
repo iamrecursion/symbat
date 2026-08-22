@@ -79,8 +79,10 @@ export interface ExportedProps {
   /** The chunks to replay, in order. */
   chunks: string[];
 
-  /** The bindings those chunks came from, so the scope inspector can list an imported object one
-   *  row per leaf instead of re-parsing the chunk text. */
+  /**
+   * The bindings those chunks came from, so the scope inspector can list an imported object one
+   * row per leaf instead of re-parsing the chunk text.
+   */
   bindings: PropertyBinding[];
 }
 
@@ -138,8 +140,10 @@ export function preambleStamp(settings: PreambleSettings): string {
   ].join(SEP);
 }
 
-/** Note that the prelude's reserved names have arrived or been dropped, so every memoized
- *  derivation made under the old set is stale. */
+/**
+ * Note that the prelude's reserved names have arrived or been dropped, so every memoized
+ * derivation made under the old set is stale.
+ */
 export function bumpReservedEpoch(): void {
   reservedEpoch += 1;
 }
@@ -163,8 +167,10 @@ const byBody = new Map<string, NotePreamble>();
 /** Note path → what it exports to its importers. */
 const exported = new Map<string, RecordEntry<ExportedProps>>();
 
-/** `path SEP stamp SEP uses` → that note's flattened import walk, with the importer kept beside it
- *  so an invalidation can find the entry's owner from the entry. */
+/**
+ * `path SEP stamp SEP uses` → that note's flattened import walk, with the importer kept beside it
+ * so an invalidation can find the entry's owner from the entry.
+ */
 const walks = new Map<string, { importer: string; value: ImportWalk; }>();
 
 /**
@@ -211,8 +217,10 @@ export function cachedForBody(
   return value;
 }
 
-/** What one imported note contributes, derived once per record object — the walk asks for this once
- *  per importer, so a note imported by five open notes would otherwise derive five times. */
+/**
+ * What one imported note contributes, derived once per record object — the walk asks for this once
+ * per importer, so a note imported by five open notes would otherwise derive five times.
+ */
 export function cachedExports(
   path: string,
   record: object,
@@ -280,8 +288,10 @@ export function invalidatePreamblesFor(path: string): void {
   }
 }
 
-/** Drop everything — the type assignments moved, a setting the stamp cannot see changed, or link
- *  resolution changed under a rename or delete. */
+/**
+ * Drop everything — the type assignments moved, a setting the stamp cannot see changed, or link
+ * resolution changed under a rename or delete.
+ */
 export function invalidateAllPreambles(): void {
   byRecord.clear();
   byBody.clear();
@@ -343,9 +353,11 @@ function remember<T>(cache: Map<string, T>, key: string, entry: T, cap: number):
   evict(cache, cap);
 }
 
-/** Trim a cache to its cap, least-recently-used first (see {@link promote}). An evicted entry costs
- *  one re-derivation, so the cap still matters more than the policy but not so much that the policy
- *  should be the one that thrashes. */
+/**
+ * Trim a cache to its cap, least-recently-used first (see {@link promote}). An evicted entry costs
+ * one re-derivation, so the cap still matters more than the policy but not so much that the policy
+ * should be the one that thrashes.
+ */
 function evict<T>(cache: Map<string, T>, cap: number): void {
   while (cache.size > cap) {
     const oldest = cache.keys().next().value;

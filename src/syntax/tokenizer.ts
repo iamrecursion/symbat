@@ -96,8 +96,10 @@ export type TokenKind =
   | "unit"
   | "variable";
 
-/** Token kinds, mapped to the plugin's CSS classes (shared with the rendered output so the editor
- * and results color alike). */
+/**
+ * Token kinds, mapped to the plugin's CSS classes (shared with the rendered output so the editor
+ * and results color alike).
+ */
 const TOKEN_CLASS: Record<TokenKind, string> = {
   comment: "numbat-comment",
   dimension: "numbat-dimension",
@@ -111,10 +113,12 @@ const TOKEN_CLASS: Record<TokenKind, string> = {
   variable: "numbat-identifier",
 };
 
-/** Resolves a word to its semantic kind — `type`, `dimension`, or `unit` — or `null` when it is
+/**
+ * Resolves a word to its semantic kind — `type`, `dimension`, or `unit` — or `null` when it is
  * none of those. The lexer is otherwise context-free and cannot tell these apart, so callers that
  * have the interpreter's vocabulary pass this to color them distinctly; without it, only the
- * capitalization heuristic applies. */
+ * capitalization heuristic applies.
+ */
 export type WordKind = (word: string) => "type" | "dimension" | "unit" | null;
 
 /** A leading uppercase letter (Unicode-aware), the cue for the type heuristic. */
@@ -123,10 +127,12 @@ const CapitalizED = /^\p{Lu}/u;
 // What can begin an identifier, and what can continue one — shared with the hover's word lookup
 // (syntax/identifier.ts), so the two cannot disagree about where a name ends.
 
-/** A currency symbol — `€`, `$`, `£`, `¥`, `₹`, … In Numbat every one of these is a unit name, and
- *  none is anything else, so they color as units wherever they appear without needing the
- *  interpreter's vocabulary to confirm it. They are not letters, so they would otherwise fall
- *  through the identifier rule unstyled. */
+/**
+ * A currency symbol — `€`, `$`, `£`, `¥`, `₹`, … In Numbat every one of these is a unit name, and
+ * none is anything else, so they color as units wherever they appear without needing the
+ * interpreter's vocabulary to confirm it. They are not letters, so they would otherwise fall
+ * through the identifier rule unstyled.
+ */
 const CURRENCY = /\p{Sc}/u;
 
 // DECLARATION STATE
@@ -147,12 +153,16 @@ const CURRENCY = /\p{Sc}/u;
  *     foo<D: Dim>`), so their later uses on the line (`x: D`, `-> D`) color as dimensions too.
  */
 export interface LexState {
-  /** "dimension"/"unit" when that declaration keyword was just seen (so the next identifier is its
-   *  declared name), else null. */
+  /**
+   * "dimension"/"unit" when that declaration keyword was just seen (so the next identifier is its
+   * declared name), else null.
+   */
   decl: "dimension" | "unit" | null;
 
-  /** Which declaration this line is, so `:`/`=` know when the dimension part starts, and whether a
-   *  `<name>: Dim` reads as a type-parameter bound. */
+  /**
+   * Which declaration this line is, so `:`/`=` know when the dimension part starts, and whether a
+   * `<name>: Dim` reads as a type-parameter bound.
+   */
   context: "unit-decl" | "dimension-decl" | "fn-decl" | "struct-decl" | null;
 
   /** Whether the cursor is in the dimension-expression part of the declaration. */
@@ -162,8 +172,10 @@ export interface LexState {
   dimVars: Set<string>;
 }
 
-/** A fresh {@link LexState} — a new one per line in `tokensForLine`, and the start state of the
- *  REPL `StreamLanguage`. */
+/**
+ * A fresh {@link LexState} — a new one per line in `tokensForLine`, and the start state of the
+ * REPL `StreamLanguage`.
+ */
 export function newLexState(): LexState {
   return { decl: null, context: null, dimensionExpr: false, dimVars: new Set() };
 }
@@ -201,10 +213,12 @@ export interface TokenStream {
   /** The text consumed since the token began, which is what the caller classifies. */
   current(): string;
 
-  /** Try `pattern` (which must be `^`-anchored) at the current position without advancing
-   *  (`consume` false) — the lexer's lookahead, e.g. for a `: Dim` bound. Truthy on a match; typed
-   *  loosely so CM6's `StringStream.match` (returning `boolean | RegExpMatchArray | null`)
-   *  satisfies it as-is. */
+  /**
+   * Try `pattern` (which must be `^`-anchored) at the current position without advancing
+   * (`consume` false) — the lexer's lookahead, e.g. for a `: Dim` bound. Truthy on a match; typed
+   * loosely so CM6's `StringStream.match` (returning `boolean | RegExpMatchArray | null`)
+   * satisfies it as-is.
+   */
   match(pattern: RegExp, consume?: boolean): unknown;
 }
 
@@ -287,13 +301,15 @@ class LineStream {
 // THE LEXER
 // ================================================================================================
 
-/** Classify the next token, advancing the stream. Returns the token kind, or null for whitespace /
+/**
+ * Classify the next token, advancing the stream. Returns the token kind, or null for whitespace /
  * unclassified characters. Typed against {@link TokenStream} so it can drive either {@link
  * LineStream} or a CM6 `StringStream`. `wordKind`, when given, colors recognized
  * type/dimension/unit words semantically; any other capitalized word falls back to a `type` (the
  * static heuristic). `state`, when given, colors a `dimension`/`unit` declaration's name eagerly
  * (see {@link LexState}); any substantive token clears the pending declaration, so it only ever
- * affects the identifier immediately following the keyword. */
+ * affects the identifier immediately following the keyword.
+ */
 export function classify(stream: TokenStream, wordKind?: WordKind, state?: LexState): TokenKind | null {
   if (stream.eatSpace()) {
     return null;
@@ -448,8 +464,10 @@ export interface Token {
   cls: string;
 }
 
-/** Tokenize a single line into class-bearing spans (relative offsets). `wordKind`, when given,
- * colors recognized type/dimension/unit words (see {@link classify}). */
+/**
+ * Tokenize a single line into class-bearing spans (relative offsets). `wordKind`, when given,
+ * colors recognized type/dimension/unit words (see {@link classify}).
+ */
 export function tokensForLine(line: string, wordKind?: WordKind): Token[] {
   const stream = new LineStream(line);
   const state = newLexState();

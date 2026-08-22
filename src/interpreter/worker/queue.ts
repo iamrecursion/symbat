@@ -33,8 +33,10 @@ import { taskWasAborted } from "./cooperative";
  */
 export type Priority = "interactive" | "visible" | "background";
 
-/** Highest first. A plain array rather than numbers on the union, so the order is stated once and
- *  reads as the order. */
+/**
+ * Highest first. A plain array rather than numbers on the union, so the order is stated once and
+ * reads as the order.
+ */
 const CLASSES: readonly Priority[] = ["interactive", "visible", "background"];
 
 /** One unit of work, and everything the queue needs to decide whether it is still worth doing. */
@@ -48,19 +50,21 @@ export interface QueueJob<T> {
    * newer one is answering it about what is on screen now.
    *
    * Omitted for work that is genuinely one-off, which then queues alongside everything else and is
-   * never cancelled by anyone but its submitter.
+   * never canceled by anyone but its submitter.
    */
   readonly group?: string;
 
-  /** The interpreter generation this was submitted under. A job whose generation has been left
-   *  behind by {@link Queue.setGeneration} is dropped without running. */
+  /**
+   * The interpreter generation this was submitted under. A job whose generation has been left
+   * behind by {@link Queue.setGeneration} is dropped without running.
+   */
   readonly generation: number;
 
   /**
    * The work that the job performs. Called at most once, and never synchronously, from
    * {@link Queue.submit}.
    *
-   * `shouldAbort` answers whether this job has since been cancelled, superseded or left behind by
+   * `shouldAbort` answers whether this job has since been canceled, superseded or left behind by
    * the generation. This can happen _while it runs_, and a queue entry alone cannot tell because
    * by then the entry is no longer in a queue. A job that loops is expected to consult it at its
    * own boundaries (see worker/cooperative.ts) and unwind; one that does not simply runs to the
@@ -69,10 +73,12 @@ export interface QueueJob<T> {
   readonly run: (shouldAbort: () => boolean) => Promise<T>;
 }
 
-/** Why a job produced nothing, for the caller that wants to tell "no answer" from "the answer is
- *  nothing". Every one of them means the same thing to a surface, "ask again if you still care",
- *  which is why {@link Queue.submit} collapses them to `null`. */
-export type Dropped = "superseded" | "obsolete" | "cancelled";
+/**
+ * Why a job produced nothing, for the caller that wants to tell "no answer" from "the answer is
+ * nothing". Every one of them means the same thing to a surface, "ask again if you still care",
+ * which is why {@link Queue.submit} collapses them to `null`.
+ */
+export type Dropped = "superseded" | "obsolete" | "canceled";
 
 export interface Queue {
   /**
@@ -152,8 +158,10 @@ export function createQueue(): Queue {
     }
   };
 
-  /** Tell the running job to stop, if there is one and it matches. Latching rather than assignment:
-   *  two cancellations arriving in one turn must not un-cancel each other. */
+  /**
+   * Tell the running job to stop, if there is one and it matches. Latching rather than assignment:
+   * two cancellations arriving in one turn must not un-cancel each other.
+   */
   const abortIf = (matches: (entry: Entry) => boolean): void => {
     if (current !== null && matches(current)) {
       aborted = true;
@@ -256,12 +264,12 @@ export function createQueue(): Queue {
     },
 
     cancel(group: string): void {
-      remove((entry) => entry.job.group === group, "cancelled");
+      remove((entry) => entry.job.group === group, "canceled");
       abortIf((entry) => entry.job.group === group);
     },
 
     cancelAll(): void {
-      remove(() => true, "cancelled");
+      remove(() => true, "canceled");
       abortIf(() => true);
     },
 

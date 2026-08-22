@@ -57,6 +57,20 @@ lint: wasm ## Run ESLint over the whole repository
 format-check: ## Report formatting that `make format` would change
 	$(RUN) dprint check
 
+# The one convention dprint cannot hold: its TypeScript plugin treats a comment's text as opaque,
+# so the delimiters around it are nobody's job. Left to review, that produced two multi-line doc
+# styles of near-equal size — 834 blocks against 717 — inside the same files.
+#
+# `docstyle-fix` only re-delimits. It never reflows prose, so its diff stays reviewable as "no line
+# says anything different"; a line that overruns 100 columns is still re-wrapped by hand.
+.PHONY: docstyle
+docstyle: ## Report comments that are not in the three shapes CONTRIBUTING describes
+	$(RUN) node scripts/doc-comments.mjs
+
+.PHONY: docstyle-fix
+docstyle-fix: ## Rewrite mis-delimited doc comments into the canonical shape
+	$(RUN) node scripts/doc-comments.mjs --fix
+
 .PHONY: test-unit
 test-unit: ## Run the pure unit tests (no wasm needed)
 	$(RUN) npm run test:unit
@@ -108,7 +122,7 @@ doors: ## Assert only the intended modules import the wasm binary, its bindings 
 # worker that imports Obsidian, a second inlined copy of the wasm, and either half of the bundle
 # growing past what it is allowed to. None of them is visible to tsc, ESLint or the tests.
 .PHONY: check
-check: format-check typecheck lint doors test build ## Everything CI checks
+check: format-check docstyle typecheck lint doors test build ## Everything CI checks
 
 # -- Installing -----------------------------------------------------------------------------------
 

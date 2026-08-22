@@ -3,8 +3,10 @@ import { test } from "node:test";
 import { factsSource, symbolCardPlan, type SymbolFactsSource } from "../../../src/hover/card.ts";
 import type { HoverSymbol, HoverSymbolKind } from "../../../src/hover/parse.ts";
 
-/** A facts source that records what it was asked, so a test can assert on the calls a card did
- *  *not* make — which is where the laziness lives. */
+/**
+ * A facts source that records what it was asked, so a test can assert on the calls a card did
+ * *not* make — which is where the laziness lives.
+ */
 function stubFacts(answers: {
   info?: string | null;
   signature?: string | null;
@@ -111,7 +113,7 @@ test("a member chain is typed and evaluated, never asked for docs", () => {
   assert.deepEqual(facts.asked, ["signature:costs.total", "value:costs.total"]);
 });
 
-test("a literal is labelled a quantity rather than a field", () => {
+test("a literal is labeled a quantity rather than a field", () => {
   const facts = stubFacts({ signature: "<i>Length</i>", value: "21.1 km" });
   const plan = symbolCardPlan(facts, symbol("quantity", "21.1 km"));
 

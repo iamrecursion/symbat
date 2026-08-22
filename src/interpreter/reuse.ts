@@ -63,7 +63,7 @@ export function definesNames(text: string): boolean {
 /**
  * The two names Numbat binds to the value of the statement before.
  *
- * Pinned against the interpreter rather than inferred from its behaviour: `name_resolution.rs`'s
+ * Pinned against the interpreter rather than inferred from its behavior: `name_resolution.rs`'s
  * `LAST_RESULT_IDENTIFIERS` is `["ans", "_"]`, and `typechecker/mod.rs:1396` binds both from
  * `Statement::Expression` and from no other statement kind. So a context that evaluated only
  * expressions differs from a fresh one in exactly these two bindings, and a context that evaluated
@@ -73,9 +73,11 @@ export const LAST_RESULT_NAMES: readonly string[] = ["ans", "_"];
 
 const LAST_RESULT = new Set(LAST_RESULT_NAMES);
 
-/** Runs of identifier characters, built from the shared character class (syntax/identifier.ts) so
- *  the two cannot drift. Matching whole words this way rather than with a lookbehind keeps the
- *  expression portable, which matters on the WebKit that Obsidian mobile runs. */
+/**
+ * Runs of identifier characters, built from the shared character class (syntax/identifier.ts) so
+ * the two cannot drift. Matching whole words this way rather than with a lookbehind keeps the
+ * expression portable, which matters on the WebKit that Obsidian mobile runs.
+ */
 const WORDS = new RegExp(`${WORD_CHAR.source}+`, "gu");
 
 /**

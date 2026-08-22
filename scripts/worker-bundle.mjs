@@ -9,9 +9,11 @@
 import esbuild from "esbuild";
 import { builtinModules } from "node:module";
 
-/** The host packages the plugin is compiled against rather than bundled with. Obsidian provides all
- *  of them at runtime, which is exactly why the worker may import none of them: over there nothing
- *  provides anything. */
+/**
+ * The host packages the plugin is compiled against rather than bundled with. Obsidian provides all
+ * of them at runtime, which is exactly why the worker may import none of them: over there nothing
+ * provides anything.
+ */
 export const HOST_PACKAGES = [
   "obsidian",
   "electron",
@@ -38,8 +40,10 @@ export const HOST_PACKAGES = [
 // not support workers.
 const WORKER_ENTRY = "src/interpreter/worker/boot.ts";
 
-/** A second inlined copy of the 1.9 MB module would take `main.js` from ~2.9 MB to ~5.5 MB, and
- *  nothing else in the build would say so. The worker is handed the base64 at `init` instead. */
+/**
+ * A second inlined copy of the 1.9 MB module would take `main.js` from ~2.9 MB to ~5.5 MB, and
+ * nothing else in the build would say so. The worker is handed the base64 at `init` instead.
+ */
 export const forbidWasmBinary = {
   name: "forbid-wasm-binary",
   setup(build) {
@@ -55,9 +59,11 @@ export const forbidWasmBinary = {
   },
 };
 
-/** A stray `import { Notice } from "obsidian"` yields a worker that throws on load, and a host that
- *  falls back silently and forever. ESLint says so too; this is the half that survives someone
- *  running the build without it. */
+/**
+ * A stray `import { Notice } from "obsidian"` yields a worker that throws on load, and a host that
+ * falls back silently and forever. ESLint says so too; this is the half that survives someone
+ * running the build without it.
+ */
 export const forbidHostImports = {
   name: "forbid-host-imports",
   setup(build) {

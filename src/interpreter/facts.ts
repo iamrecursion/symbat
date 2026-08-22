@@ -51,29 +51,39 @@ export function scopeCanChange(spec: ScopeSpec, preludeIsImpure: boolean): boole
  * side of a boundary the answer comes from: a wasm handle on this thread today, a message later.
  */
 export interface FactsHost {
-  /** Fill in whatever `names` this surface's scope does not already know, for the purpose `want`.
-   *  Settles once the answers are there to be read — see {@link ensureFacts}. */
+  /**
+   * Fill in whatever `names` this surface's scope does not already know, for the purpose `want`.
+   * Settles once the answers are there to be read — see {@link ensureFacts}.
+   */
   facts(names: readonly string[], want: number): Promise<void>;
 
-  /** What is known about `name` for the purpose `want`, or `undefined` when it has to be asked for.
-   *  Synchronous, and never touches the interpreter. */
+  /**
+   * What is known about `name` for the purpose `want`, or `undefined` when it has to be asked for.
+   * Synchronous, and never touches the interpreter.
+   */
   knownFacts(name: string, want: number): SymbolFacts | undefined;
 
-  /** Work out what `input`'s trailing hole types as. Settles once {@link knownHoleType} can answer;
-   *  see {@link ensureHoleType}. */
+  /**
+   * Work out what `input`'s trailing hole types as. Settles once {@link knownHoleType} can answer;
+   * see {@link ensureHoleType}.
+   */
   holeType(input: string): Promise<void>;
 
-  /** What `input`'s trailing hole types as, `null` when there is no recoverable type, `undefined`
-   *  when nobody has worked it out yet. Synchronous. */
+  /**
+   * What `input`'s trailing hole types as, `null` when there is no recoverable type, `undefined`
+   * when nobody has worked it out yet. Synchronous.
+   */
   knownHoleType(input: string): string | null | undefined;
 }
 
 // THE CACHE
 // ================================================================================================
 
-/** A cached record and the mask it was filled under. An entry filled for a completion row is a
- *  signature and three nulls, which is no answer at all to a card; `have` is what tells the two
- *  apart. */
+/**
+ * A cached record and the mask it was filled under. An entry filled for a completion row is a
+ * signature and three nulls, which is no answer at all to a card; `have` is what tells the two
+ * apart.
+ */
 interface Cached {
   readonly facts: SymbolFacts;
   readonly have: number;
@@ -85,15 +95,19 @@ interface Cached {
 // about again are not dropped when it goes: they age out of the bottom like any other.
 const cache = new EvaluationCache<Cached>(FACTS_CACHE_ENTRIES);
 
-/** The cache key for one name in one scope. The probe cannot contain a NUL, so the first one
- *  separates it from the scope key however many the scope key holds. */
+/**
+ * The cache key for one name in one scope. The probe cannot contain a NUL, so the first one
+ * separates it from the scope key however many the scope key holds.
+ */
 function entryKey(key: string, probe: string): string {
   return `${probe}\u0000${key}`;
 }
 
-/** One entry, if it is there and fresh and holds everything `want` asks for. Shared by
- *  {@link knownFacts}, which is the exported question, and by {@link ensureFacts}, which uses it to
- *  drop the probes it would only re-answer. */
+/**
+ * One entry, if it is there and fresh and holds everything `want` asks for. Shared by
+ * {@link knownFacts}, which is the exported question, and by {@link ensureFacts}, which uses it to
+ * drop the probes it would only re-answer.
+ */
 function lookup(key: string, probe: string, want: number, now: number): SymbolFacts | undefined {
   const hit = cache.get(entryKey(key, probe), now);
   if (hit === null || !hit.fresh || (hit.value.have & want) !== want) {
@@ -123,8 +137,10 @@ export function knownFacts(
 
 /** What a fill produced: the answers, and whether the scope they came from can change. */
 export interface FactsFill {
-  /** One record per probe the reader could answer. A probe it leaves out is simply not cached, and
-   *  is asked for again next time. */
+  /**
+   * One record per probe the reader could answer. A probe it leaves out is simply not cached, and
+   * is asked for again next time.
+   */
   readonly facts: ReadonlyMap<string, SymbolFacts>;
 
   /** Whether the scope reads the clock or the RNG — {@link scopeCanChange}. */
@@ -213,8 +229,10 @@ export function ensureFacts(
   return fill;
 }
 
-/** Forget everything. The reset command's route in; the generation in every key would strand these
- *  entries anyway, and this deletes them rather than waiting for eviction to. */
+/**
+ * Forget everything. The reset command's route in; the generation in every key would strand these
+ * entries anyway, and this deletes them rather than waiting for eviction to.
+ */
 export function clearFacts(): void {
   cache.clear();
   holes.clear();

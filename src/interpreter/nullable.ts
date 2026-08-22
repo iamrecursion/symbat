@@ -61,8 +61,10 @@ export const NULLABLE_STRUCT_DOC =
  */
 export const NULLABLE_ABSENT = `${NULLABLE_STRUCT} { value: [] }`;
 
-/** The nullable value holding `expr` — parenthesized, as every emitted value is, so that an
- *  expression like `5 km + 3 mi` stays one element. */
+/**
+ * The nullable value holding `expr` — parenthesized, as every emitted value is, so that an
+ * expression like `5 km + 3 mi` stays one element.
+ */
 export function definedValue(expr: string): string {
   return `${NULLABLE_STRUCT} { value: [(${expr})] }`;
 }

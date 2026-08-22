@@ -112,8 +112,10 @@ let rejections: Rejection[] = [];
 // a bomb onto a weaker thread is not a fix.
 let preludeSuspended = false;
 
-/** Choose where the interpreter runs. Takes effect at the next start, which the caller forces by
- *  restarting; a change with nothing running is simply remembered. */
+/**
+ * Choose where the interpreter runs. Takes effect at the next start, which the caller forces by
+ * restarting; a change with nothing running is simply remembered.
+ */
 export function setInterpreterThread(next: InterpreterThread): void {
   if (next === wanted) {
     return;
@@ -207,8 +209,10 @@ let failedAt: number | null = null;
 // why this is a field and not a fire-and-forget call.
 let env: EngineEnv = { ratesXml: null, prelude: [] };
 
-/** What the environment currently reaches the interpreter as — which is not what was published,
- *  if the prelude has been suspended for crashing it. */
+/**
+ * What the environment currently reaches the interpreter as — which is not what was published,
+ * if the prelude has been suspended for crashing it.
+ */
 function effectiveEnv(): EngineEnv {
   return preludeSuspended ? { ...env, prelude: [] } : env;
 }
@@ -544,9 +548,11 @@ export function setInterpreterEnv(next: EngineEnv): void {
   transport?.updateEnv(effectiveEnv());
 }
 
-/** Whether two prelude lists differ in what they would put into a context: the same comparison
- *  `setUserPrelude` makes before bumping the generation, made again here because this door is
- *  reached by rate changes as well. */
+/**
+ * Whether two prelude lists differ in what they would put into a context: the same comparison
+ * `setUserPrelude` makes before bumping the generation, made again here because this door is
+ * reached by rate changes as well.
+ */
 function preludeChanged(before: readonly PreludePart[], after: readonly PreludePart[]): boolean {
   return before.length !== after.length
     || after.some((part, i) => part.path !== before[i].path || part.source !== before[i].source);
@@ -589,8 +595,10 @@ export function describeInterpreterPath(): string {
   return notes.length === 0 ? where : `${where} — ${notes.join("; ")}`;
 }
 
-/** Whether an evaluation that has already started can be stopped. False on the in-process path, and
- *  that is the asymmetry the two stop affordances exist to make visible. */
+/**
+ * Whether an evaluation that has already started can be stopped. False on the in-process path, and
+ * that is the asymmetry the two stop affordances exist to make visible.
+ */
 export function interpreterCanBeStopped(): boolean {
   return activePath === "worker";
 }
@@ -626,8 +634,10 @@ export function watchInterpreter(watcher: () => void): () => void {
   };
 }
 
-/** Tell the watchers, from a copy so that one unsubscribing in its own callback cannot disturb the
- *  walk, and without letting one that throws stop the rest. */
+/**
+ * Tell the watchers, from a copy so that one unsubscribing in its own callback cannot disturb the
+ * walk, and without letting one that throws stop the rest.
+ */
 function announceInterpreter(): void {
   for (const watcher of [...watchers]) {
     try {
@@ -641,15 +651,21 @@ function announceInterpreter(): void {
 // ASKING
 // ================================================================================================
 
-/** How a request is to be scheduled. Both are advice to the queue, and both have a sensible answer
- *  for a surface that has not thought about it. */
+/**
+ * How a request is to be scheduled. Both are advice to the queue, and both have a sensible answer
+ * for a surface that has not thought about it.
+ */
 export interface AskOptions {
-  /** How soon the answer is wanted. Defaults to `visible` — something on screen that will repaint
-   *  when the answer lands, which is what most of the plugin is. */
+  /**
+   * How soon the answer is wanted. Defaults to `visible` — something on screen that will repaint
+   * when the answer lands, which is what most of the plugin is.
+   */
   readonly priority?: Priority;
 
-  /** What this request is *about*, so that a newer request about the same thing supersedes it. A
-   *  surface and a document, conventionally; omitted for genuinely one-off work. */
+  /**
+   * What this request is *about*, so that a newer request about the same thing supersedes it. A
+   * surface and a document, conventionally; omitted for genuinely one-off work.
+   */
   readonly group?: string;
 
   /**
@@ -724,8 +740,10 @@ function pause(ms: number): Promise<void> {
   });
 }
 
-/** {@link pause} as the ladder wants it: cancellable, so a rung that answers does not leave its own
- *  five-second timer running behind the one that follows it. */
+/**
+ * {@link pause} as the ladder wants it: cancelable, so a rung that answers does not leave its own
+ * five-second timer running behind the one that follows it.
+ */
 function countdown(ms: number): Countdown {
   let timer: number | null = null;
   const expired = new Promise<void>((resolve) => {
@@ -752,7 +770,7 @@ function countdown(ms: number): Countdown {
 /**
  * Stop what the interpreter is doing, escalating only as far as it has to.
  *
- * Two rungs, because they cost wildly different amounts. Cancelling the queue reaches every request
+ * Two rungs, because they cost wildly different amounts. Canceling the queue reaches every request
  * that has not started and keeps the wasm instance, the context pool, the applied rates and any
  * REPL session. Terminating loses all four, and is the only thing that stops a call already inside
  * Numbat.
@@ -840,8 +858,10 @@ export function touchInterpreterIdle(timeoutMs: number): void {
   }, timeoutMs);
 }
 
-/** Release the replayed completion contexts now — a prelude or rate change, whose contexts would
- *  otherwise hold a stale prelude. */
+/**
+ * Release the replayed completion contexts now — a prelude or rate change, whose contexts would
+ * otherwise hold a stale prelude.
+ */
 export function releaseInterpreterContexts(): void {
   transport?.releaseContexts();
 }

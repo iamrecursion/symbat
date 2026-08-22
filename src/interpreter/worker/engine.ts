@@ -87,33 +87,41 @@ export function engineReady(): boolean {
   return ready;
 }
 
-/** Note that a wasm call panicked. Every call site that used to say `restartNumbat()` says this
- *  instead: the difference is that this one cannot act on it. */
+/**
+ * Note that a wasm call panicked. Every call site that used to say `restartNumbat()` says this
+ * instead: the difference is that this one cannot act on it.
+ */
 function noteFault(error: unknown, what: string): void {
   fault = true;
   console.error(`Symbat: ${what}`, error);
 }
 
-/** Whether a panic has been absorbed since this was last asked, clearing the flag. Carried out on
- *  the reply envelope, so the owning side learns about it with the answer rather than by
- *  polling. */
+/**
+ * Whether a panic has been absorbed since this was last asked, clearing the flag. Carried out on
+ * the reply envelope, so the owning side learns about it with the answer rather than by
+ * polling.
+ */
 export function takeFault(): boolean {
   const faulted = fault;
   fault = false;
   return faulted;
 }
 
-/** Whether a panic has been absorbed and not yet drained, _without_ draining it.
+/**
+ * Whether a panic has been absorbed and not yet drained, _without_ draining it.
  *
  * One caller: a REPL submission has to know that the call it just made was the one that panicked,
  * and it must not swallow the flag on the way — the reply envelope still owes the owning side a
- * restart. Read after a call whose fault, if any, can only be that call's. */
+ * restart. Read after a call whose fault, if any, can only be that call's.
+ */
 export function faultPending(): boolean {
   return fault;
 }
 
-/** Record a panic that escaped something which does not trap one — `Numbat.new` above all. The task
- *  layer's outermost catch, expressed here so that the flag has exactly one writer. */
+/**
+ * Record a panic that escaped something which does not trap one — `Numbat.new` above all. The task
+ * layer's outermost catch, expressed here so that the flag has exactly one writer.
+ */
 export function noteEngineFault(error: unknown, what: string): void {
   noteFault(error, what);
 }
@@ -343,9 +351,11 @@ export function createContext(applyRates: boolean, options: { preludeBefore?: st
 // RUNNING CODE
 // ================================================================================================
 
-/** The struct types a nested frontmatter property generates (properties/parse.ts's
- *  `_Nb_<Label>_<hash>_<generation>_<index>`). Numbat prints the type name in front of every struct
- *  value, so `costs` would otherwise show as `_Nb_CostsStruct_1uy683r_4_1 { materials: 500 € }`. */
+/**
+ * The struct types a nested frontmatter property generates (properties/parse.ts's
+ * `_Nb_<Label>_<hash>_<generation>_<index>`). Numbat prints the type name in front of every struct
+ * value, so `costs` would otherwise show as `_Nb_CostsStruct_1uy683r_4_1 { materials: 500 € }`.
+ */
 const GENERATED_STRUCT = /_Nb_([\p{L}\p{N}]+)_[0-9a-z]+_\d+_\d+/gu;
 
 /**
@@ -399,8 +409,10 @@ export function interpret(context: EngineContext, code: string): NumbatResult {
   }
 }
 
-/** What a REPL line turned out to be when tried as a command. `output` has already been through
- *  {@link readableOutput}; `null` means the call panicked. */
+/**
+ * What a REPL line turned out to be when tried as a command. `output` has already been through
+ * {@link readableOutput}; `null` means the call panicked.
+ */
 export interface CommandOutcome {
   readonly isCommand: boolean;
   readonly output: string;
@@ -439,9 +451,11 @@ export function runCommand(context: EngineContext, input: string): CommandOutcom
 let preludeSemanticsCaptured = false;
 let pendingNames: SemanticNames | null = null;
 
-/** Run a `list <what>` command and return the names it lists (freeing the wasm result). Functions
- *  and variables share a CSS class, so they are read from separate commands rather than
- *  distinguished by class. */
+/**
+ * Run a `list <what>` command and return the names it lists (freeing the wasm result). Functions
+ * and variables share a CSS class, so they are read from separate commands rather than
+ * distinguished by class.
+ */
 function listNames(context: Numbat, what: "functions" | "units" | "variables" | "dimensions"): string[] {
   const command = context.try_run_command(`list ${what}`);
   const output = command.output;
@@ -469,8 +483,10 @@ function captureSemanticNames(context: Numbat): void {
   }
 }
 
-/** Record names a vocabulary turned up, which may include a note's or a session's own. Merged into
- *  whatever is already pending, since one reply may cover several context builds. */
+/**
+ * Record names a vocabulary turned up, which may include a note's or a session's own. Merged into
+ * whatever is already pending, since one reply may cover several context builds.
+ */
 function offerSemanticNames(dimensions: Iterable<string>, units: Iterable<string>): void {
   pendingNames = {
     dimensions: [...new Set([...(pendingNames?.dimensions ?? []), ...dimensions])],
@@ -592,8 +608,10 @@ export function scopeContext(spec: ScopeSpec): { context: EngineContext; vocab: 
   }
 }
 
-/** The shared prelude-only context, created lazily. `null` when the wasm is not up or the build
- *  failed. */
+/**
+ * The shared prelude-only context, created lazily. `null` when the wasm is not up or the build
+ * failed.
+ */
 function ensureExpressionContext(applyRates: boolean): Numbat | null {
   if (!ready) {
     return null;
@@ -668,9 +686,11 @@ export function buildVocabulary(context: EngineContext): CompletionVocabulary | 
 // the difference between saving a build and moving one.
 const pool = new Map<string, Numbat>();
 
-/** What two requests have to agree on to share a context. Zero rather than a generation: the pool
- *  lives and dies with this instance, and the environment a generation stands for is replaced by
- *  `setEngineEnv` releasing it. The same argument {@link scopeContext} makes about its own key. */
+/**
+ * What two requests have to agree on to share a context. Zero rather than a generation: the pool
+ * lives and dies with this instance, and the environment a generation stands for is replaced by
+ * `setEngineEnv` releasing it. The same argument {@link scopeContext} makes about its own key.
+ */
 function poolKey(spec: ScopeSpec): string {
   return scopeKey(spec, 0);
 }
@@ -680,10 +700,12 @@ function poolKey(spec: ScopeSpec): string {
 // leaks nothing, and would go on proving it if the pool never handed one out at all.
 const counts = { hits: 0, misses: 0, refused: 0, recycled: 0, freed: 0 };
 
-/** What the pool has done since the instance came up. `hits`, `misses` and `refused` partition the
- *  requests, so the hit rate is a rate over all of them rather than over the ones that got as far
- *  as looking; `recycled` counts contexts offered back and `freed` the ones an eviction or a
- *  release sent to `free` instead. */
+/**
+ * What the pool has done since the instance came up. `hits`, `misses` and `refused` partition the
+ * requests, so the hit rate is a rate over all of them rather than over the ones that got as far
+ * as looking; `recycled` counts contexts offered back and `freed` the ones an eviction or a
+ * release sent to `free` instead.
+ */
 export function poolStats(): PoolCounts {
   return { ...counts };
 }
@@ -699,13 +721,17 @@ export function poolStats(): PoolCounts {
 export interface PositionedContext {
   readonly context: EngineContext;
 
-  /** Whether every chunk in the spec was replayed. `false` means the evaluation limit ran out
-   *  mid-replay, and the context is this call's alone: use it, then free it. */
+  /**
+   * Whether every chunk in the spec was replayed. `false` means the evaluation limit ran out
+   * mid-replay, and the context is this call's alone: use it, then free it.
+   */
   readonly positioned: boolean;
 
-  /** The instance this was built in, for {@link discardedInstance}. Carried rather than looked up
-   *  when the context is given back, because by then the only true thing left to compare is what
-   *  was true when it was taken. */
+  /**
+   * The instance this was built in, for {@link discardedInstance}. Carried rather than looked up
+   * when the context is given back, because by then the only true thing left to compare is what
+   * was true when it was taken.
+   */
   readonly instance: number;
 }
 
@@ -848,9 +874,11 @@ export function recycle(spec: ScopeSpec, context: EngineContext): void {
   }
 }
 
-/** Free everything the pool is holding. Called with the replayed completion contexts, since the two
- *  answer the same question about the reader: they have gone away, or what they were reading has
- *  changed underneath them. */
+/**
+ * Free everything the pool is holding. Called with the replayed completion contexts, since the two
+ * answer the same question about the reader: they have gone away, or what they were reading has
+ * changed underneath them.
+ */
 export function releasePool(): void {
   for (const context of pool.values()) {
     counts.freed += 1;
@@ -917,9 +945,11 @@ export function infoFor(context: EngineContext, name: string): CompletionInfo | 
   }
 }
 
-/** A field name no note or prelude will ever define, so accessing it on a struct reliably produces
- *  the "field does not exist" diagnostic that names the struct's actual fields (see {@link
- *  structFieldNames}). */
+/**
+ * A field name no note or prelude will ever define, so accessing it on a struct reliably produces
+ * the "field does not exist" diagnostic that names the struct's actual fields (see {@link
+ * structFieldNames}).
+ */
 const FIELD_PROBE = "_numbat_member_probe";
 
 /**

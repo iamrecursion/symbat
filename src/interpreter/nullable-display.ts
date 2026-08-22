@@ -17,8 +17,10 @@
 
 import { NULLABLE_STRUCT } from "./nullable";
 
-/** One piece of formatter output: a `<span>` (with its class and escaped text) or the raw text
- *  between two of them, which is only ever layout whitespace. */
+/**
+ * One piece of formatter output: a `<span>` (with its class and escaped text) or the raw text
+ * between two of them, which is only ever layout whitespace.
+ */
 interface Token {
   /** The span's class, or `null` for raw text. */
   cls: string | null;
@@ -30,8 +32,10 @@ interface Token {
   html: string;
 }
 
-/** Numbat's formatter emits flat, single-class spans — the same assumption interpreter/render.ts's
- *  span refinement already makes. */
+/**
+ * Numbat's formatter emits flat, single-class spans — the same assumption interpreter/render.ts's
+ * span refinement already makes.
+ */
 const SPAN = /<span class="([^"]*)">([^<]*)<\/span>/g;
 
 /** Split formatter output into spans and the raw text between them. */
@@ -109,20 +113,22 @@ function span(cls: string, text: string): Token {
  * (evaluation/inlay-parse.ts) cuts a result at the first `numbat-dimmed` span to drop the trailing
  * `[Dimension]` annotation, so a `nil` wearing it ends the value early — `[70, nil]` reads back as
  * `[70,`, and the inline-eval widget commits that truncation into the note. The two are given the
- * same colour in `styles.css`. The class name says *undefined* rather than *nil* because it names
+ * same color in `styles.css`. The class name says *undefined* rather than *nil* because it names
  * the thing — a property with no value — rather than the word currently chosen for it.
  */
 const NIL: Token = span("numbat-undefined", "nil");
 
-/** Whether the token is the nullable struct's own name — which Numbat spans as a type identifier
- *  wherever it stands, in front of a value as much as in a type. */
+/**
+ * Whether the token is the nullable struct's own name — which Numbat spans as a type identifier
+ * wherever it stands, in front of a value as much as in a type.
+ */
 function isNullable(token: Token): boolean {
   return token.cls === "numbat-type-identifier" && token.text === NULLABLE_STRUCT;
 }
 
 /**
  * Rewrite every nullable value in a token run, innermost first: `Opt { value: [x] }` becomes `x`,
- * keeping the inner value's own spans and so its colouring, and an empty list becomes `nil`.
+ * keeping the inner value's own spans and so its coloring, and an empty list becomes `nil`.
  *
  * The name in any other position — a type, or a bare mention in a diagnostic — is left alone,
  * because `Opt` is what the reader would write there themselves.
@@ -152,8 +158,10 @@ function rewrite(tokens: readonly Token[]): Token[] {
   return out;
 }
 
-/** Rewrite `Opt { value: [x] }` at `open` into `out`, returning where to resume, or `-1` when this
- *  is not a value. */
+/**
+ * Rewrite `Opt { value: [x] }` at `open` into `out`, returning where to resume, or `-1` when this
+ * is not a value.
+ */
 function rewriteValue(tokens: readonly Token[], open: number, after: number, out: Token[]): number {
   if (!isOperator(tokens[after], "{")) {
     return -1;
@@ -184,8 +192,10 @@ function rewriteValue(tokens: readonly Token[], open: number, after: number, out
 // unescaped in it — so `SPAN`, whose text group stops at a `<`, does not match that span at all.
 // There are no delimiters left to match on, which is why the shape below is matched in text.
 
-/** How a diagnostic opens the struct, and how it opens the struct body that has to follow — the
- *  single field the encoding has, printed with the same type argument in it. */
+/**
+ * How a diagnostic opens the struct, and how it opens the struct body that has to follow — the
+ * single field the encoding has, printed with the same type argument in it.
+ */
 const DUMP_OPEN = `${NULLABLE_STRUCT}<`;
 const DUMP_BODY_OPEN = " {value: List<";
 
@@ -206,8 +216,10 @@ function escapeAngles(text: string): string {
   return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** The index of the `>` closing a `<` already stepped over, or `-1` when it is never closed. Counts
- *  nesting, so the one found for `List<Scalar>` is that type's own. */
+/**
+ * The index of the `>` closing a `<` already stepped over, or `-1` when it is never closed. Counts
+ * nesting, so the one found for `List<Scalar>` is that type's own.
+ */
 function closingAngle(text: string, from: number): number {
   let depth = 1;
   for (let at = from; at < text.length; at += 1) {

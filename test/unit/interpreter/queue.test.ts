@@ -29,8 +29,10 @@ function job(
   };
 }
 
-/** Let every already-resolved promise settle. Two turns, because the queue defers its own pump by
- *  one and a job's `.then` chain takes another. */
+/**
+ * Let every already-resolved promise settle. Two turns, because the queue defers its own pump by
+ * one and a job's `.then` chain takes another.
+ */
 async function settle(turns = 8): Promise<void> {
   for (let i = 0; i < turns; i += 1) {
     await Promise.resolve();
@@ -313,7 +315,7 @@ function watcher(
   };
 }
 
-test("cancelling a group reaches the job in that group that is already running", async () => {
+test("canceling a group reaches the job in that group that is already running", async () => {
   const queue = createQueue();
   const gate = deferred();
   const seen: boolean[] = [];
@@ -328,7 +330,7 @@ test("cancelling a group reaches the job in that group that is already running",
   assert.deepEqual(seen, [false, true], "the signal must flip while the job is between boundaries");
 });
 
-test("cancelling another group leaves the running job alone", async () => {
+test("canceling another group leaves the running job alone", async () => {
   const queue = createQueue();
   const gate = deferred();
   const seen: boolean[] = [];
@@ -343,7 +345,7 @@ test("cancelling another group leaves the running job alone", async () => {
   assert.deepEqual(seen, [false, false]);
 });
 
-test("cancelling everything reaches the running job whatever its group", async () => {
+test("canceling everything reaches the running job whatever its group", async () => {
   const queue = createQueue();
   const gate = deferred();
   const seen: boolean[] = [];

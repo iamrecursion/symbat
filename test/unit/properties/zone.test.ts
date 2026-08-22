@@ -215,7 +215,7 @@ test("the RFC 9557 extended form keeps both halves, and each does a job", () => 
 test("a name-only datetime round-trips, rather than growing seconds it cannot justify", () => {
   // The bug this pins: padding seconds onto a value with no offset produced
   // `2026-07-27T10:30:00[Europe/Berlin]` — neither what was written nor a valid RFC 9557 extended
-  // form, and a value that no longer equalled itself through its own parser.
+  // form, and a value that no longer equaled itself through its own parser.
   for (const text of ["2026-07-27T10:30[Europe/Berlin]", "2026-07-27 [Europe/Berlin]"]) {
     assert.equal(formatZoned(parseZoned(text)!), text, text);
   }

@@ -112,7 +112,7 @@ describe("freeze", () => {
   // What a pass cannot know while it writes: whether it is about to run out of the note's
   // evaluation allowance. Without this, a note that both reads `now()` and exceeds the limit spends
   // the whole limit again every window, forever, to be told the same thing.
-  test("stops an entry ageing, after the fact", () => {
+  test("stops an entry aging, after the fact", () => {
     const cache = new EvaluationCache<string>(4);
     const at = performance.now();
     cache.set("k", "12:04", true);

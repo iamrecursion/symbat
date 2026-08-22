@@ -9,8 +9,10 @@ export interface PreludeFile {
   path: string;
 }
 
-/** One run of a settings description: plain prose, or an inline code span (the text that was
- *  written between backticks, which the tab renders as `<code>`). */
+/**
+ * One run of a settings description: plain prose, or an inline code span (the text that was
+ * written between backticks, which the tab renders as `<code>`).
+ */
 export interface DescSegment {
   /** The segment's text, backticks stripped. */
   text: string;
@@ -116,8 +118,10 @@ export function normalizePreludeFiles(current: unknown, legacyPaths?: unknown): 
   return [];
 }
 
-/** One prelude file as it was actually loaded: its vault path and its contents. (The settings-side
- *  {@link PreludeFile} is the *configuration*; this is the result of reading it.) */
+/**
+ * One prelude file as it was actually loaded: its vault path and its contents. (The settings-side
+ * {@link PreludeFile} is the *configuration*; this is the result of reading it.)
+ */
 export interface PreludePart {
   /** Vault path it was read from — how `preludeSourceBefore` identifies a file. */
   path: string;

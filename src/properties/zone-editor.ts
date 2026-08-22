@@ -23,25 +23,35 @@ import {
   zoneForName,
 } from "./zone";
 
-/** The id of the entry for no zone at all — a bare date or a naked wall clock, which is what these
- *  types write until a zone is chosen and what they write again when one is cleared. The empty
- *  string because no zone id or offset is empty, so nothing can collide with it. */
+/**
+ * The id of the entry for no zone at all — a bare date or a naked wall clock, which is what these
+ * types write until a zone is chosen and what they write again when one is cleared. The empty
+ * string because no zone id or offset is empty, so nothing can collide with it.
+ */
 const NO_ZONE_ID = "";
 
-/** What the field shows when nothing is chosen, as its placeholder, and what the entry that clears
- *  it is called. */
+/**
+ * What the field shows when nothing is chosen, as its placeholder, and what the entry that clears
+ * it is called.
+ */
 const NO_ZONE_LABEL = "No zone";
 
-/** The narrowest the field is sized, in characters. Wide enough for `+02:00` and for the label
- *  above, so the field never collapses to a sliver in a narrow column. */
+/**
+ * The narrowest the field is sized, in characters. Wide enough for `+02:00` and for the label
+ * above, so the field never collapses to a sliver in a narrow column.
+ */
 const MIN_FIELD_CHARS = 8;
 
-/** The class the zone field carries, and — as {@link CALENDAR_INPUT} — the one thing that tells the
- *  row's two `<input>`s apart. Also a styling hook (styles.css). */
+/**
+ * The class the zone field carries, and — as {@link CALENDAR_INPUT} — the one thing that tells the
+ * row's two `<input>`s apart. Also a styling hook (styles.css).
+ */
 const ZONE_FIELD_CLASS = "numbat-property-zone";
 
-/** Any `<input>` in the row that is *not* the zone field: whatever the built-in editor drew to hold
- *  the wall clock. */
+/**
+ * Any `<input>` in the row that is *not* the zone field: whatever the built-in editor drew to hold
+ * the wall clock.
+ */
 const CALENDAR_INPUT = `input:not(.${ZONE_FIELD_CLASS})`;
 
 /**
@@ -62,14 +72,18 @@ export interface ZoneEditorSpec {
   /** Marker class for the row, so the two can be styled apart. */
   cls: string;
 
-  /** Whether the built-in editor being wrapped holds a time of day. It decides what the `<input>`
-   *  is fed (`2026-07-27` or `2026-07-27T10:30`) and, through that, what shape gets written back —
-   *  a date must not grow a time just by being edited. */
+  /**
+   * Whether the built-in editor being wrapped holds a time of day. It decides what the `<input>`
+   * is fed (`2026-07-27` or `2026-07-27T10:30`) and, through that, what shape gets written back —
+   * a date must not grow a time just by being edited.
+   */
   withTime: boolean;
 
-  /** Draw the calendar half: Obsidian's own date or datetime editor, handed the value with its
-   *  zone stripped and a context whose `onChange` re-attaches one. Returns whatever the built-in
-   *  returns, which is passed on to Obsidian untouched. */
+  /**
+   * Draw the calendar half: Obsidian's own date or datetime editor, handed the value with its
+   * zone stripped and a context whose `onChange` re-attaches one. Returns whatever the built-in
+   * returns, which is passed on to Obsidian untouched.
+   */
   draw: (plain: string, ctx: PropertyWidgetContext) => unknown;
 }
 
@@ -238,8 +252,10 @@ function buildCompact(
   /** The registered undo for the clipping lifted around this row, while there is one. */
   let unclipped: LiveUnclip | null = null;
 
-  /** Build the row if it is not built, and put the caret in it either way — this is what Obsidian
-   *  is handed as `focus`, and a focus request on an open row is still a focus request. */
+  /**
+   * Build the row if it is not built, and put the caret in it either way — this is what Obsidian
+   * is handed as `focus`, and a focus request on an open row is still a focus request.
+   */
   const activate = (): void => {
     if (handle === null) {
       textEl.detach();
@@ -254,8 +270,10 @@ function buildCompact(
     focusEditor(el, handle);
   };
 
-  /** Give up the cell treatment: a panel row keeps its editor, needs no press to open it, and must
-   *  not have its cell's clipping lifted, because it is not in one. */
+  /**
+   * Give up the cell treatment: a panel row keeps its editor, needs no press to open it, and must
+   * not have its cell's clipping lifted, because it is not in one.
+   */
   const toPanel = (): void => {
     reclip();
     el.removeClasses([COMPACT_CLASS, ACTIVE_CLASS]);
@@ -310,15 +328,19 @@ function buildCompact(
   return { handle: { focus: activate }, toPanel };
 }
 
-/** A written value as a reader sees it, for the idle row. Anything that will not parse is shown as
- *  it stands — the same rule the calendar half follows for a value it cannot hold. */
+/**
+ * A written value as a reader sees it, for the idle row. Anything that will not parse is shown as
+ * it stands — the same rule the calendar half follows for a value it cannot hold.
+ */
 function readableText(written: string, withTime: boolean): string {
   const parsed = parseZoned(written);
   return parsed === null ? written : readableForm(parsed, withTime);
 }
 
-/** Put the caret in a freshly built row: through the built-in's own handle where it offers one, and
- *  into its `<input>` where it does not. */
+/**
+ * Put the caret in a freshly built row: through the built-in's own handle where it offers one, and
+ * into its `<input>` where it does not.
+ */
 function focusEditor(el: HTMLElement, handle: unknown): void {
   const focus = (handle as { focus?: unknown; } | null)?.focus;
   if (typeof focus === "function") {
@@ -369,8 +391,10 @@ function buildZoneField(el: HTMLElement, selected: () => ZoneChoice | null): HTM
   return field;
 }
 
-/** Show a chosen zone in the field, sized to what it says. `size` rather than CSS because the
- *  width of a zone name is the text's own business: it ranges from `Z` to a long `Local (…)`. */
+/**
+ * Show a chosen zone in the field, sized to what it says. `size` rather than CSS because the
+ * width of a zone name is the text's own business: it ranges from `Z` to a long `Local (…)`.
+ */
 function showZone(field: HTMLInputElement, selected: ZoneChoice | null): void {
   field.value = selected?.label ?? "";
   field.size = Math.max(field.value.length, NO_ZONE_LABEL.length, MIN_FIELD_CHARS);
@@ -384,13 +408,17 @@ interface ZoneOption {
   /** What the reader sees, what is searched, and what the field holds once it is chosen. */
   label: string;
 
-  /** Whether it belongs to the picker's curated list — what is offered before anything is typed.
-   *  The rest is every zone the platform knows, which is a search result and not a menu. */
+  /**
+   * Whether it belongs to the picker's curated list — what is offered before anything is typed.
+   * The rest is every zone the platform knows, which is a search result and not a menu.
+   */
   standing: boolean;
 
-  /** The choice this selects, or `null` for no zone at all. Resolved on selection rather than up
-   *  front because for a searched name under a non-floating type it means asking `Intl` — six
-   *  hundred times over, if it were done to build the list. */
+  /**
+   * The choice this selects, or `null` for no zone at all. Resolved on selection rather than up
+   * front because for a searched name under a non-floating type it means asking `Intl` — six
+   * hundred times over, if it were done to build the list.
+   */
   resolve: () => ZoneChoice | null;
 }
 
@@ -441,9 +469,11 @@ interface ZoneSuggestSpec {
  */
 const liveSuggests = new Set<LiveSuggest>();
 
-/** One live zone field. `attached` is what tells a row that has *gone* from one that has not
- *  arrived yet: Obsidian inserts a property row after rendering it, so a field is normally still
- *  detached when it is registered, and sweeping on that alone would shut every menu at birth. */
+/**
+ * One live zone field. `attached` is what tells a row that has *gone* from one that has not
+ * arrived yet: Obsidian inserts a property row after rendering it, so a field is normally still
+ * detached when it is registered, and sweeping on that alone would shut every menu at birth.
+ */
 interface LiveSuggest {
   field: HTMLInputElement;
   suggest: ZoneSuggest;
@@ -463,7 +493,7 @@ interface LiveSuggest {
  * because a row is only ever unclipped by being clicked into, which it cannot be while detached.
  *
  * A render is not the only sweep, though, and cannot be: what these classes are left on is
- * **Obsidian's own cell**, and a virtualised table recycles those. If the last zoned row in a view
+ * **Obsidian's own cell**, and a virtualized table recycles those. If the last zoned row in a view
  * goes without another ever being drawn — the reader navigates away, or the column scrolls out for
  * good — a render-only sweep would leave a `width: max-content` cell in someone else's table until
  * unload. {@link sweepZoneUnclips} is the way out, wired to `layout-change` in main.ts.
@@ -475,9 +505,11 @@ interface LiveUnclip {
 
 const liveUnclips = new Set<LiveUnclip>();
 
-/** Put back the clipping around any zoned row that has left the document. For the plugin to call on
- *  a layout change, which is the event that says a view — and everything drawn in it — may have
- *  gone without this file being given a render to notice. */
+/**
+ * Put back the clipping around any zoned row that has left the document. For the plugin to call on
+ * a layout change, which is the event that says a view — and everything drawn in it — may have
+ * gone without this file being given a render to notice.
+ */
 export function sweepZoneUnclips(): void {
   sweepUnclips();
 }
@@ -521,8 +553,10 @@ function attachZoneSuggest(app: App, field: HTMLInputElement, spec: ZoneSuggestS
   liveSuggests.add({ field, suggest: new ZoneSuggest(app, field, spec), attached: field.isConnected });
 }
 
-/** A scored option, kept together so the matched characters can be highlighted as the list is
- *  drawn. `match` is `null` for a standing entry shown without a query to match against. */
+/**
+ * A scored option, kept together so the matched characters can be highlighted as the list is
+ * drawn. `match` is `null` for a standing entry shown without a query to match against.
+ */
 interface ScoredOption {
   option: ZoneOption;
   match: SearchResult | null;

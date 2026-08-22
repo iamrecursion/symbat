@@ -33,9 +33,11 @@ function renderUnicodeSuggestion(el: HTMLElement, code: UnicodeCode, leader: str
   el.createSpan({ cls: "numbat-unicode-suggestion-code", text: `${leader}${code.name}` });
 }
 
-/** The subset of Obsidian's internal suggestion chooser we drive: the selected index, its container
- *  element (for the dwell-popup observer), and methods to move or accept it. Undocumented, hence
- *  accessed defensively. */
+/**
+ * The subset of Obsidian's internal suggestion chooser we drive: the selected index, its container
+ * element (for the dwell-popup observer), and methods to move or accept it. Undocumented, hence
+ * accessed defensively.
+ */
 export interface SuggestChooser {
   /** Index of the highlighted row — read to decide what the dwell popup documents. */
   selectedItem: number;
@@ -50,9 +52,11 @@ export interface SuggestChooser {
   useSelectedItem(event: KeyboardEvent): void;
 }
 
-/** The internal chooser backing a suggest popover, if present. Exported so the expression
- *  completer can read the selected item for its documentation popup, reusing this one defensive
- *  access point. */
+/**
+ * The internal chooser backing a suggest popover, if present. Exported so the expression
+ * completer can read the selected item for its documentation popup, reusing this one defensive
+ * access point.
+ */
 export function chooserOf<T>(suggest: PopoverSuggest<T>): SuggestChooser | undefined {
   return (suggest as unknown as { suggestions?: SuggestChooser; }).suggestions;
 }
@@ -88,11 +92,15 @@ export function registerSuggestKeys<T>(suggest: PopoverSuggest<T>): void {
   suggest.scope.register(["Ctrl"], "P", move(-1));
 }
 
-/** Editor completer: `\code` suggestions inside `numbat`/`numbat-shared` blocks and inline-eval
- *  spans. */
+/**
+ * Editor completer: `\code` suggestions inside `numbat`/`numbat-shared` blocks and inline-eval
+ * spans.
+ */
 export class NumbatUnicodeEditorSuggest extends EditorSuggest<UnicodeCode> {
-  /** Read live for the expansion setting and the configured leader, so a settings change takes
-   *  effect without re-registering the completer. */
+  /**
+   * Read live for the expansion setting and the configured leader, so a settings change takes
+   * effect without re-registering the completer.
+   */
   private readonly plugin: SymbatPlugin;
 
   /** @param app Obsidian's app, for `EditorSuggest`. @param plugin the plugin to read. */

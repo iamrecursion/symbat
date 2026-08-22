@@ -27,8 +27,10 @@ export interface DeclaredSymbol {
   /** The name as written in the declaration. */
   name: string;
 
-  /** The declared type, as written (`List<D>`, `Money`, `Dim`), or `null` when the declaration
-   *  gives none. */
+  /**
+   * The declared type, as written (`List<D>`, `Money`, `Dim`), or `null` when the declaration
+   * gives none.
+   */
   type: string | null;
 
   /** The `fn` / `struct` that declares it. */

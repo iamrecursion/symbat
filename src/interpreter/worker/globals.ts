@@ -11,14 +11,18 @@
 
 /** The parts of `DedicatedWorkerGlobalScope` the message loop uses. */
 export interface WorkerScope {
-  /** The message loop's one input. Assigned as a listener so that there is provably one handler: a
-   *  second assignment replaces the first, where a second listener would quietly double every
-   *  message. */
+  /**
+   * The message loop's one input. Assigned as a listener so that there is provably one handler: a
+   * second assignment replaces the first, where a second listener would quietly double every
+   * message.
+   */
   onmessage: ((event: { readonly data: unknown; }) => void) | null;
 
-  /** Send one message to whoever constructed this worker. The one-argument form, which is the
-   *  dedicated-worker signature; `Window.postMessage`'s second parameter is a different API that
-   *  happens to share a name. */
+  /**
+   * Send one message to whoever constructed this worker. The one-argument form, which is the
+   * dedicated-worker signature; `Window.postMessage`'s second parameter is a different API that
+   * happens to share a name.
+   */
   postMessage(message: unknown): void;
 }
 

@@ -16,25 +16,33 @@ import type { WireReply } from "./wire";
 import * as server from "./worker/entry";
 import type { Schedule } from "./worker/entry";
 
-/** Where the interpreter is running. The same two words the `interpreterThread` setting stores, and
- *  a separate type on purpose: that one is a request, and a request for a worker can fail. */
+/**
+ * Where the interpreter is running. The same two words the `interpreterThread` setting stores, and
+ * a separate type on purpose: that one is a request, and a request for a worker can fail.
+ */
 export type InterpreterPath = "worker" | "main";
 
-/** The two things a transport says without being asked. Both are the asking side's to act on, which
- *  is why they are callbacks rather than return values: the answering side cannot restart itself,
- *  and across a boundary it could not even if it wanted to. */
+/**
+ * The two things a transport says without being asked. Both are the asking side's to act on, which
+ * is why they are callbacks rather than return values: the answering side cannot restart itself,
+ * and across a boundary it could not even if it wanted to.
+ */
 export interface TransportHost {
   /** The environment cannot be applied to the instance that is running: replace it. */
   onStale(): void;
 
-  /** It broke in a way it cannot serve through: the module failed to instantiate, the message loop
-   *  threw, the worker died. Distinct from a panic inside one task, which rides back on that task's
-   *  reply and is recoverable by restarting on the next use. */
+  /**
+   * It broke in a way it cannot serve through: the module failed to instantiate, the message loop
+   * threw, the worker died. Distinct from a panic inside one task, which rides back on that task's
+   * reply and is recoverable by restarting on the next use.
+   */
   onFault(message: string): void;
 }
 
-/** One way of reaching the interpreter. Deliberately the same shape as `worker/entry.ts`'s exports,
- *  plus the two lifecycle members only the asking side can have an opinion about. */
+/**
+ * One way of reaching the interpreter. Deliberately the same shape as `worker/entry.ts`'s exports,
+ * plus the two lifecycle members only the asking side can have an opinion about.
+ */
 export interface Transport {
   readonly path: InterpreterPath;
 
@@ -52,8 +60,10 @@ export interface Transport {
   /** Drop what is queued for `group`, or everything queued. Never reaches work already running. */
   cancel(group: string | null): void;
 
-  /** Release everything and become unusable. Every request still outstanding settles with `null`,
-   *  which is what every surface already does something sensible with. */
+  /**
+   * Release everything and become unusable. Every request still outstanding settles with `null`,
+   * which is what every surface already does something sensible with.
+   */
   stop(): void;
 }
 

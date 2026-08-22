@@ -30,9 +30,11 @@ export function parseNumbatUse(value: unknown): string[] {
 // A `[[wikilink]]` wrapper, captured to its (possibly empty) inner target.
 const WIKILINK = /^\[\[(.*)\]\]$/;
 
-/** The note path a `numbat-use` entry points at: the inside of a `[[wikilink]]` (or the bare
- *  string), with any `|alias` and `#subpath` removed. `null` when nothing usable remains — an empty
- *  value, or malformed bracket junk. */
+/**
+ * The note path a `numbat-use` entry points at: the inside of a `[[wikilink]]` (or the bare
+ * string), with any `|alias` and `#subpath` removed. `null` when nothing usable remains — an empty
+ * value, or malformed bracket junk.
+ */
 function extractLinkpath(raw: string): string | null {
   const trimmed = raw.trim();
   const wiki = WIKILINK.exec(trimmed);
@@ -46,20 +48,26 @@ function extractLinkpath(raw: string): string | null {
 
 /** What the graph walk needs from the vault, injected so the walk stays pure. */
 export interface ImportResolver {
-  /** The canonical id (note path) a link target resolves to from `fromId`, or `null` when it
-   *  resolves to nothing (a broken link). */
+  /**
+   * The canonical id (note path) a link target resolves to from `fromId`, or `null` when it
+   * resolves to nothing (a broken link).
+   */
   resolve(linkpath: string, fromId: string): string | null;
 
-  /** A resolved note's own `numbat-use` targets and the code chunks it contributes to an importer —
-   *  each independently interpretable (a typed-property binding, a `numbat-shared` block), typed
-   *  properties first — or `null` when the note cannot be read. */
+  /**
+   * A resolved note's own `numbat-use` targets and the code chunks it contributes to an importer —
+   * each independently interpretable (a typed-property binding, a `numbat-shared` block), typed
+   * properties first — or `null` when the note cannot be read.
+   */
   node(id: string): { uses: string[]; chunks: string[]; } | null;
 }
 
-/** The ordered result of a graph walk: the contribution chunks (each replayed in its own
- *  `interpret` call, so one broken import cannot sink the rest — Numbat rejects a whole
- *  multi-statement program on any error), flattened across notes in dependency order, and the note
- *  ids in that same order (for tests and, later, the scope inspector). */
+/**
+ * The ordered result of a graph walk: the contribution chunks (each replayed in its own
+ * `interpret` call, so one broken import cannot sink the rest — Numbat rejects a whole
+ * multi-statement program on any error), flattened across notes in dependency order, and the note
+ * ids in that same order (for tests and, later, the scope inspector).
+ */
 export interface ImportCollection {
   /** The shared-block sources to replay, in dependency order — each its own `interpret` call. */
   chunks: string[];

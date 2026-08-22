@@ -82,7 +82,7 @@ jobs:
       # committed. It cannot do both: the numbat wasm build is not reproducible.
       # Two builds of the same tag, on the same machine, in this same devshell,
       # differ by a few hundred bytes of data-segment layout — same strings, same
-      # behaviour, different bytes. So a rebuilt release could never match a
+      # behavior, different bytes. So a rebuilt release could never match a
       # clean-checkout build, and 1.0.1 was flagged for exactly that.
       #
       # What is left is the better guarantee of the two, because it is the one

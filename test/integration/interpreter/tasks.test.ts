@@ -123,8 +123,10 @@ async function ask<K extends TaskName>(name: K, request: TaskMap[K]["request"]):
   return reply.value as TaskMap[K]["response"];
 }
 
-/** A fresh context of the test's own, and `run` over it — the reference route. Freed by `use`'s
- *  return, so a leak here would be the test's rather than the engine's. */
+/**
+ * A fresh context of the test's own, and `run` over it — the reference route. Freed by `use`'s
+ * return, so a leak here would be the test's rather than the engine's.
+ */
 async function reference<T>(use: (run: LineInterpret) => T, preludeBefore?: string): Promise<T> {
   const engine = await loadEngine();
   const context = engine.createContext(RATES, preludeBefore === undefined ? {} : { preludeBefore });
@@ -247,7 +249,7 @@ test("evalBlocks matches hintsForBlock, block by block", { skip }, async () => {
 // Deterministic rather than timed. The first boundary is before the first block, so once the job
 // has been given a turn it is parked in the yield; the cancellation lands while it is there, and
 // the check on the far side of the yield is what sees it.
-test("a running pass stops at its next boundary when its group is cancelled", { skip }, async () => {
+test("a running pass stops at its next boundary when its group is canceled", { skip }, async () => {
   const queue = createQueue();
   const blocks = Array.from({ length: 8 }, (_, i) => ({ id: `b${i}`, body: ["1 + 1"], before: [] }));
 
@@ -571,7 +573,7 @@ test("facts reports a struct's fields under WANT_FIELDS", { skip }, async () => 
     ref: {
       kind: "scope",
       spec: {
-        chunks: ["struct Costs { parts: Scalar, labour: Scalar }", "let c = Costs { parts: 1, labour: 2 }"],
+        chunks: ["struct Costs { parts: Scalar, labor: Scalar }", "let c = Costs { parts: 1, labor: 2 }"],
         applyRates: RATES,
       },
     },
@@ -579,7 +581,7 @@ test("facts reports a struct's fields under WANT_FIELDS", { skip }, async () => 
     want: WANT_FIELDS,
   });
 
-  assert.deepEqual([...(filled.get("c")?.fields ?? [])], ["parts", "labour"]);
+  assert.deepEqual([...(filled.get("c")?.fields ?? [])], ["parts", "labor"]);
 });
 
 test("holeType recovers the operand an incomplete line is waiting for", { skip }, async () => {

@@ -389,7 +389,7 @@ test("a zoned value is shown in its own zone, not in the reader's", () => {
   assert.equal(tzFor("2026-07-27T10:30:00+0300"), "tz(\"Etc/GMT-3\")");
 
   // The `Etc` zones are whole hours only. A value at a fractional offset keeps its instant and is
-  // shown in the reader's zone, rather than being labelled with a *place* that happens to sit at
+  // shown in the reader's zone, rather than being labeled with a *place* that happens to sit at
   // that offset — which would be a claim the value never made.
   assert.equal(tzFor("2026-07-27T10:30:00+05:45"), null);
   assert.equal(tzFor("2026-07-27T10:30:00-03:30"), null);
@@ -1607,7 +1607,7 @@ test("a list nested inside a struct field is grounded too, however deep", () => 
 
 test("a list that reaches no struct keeps its zeros, exactly as a lone one does", () => {
   // `let weights = [0, 0]` generalizes and reads back, so there is nothing to buy by narrowing it —
-  // the same judgement a top-level bare `0` gets.
+  // the same judgment a top-level bare `0` gets.
   const bound = bindingFor({ weights: [0, 0] }, "weights");
   assert.equal(bound?.expr, "[0, 0]");
   assert.deepEqual(bound?.defs, []);

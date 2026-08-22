@@ -15,8 +15,10 @@ import type { Schedule } from "./worker/entry";
 
 /** What the asking side sends. */
 export type HostMessage =
-  /** Instantiate. The base64 module travels once, at start; see wasm-binary.ts for why it is the
-   *  literal rather than the bytes. */
+  /**
+   * Instantiate. The base64 module travels once, at start; see wasm-binary.ts for why it is the
+   * literal rather than the bytes.
+   */
   | { readonly kind: "init"; readonly base64: string; }
   /** One request, to be answered with a `reply` carrying the same `id`. */
   | {
@@ -34,17 +36,23 @@ export type HostMessage =
   | { readonly kind: "release"; }
   /** Refill one note's evaluation allowance, or every note's. */
   | { readonly kind: "refill"; readonly key: string | null; }
-  /** Drop everything queued in `group`, or everything queued. Work already running is unaffected —
-   *  there is no way to stop that from here, which is why the stop command has a second rung. */
+  /**
+   * Drop everything queued in `group`, or everything queued. Work already running is unaffected —
+   * there is no way to stop that from here, which is why the stop command has a second rung.
+   */
   | { readonly kind: "cancel"; readonly group: string | null; };
 
 /** What the answering side sends. */
 export type WorkerMessage =
-  /** Instantiated and serving. The asking side waits for this rather than for the constructor to
-   *  return: a blocked or sandboxed worker constructs perfectly well and then says nothing. */
+  /**
+   * Instantiated and serving. The asking side waits for this rather than for the constructor to
+   * return: a blocked or sandboxed worker constructs perfectly well and then says nothing.
+   */
   | { readonly kind: "ready"; }
-  /** One answer. `reply` is `null` when the request came to nothing (superseded, obsolete, or the
-   *  engine down) which the asking side treats exactly as the in-process queue's `null`. */
+  /**
+   * One answer. `reply` is `null` when the request came to nothing (superseded, obsolete, or the
+   * engine down) which the asking side treats exactly as the in-process queue's `null`.
+   */
   | { readonly kind: "reply"; readonly id: number; readonly reply: TaskReply<unknown> | null; }
   /**
    * The environment it was last given cannot be applied to the instance it is running: Numbat's
@@ -55,10 +63,14 @@ export type WorkerMessage =
    * window in which the asking side believes the interpreter is ready and it is not.
    */
   | { readonly kind: "stale"; }
-  /** It broke in a way it cannot serve through: the module failed to instantiate, or the message
-   *  loop itself threw. A panic inside a task is *not* this: that rides back on the reply. */
+  /**
+   * It broke in a way it cannot serve through: the module failed to instantiate, or the message
+   * loop itself threw. A panic inside a task is *not* this: that rides back on the reply.
+   */
   | { readonly kind: "fault"; readonly message: string; };
 
-/** The response type of task `K`, as it comes back over the wire. Written out because the wire
- *  erases the name-to-type link and the transport has to put it back. */
+/**
+ * The response type of task `K`, as it comes back over the wire. Written out because the wire
+ * erases the name-to-type link and the transport has to put it back.
+ */
 export type WireReply<K extends TaskName> = TaskReply<TaskMap[K]["response"]> | null;

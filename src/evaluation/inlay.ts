@@ -53,9 +53,11 @@ import { frontmatterKeySites } from "../properties/parse";
 import { INLAY_CACHE_ENTRIES, INLAY_DEBOUNCE_MS } from "../tuning";
 import { blockKey, endPadding, type Hint, holeForm, wholeScopeKey } from "./inlay-parse";
 
-/** Dispatched after an off-path evaluation populates the cache, so the plugin rebuilds its
- *  decorations to include the newly-available hints. Also dispatched by {@link refreshNumbatInlays}
- *  when the note scope changes out-of-band (a cross-note import's source note was edited). */
+/**
+ * Dispatched after an off-path evaluation populates the cache, so the plugin rebuilds its
+ * decorations to include the newly-available hints. Also dispatched by {@link refreshNumbatInlays}
+ * when the note scope changes out-of-band (a cross-note import's source note was edited).
+ */
 const inlayReady = StateEffect.define<void>();
 
 /**
@@ -71,8 +73,10 @@ export function refreshNumbatInlays(view: EditorView): void {
 // THE HINT WIDGET
 // ================================================================================================
 
-/** The widget rendering a single hint. Equality by (kind, content, pad) lets CodeMirror reuse the
- *  DOM across redraws when a hint is unchanged. */
+/**
+ * The widget rendering a single hint. Equality by (kind, content, pad) lets CodeMirror reuse the
+ * DOM across redraws when a hint is unchanged.
+ */
 class InlayWidget extends WidgetType {
   /**
    * @param kind which hint this is, selecting both the CSS class and how {@link toDOM} renders
@@ -84,8 +88,10 @@ class InlayWidget extends WidgetType {
     super();
   }
 
-  /** Compare by the three rendered inputs, so CodeMirror keeps the existing DOM when a redraw
-   *  produces an identical hint. */
+  /**
+   * Compare by the three rendered inputs, so CodeMirror keeps the existing DOM when a redraw
+   * produces an identical hint.
+   */
   eq(other: InlayWidget): boolean {
     return other.kind === this.kind && other.content === this.content && other.pad === this.pad;
   }
@@ -117,8 +123,10 @@ class InlayWidget extends WidgetType {
     return span;
   }
 
-  /** Hints are decoration, not content: let every event through to the editor so clicking one
-   *  places the caret in the code rather than selecting the widget. */
+  /**
+   * Hints are decoration, not content: let every event through to the editor so clicking one
+   * places the caret in the code rather than selecting the widget.
+   */
   ignoreEvent(): boolean {
     return true;
   }
@@ -139,8 +147,10 @@ class InlayWidget extends WidgetType {
 // The frontmatter delimiters, as properties/parse.ts tracks them — matched here over the editor's
 // line index so a property line can be located by number.
 
-/** The note's YAML frontmatter region (1-indexed CM line numbers, both delimiters included), or
- *  `null` when the note has none. */
+/**
+ * The note's YAML frontmatter region (1-indexed CM line numbers, both delimiters included), or
+ * `null` when the note has none.
+ */
 function frontmatterRegion(doc: Text): { open: number; close: number; } | null {
   if (doc.lines < 2 || !FRONTMATTER_OPEN.test(doc.line(1).text)) {
     return null;
@@ -164,8 +174,10 @@ interface HintFilter {
   results: boolean;
 }
 
-/** Whether a hint should be shown under the given filter: holes are type hints; an error or warning
- *  hint is the line's outcome, so both follow the results toggle. */
+/**
+ * Whether a hint should be shown under the given filter: holes are type hints; an error or warning
+ * hint is the line's outcome, so both follow the results toggle.
+ */
 function hintEnabled(hint: Hint, filter: HintFilter): boolean {
   return hint.kind === "result" || hint.kind === "error" || hint.kind === "warning"
     ? filter.results
@@ -188,16 +200,20 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
       /** Cached hints per block, keyed by {@link blockKey}. */
       private readonly cache = new EvaluationCache<Hint[]>(INLAY_CACHE_ENTRIES);
 
-      /** Stops waiting on the property batch, where a pass has been asked for. Held because the
-       *  batch outlives a view: a destroyed plugin left in the waiter set dispatches into a view
-       *  that is gone. */
+      /**
+       * Stops waiting on the property batch, where a pass has been asked for. Held because the
+       * batch outlives a view: a destroyed plugin left in the waiter set dispatches into a view
+       * that is gone.
+       */
       private unwaitFrontmatter: (() => void) | null = null;
 
       /** The pending debounced evaluation, or `null` when none is scheduled. */
       private timer: number | null = null;
 
-      /** Set on teardown, so an evaluation already in flight discards its results instead of
-       *  dispatching into a destroyed view. */
+      /**
+       * Set on teardown, so an evaluation already in flight discards its results instead of
+       * dispatching into a destroyed view.
+       */
       private destroyed = false;
 
       /** Paint whatever is already cached; anything missing is scheduled by `build`. */
@@ -205,8 +221,10 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         this.decorations = this.build(view);
       }
 
-      /** Rebuild when the text changed, the viewport moved, or a refresh was requested out-of-band
-       *  (an imported note changed, or a setting was toggled). */
+      /**
+       * Rebuild when the text changed, the viewport moved, or a refresh was requested out-of-band
+       * (an imported note changed, or a setting was toggled).
+       */
       update(update: ViewUpdate): void {
         const arrived = update.transactions.some((tr) => tr.effects.some((e) => e.is(inlayReady)));
         if (update.docChanged || update.viewportChanged || arrived) {
@@ -534,8 +552,10 @@ export function numbatInlayHints(plugin: SymbatPlugin) {
         }
       }
 
-      /** Store a block's hints. `impure` is whether the block's scope can produce a different
-       *  answer next time (interpreter/eval-cache.ts). */
+      /**
+       * Store a block's hints. `impure` is whether the block's scope can produce a different
+       * answer next time (interpreter/eval-cache.ts).
+       */
       private remember(key: string, hints: Hint[], impure: boolean): void {
         this.cache.set(key, hints, impure);
       }
@@ -568,9 +588,11 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
       /** The hint widgets CodeMirror is painting, republished on every build. */
       decorations: DecorationSet;
 
-      /** Cached hints for the document, keyed by its full text and the interpreter generation. A
+      /**
+       * Cached hints for the document, keyed by its full text and the interpreter generation. A
        * prelude edit changes what the file's own statements mean without changing a character of it
-       * (see {@link wholeScopeKey}). */
+       * (see {@link wholeScopeKey}).
+       */
       private readonly cache = new EvaluationCache<Hint[]>(INLAY_CACHE_ENTRIES);
 
       /** The pending debounced evaluation, or `null` when none is scheduled. */
@@ -652,8 +674,10 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
         return builder.finish();
       }
 
-      /** Debounce a whole-document evaluation, restarting the wait on each call so a burst of
-       *  typing costs one pass rather than one per keystroke. */
+      /**
+       * Debounce a whole-document evaluation, restarting the wait on each call so a burst of
+       * typing costs one pass rather than one per keystroke.
+       */
       private scheduleEvaluation(view: EditorView): void {
         if (this.timer !== null) {
           window.clearTimeout(this.timer);
@@ -722,8 +746,10 @@ export function numbatDocumentInlays(plugin: SymbatPlugin, filePath: () => strin
         view.dispatch({ effects: inlayReady.of() });
       }
 
-      /** Store the document's hints. The cap matters here because the key moves with every edit, so
-       *  the cache would otherwise grow unbounded over a session. */
+      /**
+       * Store the document's hints. The cap matters here because the key moves with every edit, so
+       * the cache would otherwise grow unbounded over a session.
+       */
       private remember(key: string, hints: Hint[], impure: boolean): void {
         this.cache.set(key, hints, impure);
       }
@@ -761,8 +787,10 @@ export function numbatReplHoleHint(plugin: SymbatPlugin, host: FactsHost) {
       /** The hole widget CodeMirror is painting — at most one. */
       decorations: DecorationSet;
 
-      /** The line an answer has already been asked for, so a scope that cannot answer is not asked
-       *  again on the repaint its own reply triggers. */
+      /**
+       * The line an answer has already been asked for, so a scope that cannot answer is not asked
+       * again on the repaint its own reply triggers.
+       */
       private asked: string | null = null;
 
       /** Paint the initial input, which is usually empty and so yields nothing. */

@@ -5,18 +5,24 @@
 
 import { dottedPathAt, wordRangeAt } from "../syntax/identifier";
 
-/** What kind of thing the position is on, which decides how it is asked about and how the card is
- *  headed. */
+/**
+ * What kind of thing the position is on, which decides how it is asked about and how the card is
+ * headed.
+ */
 export type HoverSymbolKind =
   /** A plain name — a variable, function, unit, dimension. */
   | "name"
   /** A member chain (`costs.total`), asked about by its whole path. */
   | "member"
-  /** A literal, with its unit when one follows (`21.1 km`) — asked about by evaluating it, which is
-   *  the only way a literal has anything to say. */
+  /**
+   * A literal, with its unit when one follows (`21.1 km`) — asked about by evaluating it, which is
+   * the only way a literal has anything to say.
+   */
   | "quantity"
-  /** A decorator (`@description`), which no context has ever heard of — the card comes from the
-   *  completer's own table rather than from the interpreter. */
+  /**
+   * A decorator (`@description`), which no context has ever heard of — the card comes from the
+   * completer's own table rather than from the interpreter.
+   */
   | "decorator";
 
 /** A symbol found at a position. */
@@ -27,8 +33,10 @@ export interface HoverSymbol {
   /** The word actually pointed at (`total` of `costs.total`). */
   name: string;
 
-  /** What to ask the interpreter about — the whole member chain, since `type()` answers for
-   *  `costs.total` but not for a bare `total`. */
+  /**
+   * What to ask the interpreter about — the whole member chain, since `type()` answers for
+   * `costs.total` but not for a bare `total`.
+   */
   probe: string;
 
   /** The probe's first column on the line — the tooltip's anchor range starts here. */
@@ -38,13 +46,17 @@ export interface HoverSymbol {
   to: number;
 }
 
-/** A number literal, in the shapes Numbat writes them (the tokenizer's rule, minus its word
- *  boundaries — this matches at a known offset). */
+/**
+ * A number literal, in the shapes Numbat writes them (the tokenizer's rule, minus its word
+ * boundaries — this matches at a known offset).
+ */
 const NUMBER = /^(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)/;
 
-/** The literal at column `ch`, extended over the unit that follows it (`21.1 km`), or `null` when
- *  the position is not on a number. A literal alone answers nothing; with its unit it answers what
- *  dimension it is. */
+/**
+ * The literal at column `ch`, extended over the unit that follows it (`21.1 km`), or `null` when
+ * the position is not on a number. A literal alone answers nothing; with its unit it answers what
+ * dimension it is.
+ */
 function quantityAt(line: string, ch: number): { from: number; to: number; name: string; } | null {
   // Walk back to the start of the number run the position sits in.
   let from = Math.max(0, Math.min(ch, line.length));

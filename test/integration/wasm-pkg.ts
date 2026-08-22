@@ -31,8 +31,10 @@ if (!built && process.env.CI) {
  */
 export const skip = built ? false : "wasm not built (run `make wasm`)";
 
-/** The Numbat module itself, base64-encoded exactly as esbuild inlines it into the bundle — which
- *  is the form the worker's `init` message carries. */
+/**
+ * The Numbat module itself, base64-encoded exactly as esbuild inlines it into the bundle — which
+ * is the form the worker's `init` message carries.
+ */
 export function wasmBase64(): string {
   return readFileSync(pkgWasm).toString("base64");
 }

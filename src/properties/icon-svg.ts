@@ -67,8 +67,10 @@ export function tintedIconContent(inner: string, attrs: Readonly<Record<string, 
   return `<g class="${ICON_TINT_CLASS}" transform="scale(${ICON_SCALE.toFixed(6)})"${carried}>${inner}</g>`;
 }
 
-/** Attribute-value escaping. The values come from Obsidian's own icons, so this is belt and
- *  braces — but they are read at runtime from an undocumented source and pasted into markup. */
+/**
+ * Attribute-value escaping. The values come from Obsidian's own icons, so this is belt and
+ * braces — but they are read at runtime from an undocumented source and pasted into markup.
+ */
 function escapeAttribute(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

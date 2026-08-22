@@ -14,8 +14,10 @@ import {
 } from "../../../src/interpreter/budget.ts";
 import { BUDGET_BUCKET_ENTRIES, BUDGET_REFILL_IDLE_MS } from "../../../src/tuning.ts";
 
-/** A clock the test moves by hand, counting how often it was read — the second is what makes "an
- *  unarmed budget reads no clock" an assertion rather than a claim. */
+/**
+ * A clock the test moves by hand, counting how often it was read — the second is what makes "an
+ * unarmed budget reads no clock" an assertion rather than a claim.
+ */
 function stubClock() {
   const state = { t: 0, reads: 0 };
   const clock = () => {

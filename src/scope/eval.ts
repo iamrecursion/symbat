@@ -23,9 +23,11 @@ import {
 import { inlineValueHtml } from "../evaluation/inline-parse";
 import type { ScopeEntry, ScopeTree, ScopeValue } from "./model";
 
-/** A fresh interpreter context: an injected `run` carrying its own accumulating state, and a `free`
- *  to release it. scope/source.ts supplies this over the real wasm (createContext / interpret /
- *  freeQuietly); tests supply it over a test context. */
+/**
+ * A fresh interpreter context: an injected `run` carrying its own accumulating state, and a `free`
+ * to release it. scope/source.ts supplies this over the real wasm (createContext / interpret /
+ * freeQuietly); tests supply it over a test context.
+ */
 export interface ScopeContextFactory {
   (): { run: LineInterpret; free: () => void; };
 }
@@ -33,9 +35,11 @@ export interface ScopeContextFactory {
 // SCOPE VALUES
 // ================================================================================================
 
-/** A value result from a formatter fragment (`= value [Dim]`), with an optional inferred type
- *  fragment. Reconstructs what evaluation/inline.ts's private `valueResult` builds, from the
- *  exported helpers. */
+/**
+ * A value result from a formatter fragment (`= value [Dim]`), with an optional inferred type
+ * fragment. Reconstructs what evaluation/inline.ts's private `valueResult` builds, from the
+ * exported helpers.
+ */
 function valueResult(result: string, type: string | null): ScopeValue {
   const valueHtml = inlineValueHtml(result);
   return {
@@ -49,8 +53,10 @@ function valueResult(result: string, type: string | null): ScopeValue {
   };
 }
 
-/** The separator a type fragment opens with, matching `declarationTypeHtml`'s `: Type` shape so a
- *  function's signature aligns with a `let`'s inferred type. */
+/**
+ * The separator a type fragment opens with, matching `declarationTypeHtml`'s `: Type` shape so a
+ * function's signature aligns with a `let`'s inferred type.
+ */
 const COLON_SPAN = `<span class="numbat-operator">:</span>`;
 
 // A binding that produced nothing to show. Shared rather than rebuilt per entry: it is by far the
@@ -70,14 +76,18 @@ function holeValue(type: string): ScopeValue {
   return { kind: "hole", resultHtml: null, valueHtml: null, plain: null, holeType: type, errorText: null, type: null };
 }
 
-/** A binding that failed, shown as its diagnostic summary (`null` when there was no usable line to
- *  show). */
+/**
+ * A binding that failed, shown as its diagnostic summary (`null` when there was no usable line to
+ * show).
+ */
 function errorValue(text: string | null): ScopeValue {
   return { kind: "error", resultHtml: null, valueHtml: null, plain: null, holeType: null, errorText: text, type: null };
 }
 
-/** A binding whose declaration ran but produced no probeable value — shown with its type when one
- *  is known, else nothing. */
+/**
+ * A binding whose declaration ran but produced no probeable value — shown with its type when one
+ * is known, else nothing.
+ */
 function typeOnly(type: string | null): ScopeValue {
   return type === null ? NONE_VALUE : { ...NONE_VALUE, type };
 }
@@ -126,15 +136,19 @@ function valueFromOutput(run: LineInterpret, code: string, out: { output: string
   return errorValue(errorSummary(out.output));
 }
 
-/** Evaluate one statement/expression against `run`, returning its display value + type. Runs `code`
- *  once, then delegates to {@link valueFromOutput}. */
+/**
+ * Evaluate one statement/expression against `run`, returning its display value + type. Runs `code`
+ * once, then delegates to {@link valueFromOutput}.
+ */
 export function deriveScopeValue(run: LineInterpret, code: string): ScopeValue {
   return valueFromOutput(run, code, run(code));
 }
 
-/** A property's value: probe the RHS expression (matching the frontmatter inlays — a value, an
- *  incomplete hole, or an error), then define the binding so later properties see it, capturing the
- *  inferred type from the definition's echo. */
+/**
+ * A property's value: probe the RHS expression (matching the frontmatter inlays — a value, an
+ * incomplete hole, or an error), then define the binding so later properties see it, capturing the
+ * inferred type from the definition's echo.
+ */
 function evaluateProperty(run: LineInterpret, entry: ScopeEntry): void {
   // What the expression itself needs (an array of objects' element type) is declared first, and
   // exactly once — it is deliberately not part of `code`.

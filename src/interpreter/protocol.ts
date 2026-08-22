@@ -13,7 +13,7 @@
 //     leaving it to be read out of module state afterwards. `getLastPreludeError()` used to be read
 //     immediately after `createContext`; that ordering does not exist across a boundary, so the
 //     reply carries it. So do the dimension and unit names a context build enumerated, without
-//     which the highlighter silently stops colouring units.
+//     which the highlighter silently stops coloring units.
 //
 // Imports are `import type` only, so this loads under plain `node --test` and adds nothing to
 // either bundle.
@@ -32,8 +32,10 @@ import type { PreludePart } from "../settings/util";
 
 /** The outcome of one interpreter call. */
 export interface NumbatResult {
-  /** Numbat's rendered output — HTML when the context formats as HTML, and an error message rather
-   *  than a value when {@link isError}. */
+  /**
+   * Numbat's rendered output — HTML when the context formats as HTML, and an error message rather
+   * than a value when {@link isError}.
+   */
   output: string;
 
   /** Whether Numbat rejected the input (a parse, type, or runtime error). */
@@ -98,8 +100,10 @@ export interface SymbolFacts {
   /** What the name evaluates to, as HTML, or `null` when it has no value to show. */
   readonly valueHtml: string | null;
 
-  /** The fields of the struct the name evaluates to, in declaration order, or `null` when it is not
-   *  one. What member completion offers after a `.`. */
+  /**
+   * The fields of the struct the name evaluates to, in declaration order, or `null` when it is not
+   * one. What member completion offers after a `.`.
+   */
   readonly fields: readonly string[] | null;
 }
 
@@ -121,8 +125,10 @@ export interface ScopeSpec {
   /** Whether exchange rates are applied to the context. */
   readonly applyRates: boolean;
 
-  /** The prelude file to stop _before_, for the `.nbt` editor: a prelude file's own scope is what
-   *  the files ahead of it define, not what it defines itself. */
+  /**
+   * The prelude file to stop _before_, for the `.nbt` editor: a prelude file's own scope is what
+   * the files ahead of it define, not what it defines itself.
+   */
   readonly preludeBefore?: string;
 }
 
@@ -155,16 +161,20 @@ export type ContextRef =
   | { readonly kind: "scope"; readonly spec: ScopeSpec; }
   | { readonly kind: "session"; readonly id: number; };
 
-/** Everything about a scope that can be _enumerated_ in one pass, as opposed to asked about one
- *  name at a time. What the completing surfaces need, and the reason none of them has to hold a
- *  context to complete. */
+/**
+ * Everything about a scope that can be _enumerated_ in one pass, as opposed to asked about one
+ * name at a time. What the completing surfaces need, and the reason none of them has to hold a
+ * context to complete.
+ */
 export interface ScopeSnapshot {
   /** The categorized vocabulary: which names are functions, units, variables, dimensions. */
   readonly vocab: CompletionVocabulary;
 
-  /** The user prelude's error for the context this snapshot was taken from, or `null`. Carried
-   *  rather than read afterwards: the read-immediately-after-`createContext` ordering it used to
-   *  rely on does not survive a boundary. */
+  /**
+   * The user prelude's error for the context this snapshot was taken from, or `null`. Carried
+   * rather than read afterwards: the read-immediately-after-`createContext` ordering it used to
+   * rely on does not survive a boundary.
+   */
   readonly preludeError: string | null;
 }
 
@@ -175,9 +185,9 @@ export interface ScopeSnapshot {
  * The dimension and unit names a context build enumerated.
  *
  * **This is the one thing that has to reach back out of an evaluation into main-thread state.** The
- * highlighter colours units and dimensions distinctly, and `syntax/type-names.ts` — which it reads
+ * highlighter colors units and dimensions distinctly, and `syntax/type-names.ts` — which it reads
  * — is on the asking side. Nothing else announces the names. Miss it and every unit silently stops
- * being highlighted: no error, no missing feature to report, just prose-coloured code. So every
+ * being highlighted: no error, no missing feature to report, just prose-colored code. So every
  * reply carries whatever its work turned up, and the asking side records it.
  */
 export interface SemanticNames {
@@ -185,9 +195,11 @@ export interface SemanticNames {
   readonly units: readonly string[];
 }
 
-/** The environment a context is built in: what the asking side knows and the answering side cannot
- *  find out for itself. Exchange rates in particular are fetched with Obsidian's `requestUrl`,
- *  which is main-thread-only, so the XML is posted rather than downloaded. */
+/**
+ * The environment a context is built in: what the asking side knows and the answering side cannot
+ * find out for itself. Exchange rates in particular are fetched with Obsidian's `requestUrl`,
+ * which is main-thread-only, so the XML is posted rather than downloaded.
+ */
 export interface EngineEnv {
   /** The ECB rates XML, or `null` when rates are unavailable or switched off. */
   readonly ratesXml: string | null;
@@ -228,18 +240,24 @@ export interface EngineEnv {
  * *between* statements. A runaway expression is the stop command's problem on either path.
  */
 export interface BudgetSpec {
-  /** How long the note may spend in the interpreter, in milliseconds. Zero or less is
-   *  unbudgeted. */
+  /**
+   * How long the note may spend in the interpreter, in milliseconds. Zero or less is
+   * unbudgeted.
+   */
   readonly budgetMs: number;
 
-  /** The note path the allowance is keyed on, so a note's several surfaces share one — or `null`
-   *  for work that belongs to no note. */
+  /**
+   * The note path the allowance is keyed on, so a note's several surfaces share one — or `null`
+   * for work that belongs to no note.
+   */
   readonly key: string | null;
 }
 
-/** A task's answer, and whether the allowance refused anything on the way to it. `exceeded` is the
- *  difference between work that finished late and work that was cut short, which is what decides
- *  whether the asking side may let its cache entry age. */
+/**
+ * A task's answer, and whether the allowance refused anything on the way to it. `exceeded` is the
+ * difference between work that finished late and work that was cut short, which is what decides
+ * whether the asking side may let its cache entry age.
+ */
 export interface Budgeted<T> {
   readonly value: T;
   readonly exceeded: boolean;
@@ -250,15 +268,19 @@ export interface Budgeted<T> {
 
 /** One code block to evaluate, and the shared blocks that open its scope. */
 export interface BlockRequest {
-  /** The cache key the asking side filed this block under, echoed back in the response so the
-   *  pairing needs no re-derivation and cannot drift. */
+  /**
+   * The cache key the asking side filed this block under, echoed back in the response so the
+   * pairing needs no re-derivation and cannot drift.
+   */
   readonly id: string;
 
   /** The block's body lines. */
   readonly body: readonly string[];
 
-  /** The `numbat-shared` blocks above this one, in document order, replayed for their effects.
-   *  Empty for an independent block. */
+  /**
+   * The `numbat-shared` blocks above this one, in document order, replayed for their effects.
+   * Empty for an independent block.
+   */
   readonly before: readonly string[];
 }
 
@@ -270,9 +292,11 @@ export interface BlockHints {
   /** The hints, including the ordinary error hints a refused statement produces. */
   readonly hints: readonly Hint[];
 
-  /** Whether this block was actually evaluated, as opposed to synthesized from a refusal without a
-   *  context being built. A synthesized answer must never be allowed to age: the note cannot be
-   *  re-read inside its allowance, so asking again would only spend the allowance again. */
+  /**
+   * Whether this block was actually evaluated, as opposed to synthesized from a refusal without a
+   * context being built. A synthesized answer must never be allowed to age: the note cannot be
+   * re-read inside its allowance, so asking again would only spend the allowance again.
+   */
   readonly evaluated: boolean;
 }
 
@@ -288,8 +312,10 @@ export interface EvalDocumentRequest {
   readonly text: string;
   readonly applyRates: boolean;
 
-  /** The file's own path when it is itself part of the prelude, so its declarations do not arrive
-   *  twice. */
+  /**
+   * The file's own path when it is itself part of the prelude, so its declarations do not arrive
+   * twice.
+   */
   readonly preludeBefore: string | null;
   readonly budget: BudgetSpec;
 }
@@ -302,8 +328,10 @@ export interface EvalNoteUnitsRequest {
   readonly budget: BudgetSpec;
 }
 
-/** One inline expression evaluated on its own, for the reading-view spans whose surrounding note
- *  text could not be recovered. */
+/**
+ * One inline expression evaluated on its own, for the reading-view spans whose surrounding note
+ * text could not be recovered.
+ */
 export interface ExprRequest {
   readonly expr: string;
   readonly dp: number | null;
@@ -392,18 +420,22 @@ export interface CompletionsRequest {
   /** What has been typed so far, which the engine prefix-filters against. */
   readonly query: string;
 
-  /** The struct whose fields are wanted _as well as_ the name list, for a member completion after a
-   *  `.`.
+  /**
+   * The struct whose fields are wanted _as well as_ the name list, for a member completion after a
+   * `.`.
    *
-   *  Both come back from one request, deliberately. A base that turns out not to be a struct falls
-   *  through to ordinary completion, and asking for the names only once that is known would be a
-   *  second round trip on the typing path — where the extra `get_completions_for` that answers it
-   *  unasked costs almost nothing. */
+   * Both come back from one request, deliberately. A base that turns out not to be a struct falls
+   * through to ordinary completion, and asking for the names only once that is known would be a
+   * second round trip on the typing path — where the extra `get_completions_for` that answers it
+   * unasked costs almost nothing.
+   */
   readonly memberBase?: string;
 }
 
-/** What a completion request produced: the candidate names, the vocabulary that classifies them,
- *  and — for a member completion — the struct's fields (empty when the base is not a struct). */
+/**
+ * What a completion request produced: the candidate names, the vocabulary that classifies them,
+ * and — for a member completion — the struct's fields (empty when the base is not a struct).
+ */
 export interface CompletionsReply {
   readonly candidates: readonly string[];
   readonly vocab: CompletionVocabulary | null;
@@ -449,16 +481,22 @@ export interface ReplSession {
  * module state on the asking side and cannot be any more.
  */
 export interface TaskReply<T> {
-  /** What the task produced. `null` when it could not run at all — the interpreter is not up, or
-   *  the named session is gone. */
+  /**
+   * What the task produced. `null` when it could not run at all — the interpreter is not up, or
+   * the named session is gone.
+   */
   readonly value: T | null;
 
-  /** The dimension and unit names any context this task built enumerated, or `null` when it built
-   *  none or they were already known. See {@link SemanticNames}. */
+  /**
+   * The dimension and unit names any context this task built enumerated, or `null` when it built
+   * none or they were already known. See {@link SemanticNames}.
+   */
   readonly names: SemanticNames | null;
 
-  /** Whether a wasm panic was absorbed while serving this task. The asking side restarts; the
-   *  answering side cannot restart itself. */
+  /**
+   * Whether a wasm panic was absorbed while serving this task. The asking side restarts; the
+   * answering side cannot restart itself.
+   */
   readonly faulted: boolean;
 
   /** The user prelude's error from the last context this task built, or `null`. */
@@ -508,7 +546,7 @@ export interface TaskMap {
    * The one task whose answer is worthless and whose _envelope_ is all we care about: the
    * highlighter needs the dimension and unit lists before anything has been evaluated, so that a
    * `numbat` block opened in pure source mode, with nothing rendered, no completion, and no REPL,
-   * is coloured like every other one.
+   * is colored like every other one.
    */
   warm: { request: { applyRates: boolean; }; response: true; };
 
@@ -521,9 +559,11 @@ export interface TaskMap {
   poolStats: { request: Record<string, never>; response: PoolCounts; };
 }
 
-/** What the context pool has done since the interpreter came up. `hits`, `misses` and `refused`
- *  partition the requests; `recycled` counts contexts offered back and `freed` the ones an eviction
- *  or a release sent to `free` instead. */
+/**
+ * What the context pool has done since the interpreter came up. `hits`, `misses` and `refused`
+ * partition the requests; `recycled` counts contexts offered back and `freed` the ones an eviction
+ * or a release sent to `free` instead.
+ */
 export interface PoolCounts {
   readonly hits: number;
   readonly misses: number;

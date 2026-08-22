@@ -98,8 +98,10 @@ export function forgetSemanticNames(): void {
   }
 }
 
-/** Subscribe to be notified whenever the known names grow, returning an unsubscribe function.
- *  Editors use this to re-highlight as names are learned. */
+/**
+ * Subscribe to be notified whenever the known names grow, returning an unsubscribe function.
+ * Editors use this to re-highlight as names are learned.
+ */
 export function subscribeSemanticNames(listener: () => void): () => void {
   listeners.add(listener);
   return () => {

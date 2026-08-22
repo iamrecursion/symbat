@@ -49,8 +49,10 @@ import {
 } from "./expressions";
 import { buildDocPopupContent, DocPopup, renderExprSuggestion } from "./render";
 
-/** Maximum rows shown at once. Also exactly how many rows are asked about: Obsidian truncates the
- *  list to this, so probing further would be filling facts for rows that cannot be drawn. */
+/**
+ * Maximum rows shown at once. Also exactly how many rows are asked about: Obsidian truncates the
+ * list to this, so probing further would be filling facts for rows that cannot be drawn.
+ */
 const SUGGESTION_LIMIT = 60;
 
 /** What the documentation popup asks about a row: the body, and the type line above it. */
@@ -61,8 +63,10 @@ const WANT_DWELL = WANT_INFO | WANT_SIGNATURE;
 
 /** A non-actionable placeholder row shown while the wasm is still loading. */
 interface LoadingSuggestion {
-  /** A literal discriminant, so {@link isLoading} can narrow the union without a field that a real
-   *  completion might also carry. */
+  /**
+   * A literal discriminant, so {@link isLoading} can narrow the union without a field that a real
+   * completion might also carry.
+   */
   loading: true;
 }
 
@@ -77,9 +81,11 @@ function isLoading(suggestion: ExprSuggestion): suggestion is LoadingSuggestion 
   return "loading" in suggestion;
 }
 
-/** The editor's maintained fence index, when it has one. Obsidian's `Editor` wraps a CodeMirror
- *  view (`.cm`, undocumented but relied on elsewhere in this plugin); without it — a mobile or
- *  legacy editor — the caller scans instead. */
+/**
+ * The editor's maintained fence index, when it has one. Obsidian's `Editor` wraps a CodeMirror
+ * view (`.cm`, undocumented but relied on elsewhere in this plugin); without it — a mobile or
+ * legacy editor — the caller scans instead.
+ */
 function fenceSpansOf(editor: Editor): readonly FenceSpan[] | undefined {
   const view = (editor as unknown as { cm?: EditorView; }).cm;
   return view?.state.field(numbatFenceState, false) ?? undefined;
@@ -113,13 +119,17 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
   /** Whether a background warm-up is already in flight (avoids piling them up). */
   private warming = false;
 
-  /** The scope the current popover's rows were resolved against, or `null` when they were served
-   *  without one. Named rather than held: what the renderer and the dwell popup need is a key to
-   *  read facts under, and a key cannot be freed behind their backs the way a context can. */
+  /**
+   * The scope the current popover's rows were resolved against, or `null` when they were served
+   * without one. Named rather than held: what the renderer and the dwell popup need is a key to
+   * read facts under, and a key cannot be freed behind their backs the way a context can.
+   */
   private lastScope: ScopeSpec | null = null;
 
-  /** Facts about the names in {@link lastScope} — read synchronously by the renderer, filled by
-   *  {@link getSuggestions} before the rows are handed over. */
+  /**
+   * Facts about the names in {@link lastScope} — read synchronously by the renderer, filled by
+   * {@link getSuggestions} before the rows are handed over.
+   */
   private readonly facts = scopeFactsHost(
     () => this.lastScope,
     () => this.plugin.settings.completionIdleSeconds * 1000,
@@ -134,8 +144,10 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
   /** The pending dwell timer, and the `.is-selected` observer driving it. */
   private dwellTimer: number | null = null;
 
-  /** Watches the popover for `.is-selected` moving, which is the only signal Obsidian gives that
-   *  the highlighted row changed. */
+  /**
+   * Watches the popover for `.is-selected` moving, which is the only signal Obsidian gives that
+   * the highlighted row changed.
+   */
   private observer: MutationObserver | null = null;
 
   /** @param app Obsidian's app, for `EditorSuggest`. @param plugin the plugin to read. */
@@ -228,9 +240,11 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     };
   }
 
-  /** The Numbat-typed property whose value the caret sits in, or `null` — the third completable
-   *  position, beside a `numbat` fence and an inline span (see {@link numbatPropertySiteAt}, shared
-   *  with the hover). */
+  /**
+   * The Numbat-typed property whose value the caret sits in, or `null` — the third completable
+   * position, beside a `numbat` fence and an inline span (see {@link numbatPropertySiteAt}, shared
+   * with the hover).
+   */
   private frontmatterSiteAt(
     editor: Editor,
     cursor: EditorPosition,
@@ -434,16 +448,20 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     );
   }
 
-  /** The code to replay so completions see the user's own definitions — the shared position-scope
-   *  walk (see {@link replayChunksAt}). The caret's own line is left out: completion asks what is
-   *  in scope *so far*, and that line is half-typed. */
+  /**
+   * The code to replay so completions see the user's own definitions — the shared position-scope
+   * walk (see {@link replayChunksAt}). The caret's own line is left out: completion asks what is
+   * in scope *so far*, and that line is half-typed.
+   */
   private codeBeforeCursor(context: EditorSuggestContext): string[] {
     return replayChunksAt(this.plugin, context.editor, context.file?.path ?? null, context.start);
   }
 
-  /** Draw one row: its name, category icon and signature — or the loading placeholder. Also the
-   *  point at which the popover first exists in the DOM, so the dwell observer is attached here
-   *  rather than on trigger. */
+  /**
+   * Draw one row: its name, category icon and signature — or the loading placeholder. Also the
+   * point at which the popover first exists in the DOM, so the dwell observer is attached here
+   * rather than on trigger.
+   */
   renderSuggestion(value: ExprSuggestion, el: HTMLElement): void {
     if (isLoading(value)) {
       el.addClass("numbat-expr-loading");
@@ -473,8 +491,10 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     this.ensureDwellObserver();
   }
 
-  /** Insert the chosen name over the triggering range and put the caret after it — or, for a
-   *  decorator, its name plus the punctuation its grammar requires, caret at the argument. */
+  /**
+   * Insert the chosen name over the triggering range and put the caret after it — or, for a
+   * decorator, its name plus the punctuation its grammar requires, caret at the argument.
+   */
   selectSuggestion(value: ExprSuggestion): void {
     const { context } = this;
     if (context === null || isLoading(value)) {
@@ -509,8 +529,10 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
   // Every internal access is defensive — if the internals are unavailable the popup simply never
   // shows; the inline signature is unaffected.
 
-  /** The popover's container element, from the internal chooser or the suggest's own popover root —
-   *  both undocumented, so accessed defensively (null → no popup). */
+  /**
+   * The popover's container element, from the internal chooser or the suggest's own popover root —
+   * both undocumented, so accessed defensively (null → no popup).
+   */
   private popoverContainer(): HTMLElement | null {
     return chooserOf(this)?.containerEl
       ?? (this as unknown as { suggestEl?: HTMLElement; }).suggestEl

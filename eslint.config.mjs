@@ -62,10 +62,6 @@ export default tseslint.config(
     // lint time, because by build time it is a runtime failure nobody sees.
     files: ["src/interpreter/worker/**/*.ts"],
     rules: {
-      // A worker's own scope is reachable as `globalThis` and by nothing else. The rule wants
-      // `window` or `activeWindow` instead, which are Obsidian popout-window concerns — and this is
-      // the one directory in the repository that is provably not running inside Obsidian.
-      "obsidianmd/no-global-this": "off",
       "no-restricted-imports": ["error", {
         paths: [
           { name: "obsidian", message: "The interpreter's answering side must not depend on Obsidian." },

@@ -228,8 +228,20 @@ export class NumbatScopeView extends ItemView {
    */
   private readonly rows = new Map<string, { el: HTMLElement; entry: ScopeEntry | null; }>();
 
-  /** The shared floating documentation popup, shown on dwell. */
-  private readonly docPopup = new DocPopup();
+  /**
+   * The shared floating documentation popup, shown on dwell.
+   *
+   * Rebuilt by {@link onOpen} rather than held for the instance's whole life. {@link onClose}
+   * destroys it. The element is a `document.body` child, so leaving it would outlive the panel,
+   * and a destroyed popup stays destroyed, which is what keeps a late answer from putting a card
+   * up that nothing is left to take down. Obsidian unloads and reloads a view as a component (a
+   * leaf moved between sidebars, a layout change), so this would otherwise be the one thing
+   * `onOpen` rebuilds the panel without.
+   *
+   * Initialized here as well so a teardown that never saw an `onOpen` still has something to
+   * destroy.
+   */
+  private docPopup = new DocPopup();
 
   /** The pending dwell before the documentation popup opens. */
   private dwellTimer: number | null = null;
@@ -279,6 +291,11 @@ export class NumbatScopeView extends ItemView {
     const root = this.contentEl;
     root.empty();
     root.addClass("numbat-scope-inspector");
+
+    // A fresh popup for a fresh panel: the previous one, if there was a previous one, was destroyed
+    // by `onClose` and stays that way (see {@link docPopup}).
+    this.docPopup = new DocPopup();
+
     this.addAction("rotate-ccw", "Refresh", () => this.requestRefresh());
     this.buildControls(root);
     this.treeEl = root.createDiv({ cls: "numbat-scope-tree" });
@@ -323,7 +340,7 @@ export class NumbatScopeView extends ItemView {
    * rows.
    */
   async onClose(): Promise<void> {
-    for (const timer of [this.refreshTimer, this.queryTimer, this.dwellTimer]) {
+    for (const timer of [this.refreshTimer, this.queryTimer]) {
       if (timer !== null) {
         window.clearTimeout(timer);
       }
@@ -331,7 +348,12 @@ export class NumbatScopeView extends ItemView {
 
     this.refreshTimer = null;
     this.queryTimer = null;
-    this.dwellTimer = null;
+
+    // The dwell goes through `cancelDwell` rather than having its timer cleared alongside the other
+    // two, because the timer is not the only thing holding it: the retry in `showDwell` arrives on
+    // a promise, and `dwellIndex` is what its guard reads. Obsidian reopens a view it has closed
+    // (see {@link docPopup}), so an index left set is one a rebuilt panel would honor.
+    this.cancelDwell();
 
     // The popup lives under `document.body`, so it outlives the panel otherwise.
     this.docPopup.destroy();
@@ -1428,7 +1450,7 @@ export class NumbatScopeView extends ItemView {
 
     const content = this.dwellContent(hit);
     if (content !== null) {
-      this.docPopup.showAbove(row.getBoundingClientRect(), content);
+      this.docPopup.show(row.getBoundingClientRect(), content);
     }
   }
 

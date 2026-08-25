@@ -59,6 +59,7 @@ import {
   memberBaseAt,
   typeVariableCompletions,
 } from "../completion/expressions";
+import { isVisibleAnchor } from "../completion/placement";
 import { buildDocPopupContent, DocPopup, renderCategoryTag, renderSignature } from "../completion/render";
 import { numbatDocumentInlays, numbatReplHoleHint, refreshNumbatInlays } from "../evaluation/inlay";
 import { type HoverMiss, type HoverOutcome, type HoverPending, numbatHover } from "../hover/hover";
@@ -83,6 +84,9 @@ const SET_INPUT_EVENT = "numbat.set";
 
 /** What the documentation popup asks about a completion: the body, and the type line above it. */
 const WANT_DWELL = WANT_INFO | WANT_SIGNATURE;
+
+/** Source of {@link NumbatInput.completerClass}, so every editor's popup is separately findable. */
+let completerSeq = 0;
 
 // THE HOST CONTRACT
 // ================================================================================================
@@ -657,6 +661,17 @@ export class NumbatInput {
   private readonly expressionOnly: boolean;
 
   /**
+   * A class unique to this editor, put on its completion popup so {@link showDwellPopup} can find
+   * that popup and no other.
+   *
+   * The popups are `document.body` children rather than descendants of the editor (see the
+   * `tooltips` call in the extensions below), so a bare `.cm-tooltip-autocomplete` query is
+   * document-wide: with a REPL open beside an NBT file there are two editors that could answer it,
+   * and the first one in the body wins regardless of which is asking.
+   */
+  private readonly completerClass = `numbat-completer-${++completerSeq}`;
+
+  /**
    * The shared floating documentation popup, its dwell timer, and the completion it is (or will
    * be) showing — so re-selecting the same row does not re-arm it.
    */
@@ -817,8 +832,9 @@ export class NumbatInput {
           override: [numbatCompletionSource(plugin, host, !expressionOnly)],
 
           // A scoped class on the popup, so its z-index/width can be styled without touching any
-          // other CodeMirror tooltip.
-          tooltipClass: () => "numbat-repl-completions",
+          // other CodeMirror tooltip, plus `completerClass`, unique to this editor, so its dwell
+          // card can find it among however many completion popups the body is holding.
+          tooltipClass: () => `numbat-repl-completions ${this.completerClass}`,
 
           // The REPL input sits at the bottom of the panel, above the on-screen keyboard on mobile,
           // so prefer the popup above the cursor — below would be hidden by the keyboard.
@@ -1011,9 +1027,19 @@ export class NumbatInput {
       return;
     }
 
-    const tooltip = this.view.dom.querySelector(".cm-tooltip-autocomplete")
-      ?? document.querySelector(".cm-tooltip-autocomplete");
+    // This editor's own completion popup, by the class only it carries: the popups live under
+    // `document.body`, so the query has to be qualified to be asking about this editor at all.
+    const tooltip = document.querySelector(`.cm-tooltip-autocomplete.${this.completerClass}`);
     if (tooltip === null) {
+      return;
+    }
+
+    // Found is not the same as visible. CodeMirror does not take a tooltip out of the document when
+    // its editor scrolls out of view so the query above answers for a popup the reader cannot see,
+    // with a rect good enough to place a card ten thousand pixels above the screen. This is the
+    // REPL's version of the staleness `popoverAnchor` refuses in completion/suggest.ts.
+    const anchor = tooltip.getBoundingClientRect();
+    if (!isVisibleAnchor(anchor, window.innerHeight)) {
       return;
     }
 
@@ -1026,7 +1052,7 @@ export class NumbatInput {
       : category === "function" || doc !== undefined
       ? null
       : known?.signature ?? null;
-    this.docPopup.showAbove(tooltip.getBoundingClientRect(), buildDocPopupContent(info, typeSignature));
+    this.docPopup.show(anchor, buildDocPopupContent(info, typeSignature));
   }
 
   /** The editor's root element, for placement within the input row. */
@@ -1318,7 +1344,13 @@ export class NumbatInput {
   destroy(): void {
     if (this.dwellTimer !== null) {
       window.clearTimeout(this.dwellTimer);
+      this.dwellTimer = null;
     }
+
+    // The retry in `showDwellPopup` arrives on a promise, so the timer above does not hold it, and
+    // the label is what its guard reads, which is why `trackCompletionDwell` clears it on every
+    // other close.
+    this.dwellLabel = null;
     this.docPopup.destroy();
     this.view.destroy();
   }

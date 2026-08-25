@@ -904,9 +904,10 @@
 /* Force the REPL rows' layout past Obsidian's own styling of the CodeMirror completion tooltip, 
  * which otherwise spreads the name and signature into columns. (The editor popover is Obsidian's 
  * native suggester — a different DOM — so it needs none of this.) These once used
- * `!important`; they instead name all three classes that land on the popup element — CodeMirror
- * adds `cm-tooltip` and `cm-tooltip-autocomplete`, `tooltipClass` adds the third — which
- * out-specifies anything the app applies to that tooltip without reaching for the hammer. */
+ * `!important`; they instead name three of the classes that land on the popup element — CodeMirror
+ * adds `cm-tooltip` and `cm-tooltip-autocomplete`, `tooltipClass` adds `numbat-repl-completions`
+ * (and a per-editor one these rules have no use for) — which out-specifies anything the app applies
+ * to that tooltip without reaching for the hammer. */
 .cm-tooltip.cm-tooltip-autocomplete.numbat-repl-completions .numbat-repl-expr-completion {
   justify-content: flex-start;
 }

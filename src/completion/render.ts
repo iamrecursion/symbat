@@ -9,6 +9,7 @@ import { finishRenderMath, loadMathJax, renderMatches, renderMath } from "obsidi
 import { setNumbatHtml } from "../interpreter/render";
 import { type CompletionInfo, formatDocBody } from "./docs";
 import type { ExprCategory, ExprCompletion } from "./expressions";
+import { type AnchorRect, popupPlacement } from "./placement";
 
 // RENDERING HELPERS
 // ================================================================================================
@@ -172,22 +173,21 @@ export function buildDocPopupContent(info: CompletionInfo, typeSignatureHtml: st
   return content;
 }
 
-/** Gap between the popup and the completer it is anchored to, in px. */
-const POPUP_GAP = 6;
-
-/** Minimum inset from the viewport edges when clamping, in px. */
-const VIEWPORT_MARGIN = 8;
-
 // DOC POPUP
 // ================================================================================================
 
 /**
  * A single floating documentation popup, shared by both completer surfaces. It owns one
- * fixed-position element (created lazily under `document.body`) and positions it above a given
- * anchor rectangle — the completer's popover — clamping to the viewport so it never overflows the
+ * fixed-position element (created lazily under `document.body`) and positions it against a given
+ * anchor rectangle (the completer's popover) clamping to the viewport so it never overflows the
  * screen, and flipping below only when there is genuinely no room above. The popup may be wider
  * than the completer (its own `max-width` bounds it). Callers show it on dwell and hide it on
  * selection change / close.
+ *
+ * The element sits under `document.body` rather than inside whatever opened it, which is what makes
+ * a *stale* show permanent: nothing sweeps the body, so a popup put up after its owner has gone has
+ * nobody left to take it down. The two guards below do their best to prevent this: a dead anchor is
+ * refused (see {@link popupPlacement}), and a destroyed popup stays destroyed.
  */
 export class DocPopup {
   /**
@@ -196,6 +196,13 @@ export class DocPopup {
    */
   private el: HTMLElement | null = null;
 
+  /**
+   * Set by {@link destroy}, and never cleared. {@link el} is `null` both before the first show and
+   * after the last, so it cannot tell those apart on its own, and {@link ensureEl} would otherwise
+   * build a replacement on behalf of an owner that has already torn itself down.
+   */
+  private destroyed = false;
+
   /** Warms MathJax so the first popup's math renders without a flash of source. */
   constructor() {
     // Warm MathJax so a description's `$…$` math renders from the first popup (idempotent; usually
@@ -203,31 +210,52 @@ export class DocPopup {
     void loadMathJax();
   }
 
-  /** The popup element, creating it on first use. */
-  private ensureEl(): HTMLElement {
+  /** The popup element, creating it on first use; `null` once the popup has been destroyed. */
+  private ensureEl(): HTMLElement | null {
+    if (this.destroyed) {
+      return null;
+    }
     if (this.el === null) {
       this.el = document.body.createDiv({ cls: "numbat-doc-popup" });
     }
     return this.el;
   }
 
-  /** Show `content` above `anchor` (the completer's bounding rect), clamped on-screen. */
-  showAbove(anchor: DOMRect, content: HTMLElement): void {
+  /**
+   * Show `content` against `anchor` (the completer's bounding rect), clamped on-screen. Above it
+   * where there is room, below it where there is not — see {@link popupPlacement}.
+   *
+   * An anchor with no place on the screen shows nothing, and takes down whatever was already up. A
+   * detached element measures as an all-zero rect, and placing a card against that would put it in
+   * the corner of the window where, being nobody's child, nothing would ever take it down again.
+   */
+  show(anchor: AnchorRect, content: HTMLElement): void {
     const el = this.ensureEl();
+    if (el === null) {
+      return;
+    }
+
     el.empty();
     el.append(content);
     el.toggleClass("is-visible", true); // display via the `.is-visible` CSS class
 
-    // Measure after the content is in place, then position (fixed → viewport coords).
-    const rect = el.getBoundingClientRect();
-    const maxLeft = window.innerWidth - rect.width - VIEWPORT_MARGIN;
-    const left = Math.max(VIEWPORT_MARGIN, Math.min(anchor.left, maxLeft));
-    const above = anchor.top - rect.height - POPUP_GAP;
+    // Measure after the content is in place, and *at the origin*: the element is `position: fixed`
+    // with a `left` but no width, so the room it has to lay itself out in is whatever is to the
+    // right of that `left`. Left where the previous card was put, a card opened near the right
+    // edge measures shrink-wrapped: too narrow for the clamp below and, having wrapped more lines
+    // than it will really need, too tall for the flip.
+    el.setCssStyles({ left: "0px", top: "0px" });
 
-    // Prefer above; drop below only when it would clip off the top of the screen.
-    const top = above >= VIEWPORT_MARGIN ? above : anchor.bottom + POPUP_GAP;
-    el.style.left = `${left}px`;
-    el.style.top = `${top}px`;
+    // Position from the measurement (fixed → viewport coords).
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const placement = popupPlacement(anchor, el.getBoundingClientRect(), viewport);
+    if (placement === null) {
+      this.hide();
+      return;
+    }
+
+    el.style.left = `${placement.left}px`;
+    el.style.top = `${placement.top}px`;
   }
 
   /** Hide the popup (kept in the DOM for reuse). */
@@ -238,8 +266,9 @@ export class DocPopup {
     }
   }
 
-  /** Remove the popup element entirely (on teardown). */
+  /** Remove the popup element entirely, and for good (on teardown). */
   destroy(): void {
+    this.destroyed = true;
     this.el?.remove();
     this.el = null;
   }

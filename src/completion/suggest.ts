@@ -47,6 +47,7 @@ import {
   memberBaseAt,
   typeVariableCompletions,
 } from "./expressions";
+import { isVisibleAnchor } from "./placement";
 import { buildDocPopupContent, DocPopup, renderExprSuggestion } from "./render";
 
 /**
@@ -149,6 +150,20 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
    * the highlighted row changed.
    */
   private observer: MutationObserver | null = null;
+
+  /**
+   * Bumped whenever the dwell is abandoned — the popover closing, a new query, or the selection
+   * moving — so an answer arriving afterwards knows the card it belonged to is no longer wanted.
+   *
+   * The retry in {@link showDwellPopup} arrives on a promise rather than on {@link dwellTimer}, so
+   * {@link teardownDwell} cannot cancel it, and its own guard reads a selection that closing the
+   * popover leaves exactly as it was. This is the part a teardown *can* invalidate.
+   *
+   * A selection move bumps it as well as a teardown, so that arrowing off a row and back onto it
+   * does not let the first dwell's answer land as though it were the second's: the row is the same
+   * object either side, so the identity check alone would pass.
+   */
+  private dwellAttempt = 0;
 
   /** @param app Obsidian's app, for `EditorSuggest`. @param plugin the plugin to read. */
   constructor(app: App, plugin: SymbatPlugin) {
@@ -539,6 +554,37 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       ?? null;
   }
 
+  /**
+   * The rectangle to anchor a card to: the popover's container measured while the popover is
+   * actually **on screen**, which is the only state in which it can anchor anything, and `null`
+   * otherwise.
+   *
+   * Kept apart from {@link popoverContainer} rather than folded into it: the observer is attached
+   * from `renderSuggestion`, mid-way through Obsidian building the popover, and a container not yet
+   * laid out is one the observer still wants. Only the anchor needs the stricter answer.
+   *
+   * The check is about the reference being *stale*, not about the internals being unavailable.
+   * Obsidian detaches the popover element on close and goes on handing the same reference back, and
+   * a detached element measures as an all-zero rect. This places the card at the top-left corner of
+   * the window, where nothing that could close it is watching any more. Asking the element whether
+   * it is on screen rather than trusting a flag is what `completerOpen` in hover/note.ts does.
+   *
+   * The question itself is {@link isVisibleAnchor}'s, so this popover and the REPL's own put the
+   * same one, and so a *parked* popover — one still in the document but moved off-screen — is
+   * refused here too rather than only a detached one.
+   */
+  private popoverAnchor(): DOMRect | null {
+    const container = this.popoverContainer();
+    if (container === null || !container.isConnected) {
+      return null;
+    }
+
+    // The rect is returned rather than the element so the anchor is measured once, and so the rect
+    // that was checked for life is the one the card is placed against.
+    const rect = container.getBoundingClientRect();
+    return isVisibleAnchor(rect, window.innerHeight) ? rect : null;
+  }
+
   /** Attach the `.is-selected` observer once the popover container exists. */
   private ensureDwellObserver(): void {
     if (this.observer !== null) {
@@ -552,8 +598,12 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     this.observer.observe(container, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
   }
 
-  /** A selection move (or list change): hide the current popup and re-arm the dwell. */
+  /**
+   * A selection move (or list change): abandon the dwell in flight, hide the current popup, and
+   * re-arm.
+   */
   private onSelectionChanged(): void {
+    this.dwellAttempt += 1;
     this.docPopup.hide();
     if (this.dwellTimer !== null) {
       window.clearTimeout(this.dwellTimer);
@@ -591,8 +641,8 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
       this.dwellTimer = null;
     }
     const chooser = chooserOf(this);
-    const container = this.popoverContainer();
-    if (chooser == null || container == null) {
+    const anchor = this.popoverAnchor();
+    if (chooser == null || anchor === null) {
       return;
     }
     const value = this.shown[chooser.selectedItem];
@@ -605,7 +655,7 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     // describes — so it needs neither a live context nor a `type()` probe.
     if (value.doc !== undefined) {
       const card = buildDocPopupContent(decoratorInfo(value.name, value.doc));
-      this.docPopup.showAbove(container.getBoundingClientRect(), card);
+      this.docPopup.show(anchor, card);
       return;
     }
     if (value.declared !== undefined) {
@@ -614,7 +664,7 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
         declaredInfo(kind, value.name, owner),
         type === null ? null : declaredTypeHtml(type),
       );
-      this.docPopup.showAbove(container.getBoundingClientRect(), card);
+      this.docPopup.show(anchor, card);
       return;
     }
 
@@ -624,10 +674,11 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
         return;
       }
 
+      const attempt = this.dwellAttempt;
       void this.facts.facts([value.name], WANT_DWELL).then(() => {
-        // Still the row being dwelt on: the reader may have arrowed on, or closed the popover, in
-        // the meantime.
-        if (this.selectedRow() === value) {
+        // Still the same dwell, and still the row being dwelt on: the reader may have arrowed on,
+        // or closed the popover, in the meantime.
+        if (this.dwellAttempt === attempt && this.selectedRow() === value) {
           this.showDwellPopup(true);
         }
       });
@@ -644,11 +695,15 @@ export class NumbatExprEditorSuggest extends EditorSuggest<ExprSuggestion> {
     const typeSignature = value.category === "function"
       ? null
       : this.facts.knownFacts(probeName, WANT_SIGNATURE)?.signature ?? null;
-    this.docPopup.showAbove(container.getBoundingClientRect(), buildDocPopupContent(known.info, typeSignature));
+    this.docPopup.show(anchor, buildDocPopupContent(known.info, typeSignature));
   }
 
-  /** Cancel the dwell timer, disconnect the observer, and hide the popup. */
+  /**
+   * Cancel the dwell timer, disconnect the observer, hide the popup, and abandon an answer still on
+   * its way.
+   */
   private teardownDwell(): void {
+    this.dwellAttempt += 1;
     if (this.dwellTimer !== null) {
       window.clearTimeout(this.dwellTimer);
       this.dwellTimer = null;

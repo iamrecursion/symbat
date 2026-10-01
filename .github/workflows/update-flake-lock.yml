@@ -32,7 +32,7 @@ jobs:
       # you would rather these bumps were checked before you look at them; until
       # then, expect to trigger the checks by hand.
       - name: Update flake.lock
-        uses: DeterminateSystems/update-flake-lock@v28
+        uses: DeterminateSystems/update-flake-lock@v29
         with:
           commit-msg: "chore: update flake.lock"
           pr-title: "chore: update flake.lock"
